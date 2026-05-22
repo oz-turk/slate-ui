@@ -305,23 +305,49 @@ public class SlateWindow : Form
                     var id = s["id"]!.GetValue<string>();
                     if (docSliders.TryGetValue(id, out var gh))
                     {
-                        _sliders[id]  = gh;
-                        s["value"]    = (double)gh.CurrentValue;
-                        s["min"]      = (double)gh.Slider.Minimum;
-                        s["max"]      = (double)gh.Slider.Maximum;
-                        s["name"]     = gh.NickName;
+                        _sliders[id] = gh;
+                        s["value"]   = (double)gh.CurrentValue;
+                        s["min"]     = (double)gh.Slider.Minimum;
+                        s["max"]     = (double)gh.Slider.Maximum;
+                        s["name"]    = gh.NickName;
                     }
-                    else arr.RemoveAt(i);  // slider no longer in document
+                    else arr.RemoveAt(i);
                 }
             }
 
-            foreach (var tabNode in state["tabs"]!.AsArray())
+            void ProcessTab(JsonObject tab)
             {
-                var tab = tabNode!.AsObject();
                 ProcessSliders(tab["sliders"]!.AsArray());
-                foreach (var groupNode in tab["groups"]!.AsArray())
-                    ProcessSliders(groupNode!.AsObject()["sliders"]!.AsArray());
+                foreach (var g in tab["groups"]!.AsArray())
+                    ProcessSliders(g!.AsObject()["sliders"]!.AsArray());
             }
+
+            void ProcessNode(JsonObject node)
+            {
+                var type = node["type"]?.GetValue<string>();
+                if (type == "leaf")
+                {
+                    foreach (var t in node["tabs"]!.AsArray())
+                        ProcessTab(t!.AsObject());
+                }
+                else if (type == "split")
+                {
+                    ProcessNode(node["a"]!.AsObject());
+                    ProcessNode(node["b"]!.AsObject());
+                }
+                else // legacy flat format: node IS the state object with "tabs" array
+                {
+                    if (node["tabs"] is JsonArray legacyTabs)
+                        foreach (var t in legacyTabs)
+                            ProcessTab(t!.AsObject());
+                }
+            }
+
+            // New format: state has "layout" key; legacy: state has "tabs" key
+            if (state["layout"] is JsonObject layoutNode)
+                ProcessNode(layoutNode);
+            else
+                ProcessNode(state);
 
             state["type"] = "restore_state";
             PostToJs(state.ToJsonString());

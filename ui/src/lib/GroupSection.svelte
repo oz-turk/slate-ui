@@ -8,6 +8,7 @@
   export let selectedIds  = new Set()
   export let dropHighlight = false  // slider dragged over header → add to group
   export let dropBefore    = false  // group dragged over header → insert before
+  export let dropTarget    = null   // forwarded from Pane for in-group slider drop indicators
 
   let editingLabel = false
   let labelValue   = ''
@@ -92,10 +93,17 @@
           <SliderRow
             {slider} {mode}
             selected={selectedIds.has(slider.id)}
-            on:change={e  => dispatch('sliderChange',  { id: slider.id, value: e.detail })}
-            on:commit={e  => dispatch('sliderCommit',  { id: slider.id, value: e.detail })}
-            on:select={e  => dispatch('sliderSelect',  { id: slider.id, multi: e.detail })}
-            on:remove={()  => dispatch('sliderRemove', { groupId: group.id, sliderId: slider.id })}
+            dropAbove={dropTarget?.type === 'slider-row' && dropTarget.id === slider.id && dropTarget.pos === 'before'}
+            dropBelow={dropTarget?.type === 'slider-row' && dropTarget.id === slider.id && dropTarget.pos === 'after'}
+            on:change={e      => dispatch('sliderChange',      { id: slider.id, value: e.detail })}
+            on:commit={e      => dispatch('sliderCommit',      { id: slider.id, value: e.detail })}
+            on:select={e      => dispatch('sliderSelect',      { id: slider.id, multi: e.detail })}
+            on:remove={()      => dispatch('sliderRemove',     { groupId: group.id, sliderId: slider.id })}
+            on:dragStart={()  => dispatch('sliderDragStart',   { sliderId: slider.id, groupId: group.id })}
+            on:dragEnd={()    => dispatch('sliderDragEnd')}
+            on:rowDragOver={e => dispatch('sliderRowDragOver', { sliderId: slider.id, pos: e.detail })}
+            on:rowDragLeave={()=> dispatch('sliderRowDragLeave',{ sliderId: slider.id })}
+            on:rowDrop={e     => dispatch('sliderRowDrop',     { sliderId: slider.id, pos: e.detail })}
           />
         {/each}
       {/if}

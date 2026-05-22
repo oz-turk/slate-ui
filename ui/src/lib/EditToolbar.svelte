@@ -1,13 +1,12 @@
 <script>
-  import { fade } from 'svelte/transition'
   import { createEventDispatcher } from 'svelte'
   const dispatch = createEventDispatcher()
 
   export let mode   = 'preview'
   export let pinned = false
 
-  function toggleMode()   { mode   = mode === 'edit' ? 'preview' : 'edit' }
-  function togglePin()    { pinned = !pinned; dispatch('pin', pinned) }
+  function toggleMode() { mode   = mode === 'edit' ? 'preview' : 'edit' }
+  function togglePin()  { pinned = !pinned; dispatch('pin', pinned) }
 </script>
 
 <div class="toolbar">
@@ -16,16 +15,7 @@
     {mode === 'edit' ? 'Edit' : 'Preview'}
   </button>
 
-  {#if mode === 'edit'}
-    <div class="edit-actions" transition:fade={{ duration: 120 }}>
-      <button on:click={() => dispatch('addTab')}>+ Tab</button>
-      <button class="capture-btn" on:click={() => dispatch('capture')}>
-        + Capture
-      </button>
-    </div>
-  {/if}
-
-  <div class="spacer" />
+  <div class="spacer"></div>
 
   <button class="pin-btn" class:active={pinned} on:click={togglePin} title={pinned ? 'Unpin' : 'Pin on top'}>
     <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
@@ -75,27 +65,7 @@
   .dot.edit    { background: #6fa3ff; }
   .dot.preview { background: #555; }
 
-  .edit-actions {
-    display: flex;
-    gap: 4px;
-  }
-  .edit-actions button {
-    padding: 3px 8px;
-    border: 1px solid #2e2e2e;
-    border-radius: 4px;
-    background: transparent;
-    color: #777;
-    font-size: 11px;
-    font-family: inherit;
-    cursor: pointer;
-    transition: border-color 0.15s, color 0.15s;
-  }
-  .edit-actions button:hover { border-color: #444; color: #bbb; }
-
-  .capture-btn { border-color: #3b7fff44; color: #6fa3ff88; }
-  .capture-btn:hover { border-color: #3b7fff99 !important; color: #6fa3ff !important; }
-
-  .pin-btn {
+.pin-btn {
     display: flex;
     align-items: center;
     justify-content: center;
