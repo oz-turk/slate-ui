@@ -17,19 +17,40 @@
 
   function allSliderIds() {
     const ids = new Set()
+    function collectGroups(groups) {
+      for (const g of groups) {
+        g.sliders.forEach(s => ids.add(s.id))
+        collectGroups(g.groups ?? [])
+      }
+    }
     for (const leaf of allLeaves(get(layout)))
       for (const t of leaf.tabs) {
         t.sliders.forEach(s => ids.add(s.id))
-        t.groups.forEach(g => g.sliders.forEach(s => ids.add(s.id)))
+        collectGroups(t.groups)
       }
     return ids
+  }
+
+  function addSliderToGroupInTree(groups, groupId, slider) {
+    return groups.map(g =>
+      g.id === groupId
+        ? { ...g, sliders: [...g.sliders, slider] }
+        : { ...g, groups: addSliderToGroupInTree(g.groups ?? [], groupId, slider) }
+    )
+  }
+
+  function updateNameInGroupTree(groups, id, name) {
+    return groups.map(g => ({
+      ...g,
+      sliders: g.sliders.map(s => s.id === id ? { ...s, name } : s),
+      groups: updateNameInGroupTree(g.groups ?? [], id, name)
+    }))
   }
 
   function handleMessage(msg) {
     if (msg.type === 'slider_added') {
       if (allSliderIds().has(msg.id)) return
       const slider = { id: msg.id, name: msg.name, min: msg.min, max: msg.max, value: msg.value }
-      // Find target pane+tab by tabId, fall back to first leaf's active tab
       const $l  = get(layout)
       const leaves = allLeaves($l)
       let targetPaneId = null, targetTabId = null
@@ -40,12 +61,25 @@
       }
       if (!targetPaneId) { targetPaneId = leaves[0]?.paneId; targetTabId = leaves[0]?.activeTabId }
       if (!targetPaneId) return
+      const groupId = msg.groupId ?? null
       updatePane(targetPaneId, p => ({
-        tabs: p.tabs.map(t => t.id === targetTabId
-          ? { ...t, sliders: [...t.sliders, slider] }
-          : t)
+        tabs: p.tabs.map(t => t.id !== targetTabId ? t : groupId
+          ? { ...t, groups: addSliderToGroupInTree(t.groups, groupId, slider) }
+          : { ...t, sliders: [...t.sliders, slider] })
       }))
       postStateSnapshot()
+    }
+
+    if (msg.type === 'slider_name_update') {
+      for (const leaf of allLeaves(get(layout))) {
+        updatePane(leaf.paneId, p => ({
+          tabs: p.tabs.map(t => ({
+            ...t,
+            sliders: t.sliders.map(s => s.id === msg.id ? { ...s, name: msg.name } : s),
+            groups:  updateNameInGroupTree(t.groups, msg.id, msg.name)
+          }))
+        }))
+      }
     }
 
     if (msg.type === 'cleared') {

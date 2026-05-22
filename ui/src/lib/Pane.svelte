@@ -5,7 +5,7 @@
   import ActionBar    from './ActionBar.svelte'
   import CornerHandle from './CornerHandle.svelte'
   import { layout, updatePane, findLeaf, newTabId, splitPane, collapsePane, setRatio, findParentSplitId, findNeighborPane, moveCrossPaneItem } from '../stores/layout.js'
-  import { tabDrag, itemDrag } from '../stores/dragState.js'
+  import { tabDrag, itemDrag, collapsePreview } from '../stores/dragState.js'
   import { mode } from '../stores/uiState.js'
   import { postToCs, postStateSnapshot } from './ipc.js'
 
@@ -21,9 +21,9 @@
   let selectedIds   = new Set()
   let activeDrag    = null
   let dropTarget    = null
-  let cornerPreview = null    // null | { kind:'collapse' }
   let liveSplitId   = null    // splitId of in-progress corner drag split
   let liveSplitRect = null    // pane bounds captured before split (used for ratio calc)
+  let liveSplitDir  = null    // 'h' | 'v' during live split
 
   // ── tab drag (cross-pane) drop state ─────────────────────────────────────────
   let edgeZone = null   // 'left' | 'right' | 'top' | 'bottom' | 'center' | null
@@ -42,15 +42,49 @@
     updatePane(paneId, () => ({ activeTabId: id }))
   }
 
+  // ── group tree helpers ────────────────────────────────────────────────────────
+  function mapGroupTree(groups, groupId, fn) {
+    return groups.map(g =>
+      g.id === groupId
+        ? { ...g, ...fn(g) }
+        : { ...g, groups: mapGroupTree(g.groups ?? [], groupId, fn) }
+    )
+  }
+  function removeFromGroupTree(groups, groupId) {
+    return groups
+      .filter(g => g.id !== groupId)
+      .map(g => ({ ...g, groups: removeFromGroupTree(g.groups ?? [], groupId) }))
+  }
+  function extractGroupFromTree(groups, groupId) {
+    let found = null
+    function walk(gs) {
+      return gs.filter(g => { if (g.id === groupId) { found = g; return false } return true })
+               .map(g => ({ ...g, groups: walk(g.groups ?? []) }))
+    }
+    return [walk(groups), found]
+  }
+  function updateSliderInGroups(groups, sliderId, value) {
+    return groups.map(g => ({
+      ...g,
+      sliders: g.sliders.map(s => s.id === sliderId ? { ...s, value } : s),
+      groups: updateSliderInGroups(g.groups ?? [], sliderId, value)
+    }))
+  }
+  function removeSliderFromGroups(groups, sliderId) {
+    return groups.map(g => ({
+      ...g,
+      sliders: g.sliders.filter(s => s.id !== sliderId),
+      groups: removeSliderFromGroups(g.groups ?? [], sliderId)
+    }))
+  }
+
   // ── slider value update (no snapshot — too frequent) ─────────────────────────
   function updateSliderValue(sliderId, value) {
     updatePane(paneId, p => ({
       tabs: p.tabs.map(t => ({
         ...t,
         sliders: t.sliders.map(s => s.id === sliderId ? { ...s, value } : s),
-        groups:  t.groups.map(g => ({ ...g,
-          sliders: g.sliders.map(s => s.id === sliderId ? { ...s, value } : s)
-        }))
+        groups:  updateSliderInGroups(t.groups, sliderId, value)
       }))
     }))
   }
@@ -112,7 +146,7 @@
       if (dt === 'slider') reorderSlider(di, fromTabId, fromGroupId, id, pos)
     } else if (type === 'group-header') {
       if (dt === 'slider') moveSliderToGroup(di, fromTabId, fromGroupId, id)
-      else if (dt === 'group') reorderGroup(di, fromTabId, id)
+      else if (dt === 'group') nestGroupInGroup(di, fromTabId, id)
     }
     endDrag()
     postStateSnapshot()
@@ -210,20 +244,6 @@
     }))
   }
 
-  function reorderGroup(dragId, fromTabId, targetId) {
-    if (dragId === targetId) return
-    mutateTabs(tabs => tabs.map(t => {
-      if (t.id !== fromTabId) return t
-      const groups  = [...t.groups]
-      const fromIdx = groups.findIndex(g => g.id === dragId)
-      if (fromIdx < 0 || !groups.find(g => g.id === targetId)) return t
-      const [moved] = groups.splice(fromIdx, 1)
-      const toIdx   = groups.findIndex(g => g.id === targetId)
-      groups.splice(toIdx, 0, moved)
-      return { ...t, groups }
-    }))
-  }
-
   function moveSliderToGroup(sliderId, fromTabId, fromGroupId, targetGroupId) {
     if (fromGroupId === targetGroupId) return
     let slider = null
@@ -231,20 +251,35 @@
       const t1 = tabs.map(t => {
         if (t.id !== fromTabId) return t
         if (fromGroupId) {
-          return { ...t, groups: t.groups.map(g => {
-            if (g.id !== fromGroupId) return g
+          return { ...t, groups: mapGroupTree(t.groups, fromGroupId, g => {
             slider = g.sliders.find(s => s.id === sliderId)
-            return { ...g, sliders: g.sliders.filter(s => s.id !== sliderId) }
+            return { sliders: g.sliders.filter(s => s.id !== sliderId) }
           })}
         }
         slider = t.sliders.find(s => s.id === sliderId)
         return { ...t, sliders: t.sliders.filter(s => s.id !== sliderId) }
       })
       if (!slider) return tabs
-      return t1.map(t => t.id === fromTabId
-        ? { ...t, groups: t.groups.map(g => g.id === targetGroupId ? { ...g, sliders: [...g.sliders, slider] } : g) }
-        : t)
+      return t1.map(t => t.id !== fromTabId ? t : {
+        ...t,
+        groups: mapGroupTree(t.groups, targetGroupId, g => ({ sliders: [...g.sliders, slider] }))
+      })
     })
+  }
+
+  function nestGroupInGroup(sourceGroupId, fromTabId, targetGroupId) {
+    if (sourceGroupId === targetGroupId) return
+    mutateTabs(tabs => tabs.map(t => {
+      if (t.id !== fromTabId) return t
+      const [withoutSource, source] = extractGroupFromTree(t.groups, sourceGroupId)
+      if (!source) return t
+      return {
+        ...t,
+        groups: mapGroupTree(withoutSource, targetGroupId, g => ({
+          groups: [...(g.groups ?? []), source]
+        }))
+      }
+    }))
   }
 
   // ── selection ─────────────────────────────────────────────────────────────────
@@ -282,62 +317,77 @@
     mutateTabs(tabs => tabs.map(t => {
       if (t.id !== activeTab.id) return t
       const remaining = t.sliders.filter(s => { if (selectedIds.has(s.id)) { groupSliders.push(s); return false } return true })
-      const newGroup  = { id: 'g_' + Date.now(), label: 'Group', collapsed: false, sliders: groupSliders }
+      const newGroup  = { id: 'g_' + Date.now(), label: 'Group', collapsed: false, sliders: groupSliders, groups: [] }
       return { ...t, sliders: remaining, groups: [...t.groups, newGroup] }
     }))
     selectedIds = new Set()
   }
 
-  // ── group helpers ─────────────────────────────────────────────────────────────
+  // ── group helpers (recursive for nested groups) ───────────────────────────────
   function toggleGroup(groupId) {
-    mutateTabs(tabs => tabs.map(t => ({ ...t, groups: t.groups.map(g => g.id === groupId ? { ...g, collapsed: !g.collapsed } : g) })))
+    mutateTabs(tabs => tabs.map(t => ({
+      ...t,
+      groups: mapGroupTree(t.groups, groupId, g => ({ collapsed: !g.collapsed }))
+    })))
   }
   function renameGroup(groupId, label) {
-    mutateTabs(tabs => tabs.map(t => ({ ...t, groups: t.groups.map(g => g.id === groupId ? { ...g, label } : g) })))
+    mutateTabs(tabs => tabs.map(t => ({
+      ...t,
+      groups: mapGroupTree(t.groups, groupId, () => ({ label }))
+    })))
   }
   function removeGroup(groupId) {
     mutateTabs(tabs => tabs.map(t => {
       if (t.id !== activeTab.id) return t
-      const group    = t.groups.find(g => g.id === groupId)
-      const promoted = group?.sliders ?? []
-      return { ...t, sliders: [...t.sliders, ...promoted], groups: t.groups.filter(g => g.id !== groupId) }
+      // Top-level: promote sliders + sub-groups to tab
+      const topIdx = t.groups.findIndex(g => g.id === groupId)
+      if (topIdx >= 0) {
+        const rem = t.groups[topIdx]
+        return {
+          ...t,
+          sliders: [...t.sliders, ...(rem.sliders ?? [])],
+          groups:  [...t.groups.filter(g => g.id !== groupId), ...(rem.groups ?? [])]
+        }
+      }
+      // Nested: just remove (no promotion)
+      return { ...t, groups: removeFromGroupTree(t.groups, groupId) }
     }))
   }
 
   // ── slider/group removal ──────────────────────────────────────────────────────
   function removeSlider(tabId, sliderId) {
-    mutateTabs(tabs => tabs.map(t => {
-      if (t.id !== tabId) return t
-      return {
+    mutateTabs(tabs => tabs.map(t =>
+      t.id !== tabId ? t : {
         ...t,
         sliders: t.sliders.filter(s => s.id !== sliderId),
-        groups:  t.groups.map(g => ({ ...g, sliders: g.sliders.filter(s => s.id !== sliderId) }))
+        groups:  removeSliderFromGroups(t.groups, sliderId)
       }
-    }))
+    ))
     const next = new Set(selectedIds); next.delete(sliderId); selectedIds = next
   }
 
   // ── corner drag (split / collapse) ───────────────────────────────────────────
   function onCornerPreview(detail) {
     if (!detail) {
-      if (liveSplitId) { liveSplitId = null; liveSplitRect = null; postStateSnapshot() }
-      cornerPreview = null
+      collapsePreview.set(null)
+      if (liveSplitId) cleanupLiveSplit(true)
       return
     }
     if (detail.kind === 'collapse') {
-      cornerPreview = { kind: 'collapse' }
+      const neighborId = findNeighborPane($layout, paneId, detail.dir, detail.side)
+      collapsePreview.set(neighborId ?? null)
       return
     }
-    // kind === 'split': create the split immediately on first preview event
-    if (!liveSplitId) {
-      liveSplitRect = paneEl.getBoundingClientRect()
-      const ratio = clampRatio(ratioFromRect(detail, liveSplitRect))
-      splitPane(paneId, detail.dir, detail.side, ratio)
-      liveSplitId = findParentSplitId($layout, paneId)
-    } else {
-      const ratio = clampRatio(ratioFromRect(detail, liveSplitRect))
-      setRatio(liveSplitId, ratio)
-    }
+    // kind === 'split': create split immediately, then use window listeners for live resize
+    if (liveSplitId) return  // already in progress
+    liveSplitRect = paneEl.getBoundingClientRect()
+    liveSplitDir  = detail.dir
+    splitPane(paneId, detail.dir, detail.side, clampRatio(ratioFromRect(detail, liveSplitRect)))
+    liveSplitId = findParentSplitId($layout, paneId)
+    // Window listeners survive the DOM restructure caused by splitPane
+    window.addEventListener('pointermove',   onLiveSplitMove)
+    window.addEventListener('pointerup',     onLiveSplitUp)
+    window.addEventListener('pointercancel', onLiveSplitUp)
   }
 
   function onCornerCommit(detail) {
@@ -345,12 +395,25 @@
     if (detail.kind === 'collapse') {
       const neighborId = findNeighborPane($layout, paneId, detail.dir, detail.side)
       if (neighborId) collapsePane(neighborId)
+      collapsePreview.set(null)
+      postStateSnapshot()
     }
-    // split: already created during preview, just cleanup
-    liveSplitId = null
-    liveSplitRect = null
-    cornerPreview = null
-    postStateSnapshot()
+    // split commit handled by onLiveSplitUp (window listener)
+  }
+
+  function onLiveSplitMove(e) {
+    if (!liveSplitId || !liveSplitRect || !liveSplitDir) return
+    setRatio(liveSplitId, clampRatio(ratioFromRect({ dir: liveSplitDir, clientX: e.clientX, clientY: e.clientY }, liveSplitRect)))
+  }
+
+  function onLiveSplitUp() { cleanupLiveSplit(true) }
+
+  function cleanupLiveSplit(doSnapshot) {
+    window.removeEventListener('pointermove',   onLiveSplitMove)
+    window.removeEventListener('pointerup',     onLiveSplitUp)
+    window.removeEventListener('pointercancel', onLiveSplitUp)
+    liveSplitId = null; liveSplitRect = null; liveSplitDir = null
+    if (doSnapshot) postStateSnapshot()
   }
 
   function ratioFromRect({ dir, clientX, clientY }, rect) {
@@ -517,13 +580,14 @@
           on:sliderRowDragOver={e    => setDropTarget('slider-row', e.detail.sliderId, e.detail.pos)}
           on:sliderRowDragLeave={e   => clearDropTarget('slider-row', e.detail.sliderId)}
           on:sliderRowDrop={e        => executeDrop('slider-row', e.detail.sliderId, e.detail.pos)}
+          on:capture={e              => postToCs({ type: 'capture', tabId: activeTabId, groupId: e.detail.groupId })}
         />
       {/each}
     {/if}
   </section>
 
-  <!-- corner collapse intent overlay -->
-  {#if cornerPreview?.kind === 'collapse'}
+  <!-- collapse intent overlay (shown on the pane that WOULD be collapsed) -->
+  {#if $collapsePreview === paneId}
     <div class="intent-overlay intent-collapse"></div>
   {/if}
 

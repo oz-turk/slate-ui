@@ -60,9 +60,26 @@ public class SlateWindow : Form
         var win = _instance;
         win?.BeginInvoke((Action)(() =>
         {
-            if (_latestValues.Count == 0) { _solveRunning = false; return; }
-            ApplyLatestValues();
+            if (_latestValues.Count == 0) _solveRunning = false;
+            else ApplyLatestValues();
+            PushSliderNameUpdates();
         }));
+    }
+
+    private static void PushSliderNameUpdates()
+    {
+        var sliders = _instance?._sliders;
+        if (sliders == null) return;
+        foreach (var kv in sliders)
+        {
+            var name = kv.Value.NickName;
+            if (string.IsNullOrWhiteSpace(name)) continue;
+            _instance?.PostToJs(System.Text.Json.JsonSerializer.Serialize(new {
+                type = "slider_name_update",
+                id   = kv.Key,
+                name
+            }));
+        }
     }
 
     private static void ApplyLatestValues()
@@ -205,7 +222,8 @@ public class SlateWindow : Form
 
                 case "capture":
                     string tabId = root.TryGetProperty("tabId", out var t) ? t.GetString() ?? "main" : "main";
-                    CaptureSelected(tabId);
+                    string? groupId = root.TryGetProperty("groupId", out var g) ? g.GetString() : null;
+                    CaptureSelected(tabId, groupId);
                     break;
 
                 case "ui_ready":
@@ -230,9 +248,9 @@ public class SlateWindow : Form
         catch (Exception ex) { Log($"OnMessageFromJs error: {ex.GetType().Name}: {ex.Message}"); }
     }
 
-    private void CaptureSelected(string tabId)
+    private void CaptureSelected(string tabId, string? groupId = null)
     {
-        Log($"CaptureSelected called, tabId='{tabId}'");
+        Log($"CaptureSelected called, tabId='{tabId}', groupId='{groupId}'");
 
         var doc = HostDocument
                ?? Grasshopper.Instances.ActiveCanvas?.Document;
@@ -249,7 +267,7 @@ public class SlateWindow : Form
         foreach (var s in sliders)
         {
             Log($"  Adding: '{s.NickName}' [{s.Slider.Minimum}–{s.Slider.Maximum}]");
-            AddSlider(tabId, s);
+            AddSlider(tabId, groupId, s);
         }
 
         Log($"Capture done.");
@@ -265,7 +283,10 @@ public class SlateWindow : Form
 
     // ── public API ────────────────────────────────────────────────────────────
 
-    public void AddSlider(string tabId, GH_NumberSlider slider)
+    public void AddSlider(string tabId, GH_NumberSlider slider) =>
+        AddSlider(tabId, null, slider);
+
+    public void AddSlider(string tabId, string? groupId, GH_NumberSlider slider)
     {
         string id = slider.InstanceGuid.ToString();
         _sliders[id] = slider;
@@ -276,7 +297,8 @@ public class SlateWindow : Form
             slider.NickName,
             (double)slider.Slider.Minimum,
             (double)slider.Slider.Maximum,
-            (double)slider.CurrentValue));
+            (double)slider.CurrentValue,
+            groupId));
     }
 
     public void ClearAll()
