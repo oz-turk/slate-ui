@@ -1,0 +1,17 @@
+# Build outputs
+src/bin/
+src/obj/
+src/Resources/assets/
+
+# Node
+ui/node_modules/
+ui/dist/
+
+# Rider / VS
+.idea/
+.vs/
+*.user
+
+# OS
+.DS_Store
+Thumbs.db

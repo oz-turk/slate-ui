@@ -1,0 +1,56 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net7.0-windows</TargetFramework>
+    <Version>0.1.0</Version>
+    <AssemblyName>Slate</AssemblyName>
+    <RootNamespace>Slate</RootNamespace>
+    <TargetExt>.gha</TargetExt>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWindowsForms>true</UseWindowsForms>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="Grasshopper">
+      <HintPath>C:\Program Files\Rhino 8\Plug-ins\Grasshopper\Grasshopper.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="GH_IO">
+      <HintPath>C:\Program Files\Rhino 8\Plug-ins\Grasshopper\GH_IO.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="RhinoCommon">
+      <HintPath>C:\Program Files\Rhino 8\System\RhinoCommon.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <!-- Use Rhino's own Core.dll — avoids version mismatch at runtime -->
+    <Reference Include="Microsoft.Web.WebView2.Core">
+      <HintPath>C:\Program Files\Rhino 8\System\Microsoft.Web.WebView2.Core.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+  </ItemGroup>
+
+  <!-- WinForms wrapper must match Core version (1.0.1938.49) -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.1938.49" />
+  </ItemGroup>
+
+  <!-- Embed compiled Svelte output -->
+  <ItemGroup>
+    <EmbeddedResource Include="Resources\**\*" />
+  </ItemGroup>
+
+  <Target Name="DeployToGrasshopper" AfterTargets="Build">
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(APPDATA)\Grasshopper\Libraries" />
+    <!-- Only WinForms.dll — Core.dll is already in Rhino\System\ -->
+    <Copy SourceFiles="$(TargetDir)Microsoft.Web.WebView2.WinForms.dll"
+          DestinationFolder="$(APPDATA)\Grasshopper\Libraries"
+          Condition="Exists('$(TargetDir)Microsoft.Web.WebView2.WinForms.dll')" />
+    <Copy SourceFiles="$(TargetDir)runtimes\win-x64\native\WebView2Loader.dll"
+          DestinationFolder="$(APPDATA)\Grasshopper\Libraries"
+          Condition="Exists('$(TargetDir)runtimes\win-x64\native\WebView2Loader.dll')" />
+  </Target>
+
+</Project>
