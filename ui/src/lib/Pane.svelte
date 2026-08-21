@@ -8,6 +8,8 @@
   import { tabDrag, itemDrag, collapsePreview } from '../stores/dragState.js'
   import { mode } from '../stores/uiState.js'
   import { postToCs, postStateSnapshot } from './ipc.js'
+  import { flip } from 'svelte/animate'
+  import { cubicOut } from 'svelte/easing'
 
   export let paneId
 
@@ -21,6 +23,8 @@
   let selectedIds   = new Set()
   let activeDrag    = null
   let dropTarget    = null
+  let lastReorderKey = null  // dedupe key so hovering the same slider-row spot doesn't re-splice every event
+  let reorderRaf      = null // pending rAF for the deferred live reorder (see setDropTarget)
   let splitPreview = null   // { dir, side, ratio } | null — live preview while dragging
 
   // ── tab drag (cross-pane) drop state ─────────────────────────────────────────
@@ -35,6 +39,12 @@
       return { tabs }
     })
     postStateSnapshot()
+  }
+
+  // same as mutateTabs but skips the snapshot post — used for live drag reorder,
+  // which fires on every hover change; snapshot is sent once when the drag ends
+  function mutateTabsQuiet(fn) {
+    updatePane(paneId, p => ({ tabs: fn([...p.tabs]) }))
   }
 
   function setActive(id) {
@@ -125,10 +135,28 @@
     activeDrag = { type, id, fromTabId, fromGroupId }
     itemDrag.set({ type, id, fromPaneId: paneId, fromTabId, fromGroupId })
   }
-  function endDrag() { activeDrag = null; dropTarget = null; itemDrag.set(null) }
-  function setDropTarget(type, id, pos = null) {
+  function endDrag() {
+    activeDrag = null; dropTarget = null; itemDrag.set(null); lastReorderKey = null
+    if (reorderRaf) { cancelAnimationFrame(reorderRaf); reorderRaf = null }
+  }
+  function setDropTarget(type, id, pos = null, groupId = null) {
     if (!activeDrag) return
-    dropTarget = { type, id, pos }
+    dropTarget = { type, id, pos, groupId }
+    if (type === 'slider-row' && activeDrag.type === 'slider') {
+      const key = `${id}:${pos}:${groupId}`
+      if (key !== lastReorderKey) {
+        lastReorderKey = key
+        // Defer the DOM-reordering mutation off the dragover event itself —
+        // moving the hovered node mid-event confuses the browser's native
+        // drag feedback and shows a "not-allowed" cursor. Doing it a frame
+        // later lets the browser finish registering preventDefault() first.
+        if (reorderRaf) cancelAnimationFrame(reorderRaf)
+        reorderRaf = requestAnimationFrame(() => {
+          reorderRaf = null
+          if (activeDrag) liveReorderSlider(id, groupId, pos)
+        })
+      }
+    }
   }
   function clearDropTarget(type, id) {
     if (dropTarget?.type === type && dropTarget.id === id) dropTarget = null
@@ -141,12 +169,11 @@
       if (fromTabId === id) { endDrag(); return }
       if (dt === 'slider') moveSliderToTab(di, fromTabId, fromGroupId, id)
       else                 moveGroupToTab(di, fromTabId, id)
-    } else if (type === 'slider-row') {
-      if (dt === 'slider') reorderSlider(di, fromTabId, fromGroupId, id, pos)
     } else if (type === 'group-header') {
       if (dt === 'slider') moveSliderToGroup(di, fromTabId, fromGroupId, id)
       else if (dt === 'group') nestGroupInGroup(di, fromTabId, id)
     }
+    // slider-row reordering already happened live during dragover — drop just finalizes
     endDrag()
     postStateSnapshot()
   }
@@ -206,41 +233,52 @@
     })
   }
 
-  function reorderSlider(dragId, fromTabId, fromGroupId, targetId, pos) {
-    if (dragId === targetId) return
-    if (fromGroupId) {
-      // Move slider from group to top-level, positioned near targetId
-      let slider = null
-      mutateTabs(tabs => {
-        const t1 = tabs.map(t => {
-          if (t.id !== fromTabId) return t
-          return { ...t, groups: t.groups.map(g => {
-            if (g.id !== fromGroupId) return g
-            slider = g.sliders.find(s => s.id === dragId)
-            return { ...g, sliders: g.sliders.filter(s => s.id !== dragId) }
-          })}
+  // Reorders live, on every dragover hover change (not just on drop), so siblings
+  // visibly shift out of the way as the drag progresses. Handles moving across
+  // group boundaries (or in/out of a group) the same way the old drop-time
+  // reorder did — insert next to targetId, in whichever list (top-level or
+  // targetGroupId's) it lives in.
+  function liveReorderSlider(targetId, targetGroupId, pos) {
+    if (!activeDrag || activeDrag.id === targetId) return
+    const dragId      = activeDrag.id
+    const fromGroupId = activeDrag.fromGroupId
+
+    mutateTabsQuiet(tabs => tabs.map(t => {
+      if (t.id !== activeDrag.fromTabId) return t
+
+      let slider     = null
+      let groups     = t.groups
+      let topSliders = t.sliders
+
+      if (fromGroupId) {
+        groups = mapGroupTree(groups, fromGroupId, g => {
+          slider = g.sliders.find(s => s.id === dragId)
+          return { sliders: g.sliders.filter(s => s.id !== dragId) }
         })
-        if (!slider) return tabs
-        return t1.map(t => {
-          if (t.id !== fromTabId) return t
-          const sliders = [...t.sliders]
+      } else {
+        slider     = topSliders.find(s => s.id === dragId)
+        topSliders = topSliders.filter(s => s.id !== dragId)
+      }
+      if (!slider) return t
+
+      if (targetGroupId) {
+        groups = mapGroupTree(groups, targetGroupId, g => {
+          const sliders = [...g.sliders]
           const toIdx = sliders.findIndex(s => s.id === targetId)
           sliders.splice(toIdx < 0 ? sliders.length : pos === 'after' ? toIdx + 1 : toIdx, 0, slider)
-          return { ...t, sliders }
+          return { sliders }
         })
-      })
-      return
-    }
-    mutateTabs(tabs => tabs.map(t => {
-      if (t.id !== fromTabId) return t
-      const sliders = [...t.sliders]
-      const fromIdx = sliders.findIndex(s => s.id === dragId)
-      if (fromIdx < 0 || !sliders.find(s => s.id === targetId)) return t
-      const [moved] = sliders.splice(fromIdx, 1)
-      const toIdx   = sliders.findIndex(s => s.id === targetId)
-      sliders.splice(pos === 'after' ? toIdx + 1 : toIdx, 0, moved)
-      return { ...t, sliders }
+      } else {
+        const sliders = [...topSliders]
+        const toIdx = sliders.findIndex(s => s.id === targetId)
+        sliders.splice(toIdx < 0 ? sliders.length : pos === 'after' ? toIdx + 1 : toIdx, 0, slider)
+        topSliders = sliders
+      }
+
+      return { ...t, sliders: topSliders, groups }
     }))
+
+    activeDrag = { ...activeDrag, fromGroupId: targetGroupId }
   }
 
   function moveSliderToGroup(sliderId, fromTabId, fromGroupId, targetGroupId) {
@@ -523,7 +561,10 @@
     {/if}
   </header>
 
-  <section class="content">
+  <section class="content"
+    on:dragenter|preventDefault={e => activeDrag && (e.dataTransfer.dropEffect = 'move')}
+    on:dragover|preventDefault={e  => activeDrag && (e.dataTransfer.dropEffect = 'move')}
+  >
     {#if !activeTab || (activeTab.sliders.length === 0 && activeTab.groups.length === 0)}
       <div class="empty">
         {#if $mode === 'edit'}
@@ -533,22 +574,24 @@
         {/if}
       </div>
     {:else}
-      {#each activeTab.sliders as slider (slider.id)}
-        <SliderRow
-          {slider} mode={$mode}
-          selected={selectedIds.has(slider.id)}
-          dropAbove={dropTarget?.type === 'slider-row' && dropTarget.id === slider.id && dropTarget.pos === 'before'}
-          dropBelow={dropTarget?.type === 'slider-row' && dropTarget.id === slider.id && dropTarget.pos === 'after'}
-          on:change={e      => onSliderChange(slider.id, e.detail)}
-          on:commit={e      => onSliderCommit(slider.id, e.detail)}
-          on:select={e      => onSliderSelect(slider.id, e.detail)}
-          on:remove={() => removeSlider(activeTab.id, slider.id)}
-          on:dragStart={() => startDrag('slider', slider.id, activeTab.id, null)}
-          on:rowDragOver={e => setDropTarget('slider-row', slider.id, e.detail)}
-          on:rowDragLeave={() => clearDropTarget('slider-row', slider.id)}
-          on:rowDrop={e     => executeDrop('slider-row', slider.id, e.detail)}
-          on:dragEnd={endDrag}
-        />
+      {#each activeTab.sliders as slider, i (slider.id)}
+        <div class="row-slot" animate:flip={{ duration: 150, easing: cubicOut }}>
+          <SliderRow
+            {slider} mode={$mode}
+            selected={selectedIds.has(slider.id)}
+            isFirst={i === 0}
+            isLast={i === activeTab.sliders.length - 1}
+            on:change={e      => onSliderChange(slider.id, e.detail)}
+            on:commit={e      => onSliderCommit(slider.id, e.detail)}
+            on:select={e      => onSliderSelect(slider.id, e.detail)}
+            on:remove={() => removeSlider(activeTab.id, slider.id)}
+            on:dragStart={() => startDrag('slider', slider.id, activeTab.id, null)}
+            on:rowDragOver={e => setDropTarget('slider-row', slider.id, e.detail, null)}
+            on:rowDragLeave={() => clearDropTarget('slider-row', slider.id)}
+            on:rowDrop={e     => executeDrop('slider-row', slider.id, e.detail)}
+            on:dragEnd={endDrag}
+          />
+        </div>
       {/each}
 
       {#each activeTab.groups as group (group.id)}
@@ -570,7 +613,7 @@
           on:groupDragEnd={endDrag}
           on:sliderDragStart={e      => startDrag('slider', e.detail.sliderId, activeTab.id, e.detail.groupId)}
           on:sliderDragEnd={endDrag}
-          on:sliderRowDragOver={e    => setDropTarget('slider-row', e.detail.sliderId, e.detail.pos)}
+          on:sliderRowDragOver={e    => setDropTarget('slider-row', e.detail.sliderId, e.detail.pos, e.detail.groupId)}
           on:sliderRowDragLeave={e   => clearDropTarget('slider-row', e.detail.sliderId)}
           on:sliderRowDrop={e        => executeDrop('slider-row', e.detail.sliderId, e.detail.pos)}
           on:capture={e              => postToCs({ type: 'capture', tabId: activeTabId, groupId: e.detail.groupId })}
@@ -632,6 +675,7 @@
     overflow-y: auto;
     padding: 6px 0;
   }
+  .row-slot { display: block; }
   .content::-webkit-scrollbar       { width: 4px; }
   .content::-webkit-scrollbar-track { background: transparent; }
   .content::-webkit-scrollbar-thumb { background: var(--grid); border-radius: 2px; }

@@ -5,12 +5,27 @@
   export let slider    = {}
   export let mode      = 'preview'
   export let selected  = false
-  export let dropAbove = false
-  export let dropBelow = false
+  export let isFirst   = false
+  export let isLast    = false
 
   let dragging  = false
   let trackEl
   let lastValue = slider.value  // tracked so pointerUp can commit the final value
+
+  // ── row drag (reorder) ───────────────────────────────────────────────────────
+  let rowEl
+  let rowDragging    = false
+  let dragTranslateY = 0   // small elastic follow when dragged past the first/last row
+
+  function onHandleDrag(e) {
+    if (e.clientX === 0 && e.clientY === 0) return  // native "drag ended off-window" tick
+    if (!rowEl) return
+    const rect = rowEl.getBoundingClientRect()
+    const cap  = 14
+    if      (isLast  && e.clientY > rect.bottom) dragTranslateY =  Math.min(e.clientY - rect.bottom, cap)
+    else if (isFirst && e.clientY < rect.top)    dragTranslateY = -Math.min(rect.top - e.clientY, cap)
+    else                                          dragTranslateY = 0
+  }
 
   $: pct = slider.max === slider.min
     ? 0
@@ -61,6 +76,7 @@
   }
 
   function rowDragOver(e) {
+    e.dataTransfer.dropEffect = 'move'
     const rect = e.currentTarget.getBoundingClientRect()
     dispatch('rowDragOver', e.clientY < rect.top + rect.height / 2 ? 'before' : 'after')
   }
@@ -78,8 +94,11 @@
 <!-- svelte-ignore a11y-no-static-element-interactions -->
 <!-- svelte-ignore a11y-click-events-have-key-events -->
 <div class="row" class:edit={mode === 'edit'} class:selected
-    class:drop-above={dropAbove} class:drop-below={dropBelow}
+    class:row-dragging={rowDragging}
+    bind:this={rowEl}
+    style={dragTranslateY ? `transform: translateY(${dragTranslateY}px)` : ''}
     on:click={e => mode === 'edit' && dispatch('select', e.shiftKey || e.ctrlKey)}
+    on:dragenter|preventDefault={e => e.dataTransfer.dropEffect = 'move'}
     on:dragover|preventDefault={rowDragOver}
     on:dragleave={rowDragLeave}
     on:drop|preventDefault={rowDrop}
@@ -89,8 +108,9 @@
     <div class="handle"
         draggable="true"
         on:click|stopPropagation
-        on:dragstart={e => { e.dataTransfer.effectAllowed = 'move'; dispatch('dragStart') }}
-        on:dragend={() => dispatch('dragEnd')}
+        on:dragstart={e => { e.dataTransfer.effectAllowed = 'move'; rowDragging = true; dispatch('dragStart') }}
+        on:drag={onHandleDrag}
+        on:dragend={() => { rowDragging = false; dragTranslateY = 0; dispatch('dragEnd') }}
     >
       <svg width="8" height="12" viewBox="0 0 8 12" fill="currentColor">
         <circle cx="2" cy="2"  r="1.2"/><circle cx="6" cy="2"  r="1.2"/>
@@ -148,26 +168,14 @@
     padding: 0 12px;
     height: 44px;
     border-bottom: 1px solid var(--grid);
-    transition: background 0.1s;
+    transition: background 0.1s, transform 0.08s ease-out;
     position: relative;
   }
   .row:hover          { background: var(--bg); }
   .row.edit           { grid-template-columns: 20px 110px 44px 1fr 44px 68px 24px; padding: 0 8px 0 6px; }
   .row.selected       { background: rgba(var(--accent-rgb), 0.15); }
   .row.selected:hover { background: rgba(var(--accent-rgb), 0.22); }
-
-  .row.drop-above::before,
-  .row.drop-below::after {
-    content: '';
-    position: absolute;
-    left: 0; right: 0;
-    height: 2px;
-    background: var(--accent);
-    pointer-events: none;
-    z-index: 1;
-  }
-  .row.drop-above::before { top: -1px; }
-  .row.drop-below::after  { bottom: -1px; }
+  .row.row-dragging   { opacity: 0.5; position: relative; z-index: 2; }
 
   .handle {
     display: flex;

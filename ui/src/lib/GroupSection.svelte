@@ -1,5 +1,7 @@
 <script>
   import { createEventDispatcher } from 'svelte'
+  import { flip } from 'svelte/animate'
+  import { cubicOut } from 'svelte/easing'
   import SliderRow from './SliderRow.svelte'
   const dispatch = createEventDispatcher()
 
@@ -85,22 +87,24 @@
 
   {#if !group.collapsed}
     <div class="group-body">
-      {#each group.sliders as slider (slider.id)}
-        <SliderRow
-          {slider} {mode}
-          selected={selectedIds.has(slider.id)}
-          dropAbove={dropTarget?.type === 'slider-row' && dropTarget.id === slider.id && dropTarget.pos === 'before'}
-          dropBelow={dropTarget?.type === 'slider-row' && dropTarget.id === slider.id && dropTarget.pos === 'after'}
-          on:change={e      => dispatch('sliderChange',      { id: slider.id, value: e.detail })}
-          on:commit={e      => dispatch('sliderCommit',      { id: slider.id, value: e.detail })}
-          on:select={e      => dispatch('sliderSelect',      { id: slider.id, multi: e.detail })}
-          on:remove={()      => dispatch('sliderRemove',     { groupId: group.id, sliderId: slider.id })}
-          on:dragStart={()  => dispatch('sliderDragStart',   { sliderId: slider.id, groupId: group.id })}
-          on:dragEnd={()    => dispatch('sliderDragEnd')}
-          on:rowDragOver={e => dispatch('sliderRowDragOver', { sliderId: slider.id, pos: e.detail })}
-          on:rowDragLeave={()=> dispatch('sliderRowDragLeave',{ sliderId: slider.id })}
-          on:rowDrop={e     => dispatch('sliderRowDrop',     { sliderId: slider.id, pos: e.detail })}
-        />
+      {#each group.sliders as slider, i (slider.id)}
+        <div class="row-slot" animate:flip={{ duration: 150, easing: cubicOut }}>
+          <SliderRow
+            {slider} {mode}
+            selected={selectedIds.has(slider.id)}
+            isFirst={i === 0}
+            isLast={i === group.sliders.length - 1}
+            on:change={e      => dispatch('sliderChange',      { id: slider.id, value: e.detail })}
+            on:commit={e      => dispatch('sliderCommit',      { id: slider.id, value: e.detail })}
+            on:select={e      => dispatch('sliderSelect',      { id: slider.id, multi: e.detail })}
+            on:remove={()      => dispatch('sliderRemove',     { groupId: group.id, sliderId: slider.id })}
+            on:dragStart={()  => dispatch('sliderDragStart',   { sliderId: slider.id, groupId: group.id })}
+            on:dragEnd={()    => dispatch('sliderDragEnd')}
+            on:rowDragOver={e => dispatch('sliderRowDragOver', { sliderId: slider.id, pos: e.detail, groupId: group.id })}
+            on:rowDragLeave={()=> dispatch('sliderRowDragLeave',{ sliderId: slider.id })}
+            on:rowDrop={e     => dispatch('sliderRowDrop',     { sliderId: slider.id, pos: e.detail })}
+          />
+        </div>
       {/each}
 
       {#each group.groups ?? [] as subGroup (subGroup.id)}
@@ -252,6 +256,7 @@
   .del-group:hover { background: var(--grid); color: rgba(var(--text-rgb), 0.58); }
 
   .group-body { }
+  .row-slot   { display: block; }
 
   .empty-group {
     padding: 10px 28px;
