@@ -144,7 +144,7 @@ public class SlatePanel : GH_Component
                 var panels     = selected.OfType<GH_Panel>().ToList();
                 var itemPickers = selected.OfType<GH_ItemPicker>().ToList();
                 var humanLists  = selected.Where(SlateWindow.IsHumanValueList).OfType<IGH_Param>().ToList();
-                var colourPickers = selected.OfType<GH_ColourPickerObject>().ToList();
+                var colourPickers = selected.OfType<GH_ColourSwatch>().ToList();
                 var pancakeButtons = selected.Where(SlateWindow.IsPancakeTrueOnlyButton).OfType<IGH_Param>().ToList();
 
                 if (sliders.Count == 0 && toggles.Count == 0 && buttons.Count == 0 && valueLists.Count == 0 && panels.Count == 0 && itemPickers.Count == 0 && humanLists.Count == 0 && colourPickers.Count == 0 && pancakeButtons.Count == 0)

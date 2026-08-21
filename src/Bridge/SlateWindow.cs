@@ -60,7 +60,7 @@ public class SlateWindow : Form
     // input. Reflected rather than referenced at compile time, so Slate still
     // builds and runs fine on a machine without Human installed.
     private readonly Dictionary<string, IGH_Param> _humanValueLists = new();
-    private readonly Dictionary<string, GH_ColourPickerObject> _colourPickers = new();
+    private readonly Dictionary<string, GH_ColourSwatch> _colourPickers = new();
 
     // Pancake plugin's "True Only Button" (Pancake.GH.Params.TrueOnlyBtn) — a
     // GH_Param subclass with the same ButtonDown shape as core GH_ButtonObject,
@@ -228,7 +228,7 @@ public class SlateWindow : Form
         foreach (var kv in win._colourPickers)
         {
             var name = kv.Value.NickName;
-            var hex  = ColorToHex(kv.Value.Colour);
+            var hex  = ColorToHex(kv.Value.SwatchColour);
             var fingerprint = name + hex;
             if (_lastPushedColours.TryGetValue(kv.Key, out var last) && last == fingerprint) continue;
             _lastPushedColours[kv.Key] = fingerprint;
@@ -568,7 +568,7 @@ public class SlateWindow : Form
                     string hex = root.GetProperty("value").GetString() ?? "";
                     if (_colourPickers.TryGetValue(cid, out var picker))
                     {
-                        picker.Colour = HexToColor(hex);
+                        picker.SwatchColour = HexToColor(hex);
                         picker.ExpireSolution(true);
                     }
                     break;
@@ -645,7 +645,7 @@ public class SlateWindow : Form
         foreach (var h in humanLists)
             if (h is IGH_Param hp) AddHumanValueList(tabId, groupId, hp);
 
-        var colourPickers = selected.OfType<GH_ColourPickerObject>().ToList();
+        var colourPickers = selected.OfType<GH_ColourSwatch>().ToList();
         foreach (var c in colourPickers)
             AddColourPicker(tabId, groupId, c);
 
@@ -758,12 +758,12 @@ public class SlateWindow : Form
         PostToJs(SlateEvent.HumanValueListAdded(tabId, id, humanValueList.NickName, options, value, multi, groupId));
     }
 
-    public void AddColourPicker(string tabId, string? groupId, GH_ColourPickerObject picker)
+    public void AddColourPicker(string tabId, string? groupId, GH_ColourSwatch picker)
     {
         string id = picker.InstanceGuid.ToString();
         _colourPickers[id] = picker;
 
-        PostToJs(SlateEvent.ColourPickerAdded(tabId, id, picker.NickName, ColorToHex(picker.Colour), groupId));
+        PostToJs(SlateEvent.ColourPickerAdded(tabId, id, picker.NickName, ColorToHex(picker.SwatchColour), groupId));
     }
 
     public void AddPancakeTrueOnlyButton(string tabId, string? groupId, IGH_Param button)
@@ -819,7 +819,7 @@ public class SlateWindow : Form
                     : Enumerable.Empty<IGH_Param>())
                 .ToDictionary(p => p.InstanceGuid.ToString(), p => p);
             var docColourPickers = doc.Objects
-                .OfType<GH_ColourPickerObject>()
+                .OfType<GH_ColourSwatch>()
                 .ToDictionary(c => c.InstanceGuid.ToString(), c => c);
             EnsurePancakeReflection();
             var docPancakeButtons = (_pancakeTrueOnlyBtnType != null
@@ -922,7 +922,7 @@ public class SlateWindow : Form
                         if (docColourPickers.TryGetValue(id, out var cp))
                         {
                             _colourPickers[id] = cp;
-                            s["value"] = ColorToHex(cp.Colour);
+                            s["value"] = ColorToHex(cp.SwatchColour);
                             s["name"]  = cp.NickName;
                         }
                         else arr.RemoveAt(i);

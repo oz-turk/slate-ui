@@ -38,6 +38,14 @@
         <span class="kbd">Drag</span>
         Move to another pane
       </span>
+      <span class="hint-item">
+        <span class="kbd">x</span>
+        Delete under mouse
+      </span>
+      <span class="hint-item">
+        <span class="kbd">c</span>
+        Capture into pane under mouse
+      </span>
     {:else}
       <span class="hint-item">
         <span class="kbd">Tab</span>
