@@ -48,7 +48,7 @@ function mapSplit(node, splitId, fn) {
 function doSplit(node, paneId, dir, side, ratio) {
   if (node.type === 'leaf') {
     if (node.paneId !== paneId) return node
-    const fresh = makeLeaf()
+    const fresh = makeLeaf([], null)
     const [a, b] = side === 'before' ? [fresh, node] : [node, fresh]
     return makeSplit(dir, a, b, ratio)
   }

@@ -4,7 +4,7 @@
   import GroupSection from './GroupSection.svelte'
   import ActionBar    from './ActionBar.svelte'
   import CornerHandle from './CornerHandle.svelte'
-  import { layout, updatePane, findLeaf, newTabId, splitPane, collapsePane, setRatio, findParentSplitId, findNeighborPane, moveCrossPaneItem } from '../stores/layout.js'
+  import { layout, updatePane, findLeaf, newTabId, splitPane, collapsePane, findNeighborPane, moveCrossPaneItem } from '../stores/layout.js'
   import { tabDrag, itemDrag, collapsePreview } from '../stores/dragState.js'
   import { mode } from '../stores/uiState.js'
   import { postToCs, postStateSnapshot } from './ipc.js'
@@ -21,12 +21,11 @@
   let selectedIds   = new Set()
   let activeDrag    = null
   let dropTarget    = null
-  let liveSplitId   = null    // splitId of in-progress corner drag split
-  let liveSplitRect = null    // pane bounds captured before split (used for ratio calc)
-  let liveSplitDir  = null    // 'h' | 'v' during live split
+  let splitPreview = null   // { dir, side, ratio } | null — live preview while dragging
 
   // ── tab drag (cross-pane) drop state ─────────────────────────────────────────
-  let edgeZone = null   // 'left' | 'right' | 'top' | 'bottom' | 'center' | null
+  let edgeZone     = null   // 'left' | 'right' | 'top' | 'bottom' | 'center' | null
+  let itemDragHover = false  // true only while a cross-pane item drag is hovering this pane
   let paneEl
 
   // ── pane mutation helpers ─────────────────────────────────────────────────────
@@ -370,24 +369,18 @@
   function onCornerPreview(detail) {
     if (!detail) {
       collapsePreview.set(null)
-      if (liveSplitId) cleanupLiveSplit(true)
+      splitPreview = null
       return
     }
     if (detail.kind === 'collapse') {
       const neighborId = findNeighborPane($layout, paneId, detail.dir, detail.side)
       collapsePreview.set(neighborId ?? null)
+      splitPreview = null
       return
     }
-    // kind === 'split': create split immediately, then use window listeners for live resize
-    if (liveSplitId) return  // already in progress
-    liveSplitRect = paneEl.getBoundingClientRect()
-    liveSplitDir  = detail.dir
-    splitPane(paneId, detail.dir, detail.side, clampRatio(ratioFromRect(detail, liveSplitRect)))
-    liveSplitId = findParentSplitId($layout, paneId)
-    // Window listeners survive the DOM restructure caused by splitPane
-    window.addEventListener('pointermove',   onLiveSplitMove)
-    window.addEventListener('pointerup',     onLiveSplitUp)
-    window.addEventListener('pointercancel', onLiveSplitUp)
+    // kind === 'split': update preview overlay only, DOM stays intact until commit
+    const rect = paneEl.getBoundingClientRect()
+    splitPreview = { dir: detail.dir, side: detail.side, ratio: clampRatio(ratioFromRect(detail, rect)) }
   }
 
   function onCornerCommit(detail) {
@@ -397,23 +390,11 @@
       if (neighborId) collapsePane(neighborId)
       collapsePreview.set(null)
       postStateSnapshot()
+    } else if (detail.kind === 'split' && splitPreview) {
+      splitPane(paneId, splitPreview.dir, splitPreview.side, splitPreview.ratio)
+      splitPreview = null
+      postStateSnapshot()
     }
-    // split commit handled by onLiveSplitUp (window listener)
-  }
-
-  function onLiveSplitMove(e) {
-    if (!liveSplitId || !liveSplitRect || !liveSplitDir) return
-    setRatio(liveSplitId, clampRatio(ratioFromRect({ dir: liveSplitDir, clientX: e.clientX, clientY: e.clientY }, liveSplitRect)))
-  }
-
-  function onLiveSplitUp() { cleanupLiveSplit(true) }
-
-  function cleanupLiveSplit(doSnapshot) {
-    window.removeEventListener('pointermove',   onLiveSplitMove)
-    window.removeEventListener('pointerup',     onLiveSplitUp)
-    window.removeEventListener('pointercancel', onLiveSplitUp)
-    liveSplitId = null; liveSplitRect = null; liveSplitDir = null
-    if (doSnapshot) postStateSnapshot()
   }
 
   function ratioFromRect({ dir, clientX, clientY }, rect) {
@@ -423,6 +404,15 @@
   }
 
   function clampRatio(r) { return Math.max(0.1, Math.min(0.9, r)) }
+
+  function splitPreviewInset({ dir, side, ratio }) {
+    if (dir === 'h') return side === 'before'
+      ? `0 ${(1-ratio)*100}% 0 0`
+      : `0 0 0 ${ratio*100}%`
+    return side === 'before'
+      ? `0 0 ${(1-ratio)*100}% 0`
+      : `${ratio*100}% 0 0 0`
+  }
 
   // ── cross-pane tab drag ───────────────────────────────────────────────────────
   import { moveTab, splitWithTab } from '../stores/layout.js'
@@ -440,6 +430,7 @@
     const isItemDrag = $itemDrag && $itemDrag.fromPaneId !== paneId
     if (!isTabDrag && !isItemDrag) return
     e.preventDefault()
+    if (isItemDrag) itemDragHover = true
     if (!paneEl || !isTabDrag) return
     const rect = paneEl.getBoundingClientRect()
     const x = (e.clientX - rect.left) / rect.width
@@ -453,7 +444,7 @@
   }
 
   function onPaneDragLeave(e) {
-    if (!paneEl?.contains(e.relatedTarget)) edgeZone = null
+    if (!paneEl?.contains(e.relatedTarget)) { edgeZone = null; itemDragHover = false }
   }
 
   function onPaneDrop(e) {
@@ -476,10 +467,12 @@
       const { type, id, fromPaneId: fp, fromTabId: ft, fromGroupId: fg } = $itemDrag
       moveCrossPaneItem(fp, ft, fg, id, type, paneId, activeTabId)
       itemDrag.set(null)
+      itemDragHover = false
       postStateSnapshot()
       return
     }
     edgeZone = null
+    itemDragHover = false
   }
 
   $: canDragTabs   = true
@@ -492,7 +485,7 @@
 <div
   class="pane"
   bind:this={paneEl}
-  class:drop-target={isDropTarget || isDraggingItem}
+  class:drop-target={isDropTarget || itemDragHover}
   on:dragover={onPaneDragOver}
   on:dragleave={onPaneDragLeave}
   on:drop={onPaneDrop}
@@ -586,13 +579,18 @@
     {/if}
   </section>
 
+  <!-- split preview overlay (shows where the new pane will appear) -->
+  {#if splitPreview}
+    <div class="split-preview-pane" style="inset: {splitPreviewInset(splitPreview)}"></div>
+  {/if}
+
   <!-- collapse intent overlay (shown on the pane that WOULD be collapsed) -->
   {#if $collapsePreview === paneId}
     <div class="intent-overlay intent-collapse"></div>
   {/if}
 
-  <!-- cross-pane item drag overlay -->
-  {#if isDraggingItem}
+  <!-- cross-pane item drag overlay (only when hovering) -->
+  {#if itemDragHover}
     <div class="drop-overlay zone-center"></div>
   {/if}
 
@@ -645,6 +643,15 @@
     line-height: 1.7;
   }
   .empty strong { color: #666; font-weight: 500; }
+
+  /* split preview — new pane area highlighted blue */
+  .split-preview-pane {
+    position: absolute;
+    pointer-events: none;
+    z-index: 15;
+    background: #3b7fff1a;
+    border: 2px solid #3b7fff66;
+  }
 
   /* corner collapse intent overlay */
   .intent-overlay {

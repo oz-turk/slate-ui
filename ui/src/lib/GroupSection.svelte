@@ -142,14 +142,9 @@
     position: relative;
   }
 
-  .group.drop-before::before {
-    content: '';
-    position: absolute;
-    top: -1px; left: 0; right: 0;
-    height: 2px;
-    background: #3b7fff;
-    pointer-events: none;
-    z-index: 1;
+  .group.drop-before .group-header {
+    background: #0d1a33 !important;
+    outline: 1px solid #3b7fff55;
   }
 
   .group-header {
