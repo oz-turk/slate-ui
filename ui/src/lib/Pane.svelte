@@ -12,7 +12,7 @@
   import ContextMenu  from './ContextMenu.svelte'
   import { layout, updatePane, findLeaf, newTabId, splitPane, collapsePane, findNeighborPane, moveCrossPaneItem } from '../stores/layout.js'
   import { tabDrag, itemDrag, collapsePreview } from '../stores/dragState.js'
-  import { mode, deleteRequest, captureRequest } from '../stores/uiState.js'
+  import { mode, deleteRequest, captureRequest, clearSelectionTick } from '../stores/uiState.js'
   import { postToCs, postStateSnapshot } from './ipc.js'
   import { flip } from 'svelte/animate'
   import { cubicOut } from 'svelte/easing'
@@ -41,6 +41,9 @@
     postToCs({ type: 'capture', tabId: activeTabId })
     captureRequest.set(null)
   }
+
+  // Escape — every pane clears its own selection, not just the one under the mouse.
+  $: if ($clearSelectionTick) clearSelection()
 
   // ── local UI state ────────────────────────────────────────────────────────────
   let selectedIds   = new Set()

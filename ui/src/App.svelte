@@ -10,7 +10,7 @@
     layout, workspaces, activeWorkspaceId, allLeaves, restoreLayout, restoreWorkspaces,
     updatePane, syncControl, clearAllWorkspaces, makeLeaf, setActiveWorkspace
   } from './stores/layout.js'
-  import { mode, pinned, deleteRequest, captureRequest, settingsOpen } from './stores/uiState.js'
+  import { mode, pinned, deleteRequest, captureRequest, settingsOpen, clearSelectionTick } from './stores/uiState.js'
   import { undo } from './stores/history.js'
   import { postToCs, postStateSnapshot } from './lib/ipc.js'
 
@@ -62,6 +62,11 @@
       }
 
       if (get(mode) !== 'edit') return
+
+      if (e.key === 'Escape') {
+        clearSelectionTick.update(n => n + 1)
+        return
+      }
 
       if (e.key === 'x') {
         const el = document.elementFromPoint(mouseX, mouseY)

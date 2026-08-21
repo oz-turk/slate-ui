@@ -15,3 +15,7 @@ export const captureRequest = writable(null)  // paneId | null
 
 // Toggled by the gear icon in EditToolbar.
 export const settingsOpen = writable(false)
+
+// Escape clears selection everywhere at once — a tick counter rather than a
+// per-pane request, since every Pane (not just one under the mouse) should react.
+export const clearSelectionTick = writable(0)
