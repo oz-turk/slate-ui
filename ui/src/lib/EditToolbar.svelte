@@ -44,17 +44,17 @@
     align-items: center;
     gap: 6px;
     padding: 3px 10px;
-    border: 1px solid #2e2e2e;
+    border: 1px solid var(--grid);
     border-radius: 4px;
     background: transparent;
-    color: #888;
+    color: rgba(var(--text-rgb), 0.58);
     font-size: 11px;
     font-family: inherit;
     cursor: pointer;
     transition: border-color 0.15s, color 0.15s;
   }
-  .mode-btn:hover  { border-color: #444; color: #bbb; }
-  .mode-btn.active { border-color: #3b7fff66; color: #6fa3ff; }
+  .mode-btn:hover  { border-color: var(--border); color: rgba(var(--text-rgb), 0.73); }
+  .mode-btn.active { border-color: rgba(var(--accent-rgb), 0.4); color: var(--accent-light); }
 
   .dot {
     width: 6px;
@@ -62,8 +62,8 @@
     border-radius: 50%;
     flex-shrink: 0;
   }
-  .dot.edit    { background: #6fa3ff; }
-  .dot.preview { background: #555; }
+  .dot.edit    { background: var(--accent-light); }
+  .dot.preview { background: rgba(var(--text-rgb), 0.36); }
 
 .pin-btn {
     display: flex;
@@ -71,15 +71,15 @@
     justify-content: center;
     width: 24px;
     height: 24px;
-    border: 1px solid #2e2e2e;
+    border: 1px solid var(--grid);
     border-radius: 4px;
     background: transparent;
-    color: #555;
+    color: rgba(var(--text-rgb), 0.36);
     cursor: pointer;
     transition: border-color 0.15s, color 0.15s;
     padding: 0;
     flex-shrink: 0;
   }
-  .pin-btn:hover  { border-color: #444; color: #aaa; }
-  .pin-btn.active { border-color: #3b7fff66; color: #6fa3ff; }
+  .pin-btn:hover  { border-color: var(--border); color: rgba(var(--text-rgb), 0.7); }
+  .pin-btn.active { border-color: rgba(var(--accent-rgb), 0.4); color: var(--accent-light); }
 </style>

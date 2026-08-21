@@ -122,17 +122,17 @@
     height: 32px;
     cursor: pointer;
     border-bottom: 2px solid transparent;
-    color: #555;
+    color: rgba(var(--text-rgb), 0.36);
     font-size: 12px;
     white-space: nowrap;
     transition: color 0.15s, border-color 0.15s, background 0.1s;
     flex-shrink: 0;
     user-select: none;
   }
-  .tab:hover              { color: #999; }
-  .tab.active             { color: #e2e2e2; border-bottom-color: #3b7fff; }
-  .tab.drag-target        { color: #666; }
-  .tab.drag-over          { background: #1a2540; color: #8ab4ff; border-bottom-color: #3b7fff88; }
+  .tab:hover              { color: rgba(var(--text-rgb), 0.65); }
+  .tab.active             { color: var(--text); border-bottom-color: var(--border-active); }
+  .tab.drag-target        { color: rgba(var(--text-rgb), 0.43); }
+  .tab.drag-over          { background: rgba(var(--accent-rgb), 0.15); color: var(--accent-light); border-bottom-color: rgba(var(--accent-rgb), 0.53); }
   .tab.being-dragged      { opacity: 0.4; }
 
   .label { pointer-events: none; }
@@ -141,32 +141,32 @@
     display: flex; align-items: center; justify-content: center;
     width: 14px; height: 14px;
     border: none; background: transparent;
-    color: #444; font-size: 13px; line-height: 1;
+    color: rgba(var(--text-rgb), 0.29); font-size: 13px; line-height: 1;
     cursor: pointer; border-radius: 3px;
     transition: background 0.1s, color 0.1s;
     padding: 0;
   }
-  .remove:hover { background: #2e2e2e; color: #999; }
+  .remove:hover { background: var(--grid); color: rgba(var(--text-rgb), 0.65); }
 
   .add-tab {
     display: flex; align-items: center; justify-content: center;
     width: 24px; height: 32px;
     border: none; background: transparent;
-    color: #444; font-size: 16px;
+    color: rgba(var(--text-rgb), 0.29); font-size: 16px;
     cursor: pointer; flex-shrink: 0;
     transition: color 0.1s;
     padding: 0;
   }
-  .add-tab:hover { color: #888; }
+  .add-tab:hover { color: rgba(var(--text-rgb), 0.58); }
 
-  .sep { width: 1px; height: 16px; background: #2a2a2a; margin: 0 2px; flex-shrink: 0; }
+  .sep { width: 1px; height: 16px; background: var(--grid); margin: 0 2px; flex-shrink: 0; }
 
   .capture-btn {
     padding: 3px 8px;
-    border: 1px solid #3b7fff44;
+    border: 1px solid rgba(var(--accent-rgb), 0.27);
     border-radius: 4px;
     background: transparent;
-    color: #6fa3ff88;
+    color: var(--accent-light);
     font-size: 11px;
     font-family: inherit;
     cursor: pointer;
@@ -174,13 +174,13 @@
     flex-shrink: 0;
     white-space: nowrap;
   }
-  .capture-btn:hover { border-color: #3b7fff99; color: #6fa3ff; }
+  .capture-btn:hover { border-color: rgba(var(--accent-rgb), 0.6); color: var(--accent); }
 
   .rename-input {
-    background: #1e1e1e;
-    border: 1px solid #3b7fff88;
+    background: var(--panel-bg);
+    border: 1px solid rgba(var(--accent-rgb), 0.53);
     border-radius: 3px;
-    color: #e2e2e2;
+    color: var(--text);
     font-size: 12px;
     font-family: inherit;
     padding: 1px 5px;

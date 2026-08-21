@@ -138,13 +138,13 @@
 
 <style>
   .group {
-    border-bottom: 1px solid #1c1c1c;
+    border-bottom: 1px solid var(--grid);
     position: relative;
   }
 
   .group.drop-before .group-header {
-    background: #0d1a33 !important;
-    outline: 1px solid #3b7fff55;
+    background: rgba(var(--accent-rgb), 0.12) !important;
+    outline: 1px solid rgba(var(--accent-rgb), 0.33);
   }
 
   .group-header {
@@ -157,12 +157,12 @@
     user-select: none;
     transition: background 0.1s;
   }
-  /* depth-based header color */
-  .group[style*="--depth:0"] .group-header { background: #161616; }
-  .group[style*="--depth:1"] .group-header { background: #131313; }
-  .group[style*="--depth:2"] .group-header { background: #111111; }
+  /* depth-based header color — each level a touch darker than --bg */
+  .group[style*="--depth:0"] .group-header { background: var(--bg); }
+  .group[style*="--depth:1"] .group-header { background: rgba(0, 0, 0, 0.15); }
+  .group[style*="--depth:2"] .group-header { background: rgba(0, 0, 0, 0.28); }
 
-  .group-header:hover          { background: #1c1c1c !important; }
+  .group-header:hover          { background: var(--grid) !important; }
   .group-header.drop-highlight { background: #1a2a1a; outline: 1px solid #3a7a3a44; }
 
   .handle {
@@ -171,11 +171,11 @@
     justify-content: center;
     width: 20px;
     height: 100%;
-    color: #333;
+    color: rgba(var(--text-rgb), 0.2);
     cursor: grab;
     flex-shrink: 0;
   }
-  .handle:hover  { color: #666; }
+  .handle:hover  { color: rgba(var(--text-rgb), 0.43); }
   .handle:active { cursor: grabbing; }
 
   .chevron {
@@ -187,9 +187,9 @@
     flex-shrink: 0;
   }
   /* depth-based chevron/label color */
-  .group[style*="--depth:0"] .chevron { color: #555; }
-  .group[style*="--depth:1"] .chevron { color: #444; }
-  .group[style*="--depth:2"] .chevron { color: #383838; }
+  .group[style*="--depth:0"] .chevron { color: rgba(var(--text-rgb), 0.36); }
+  .group[style*="--depth:1"] .chevron { color: rgba(var(--text-rgb), 0.29); }
+  .group[style*="--depth:2"] .chevron { color: rgba(var(--text-rgb), 0.22); }
   .chevron.open { transform: rotate(90deg); }
 
   .label {
@@ -202,16 +202,16 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .group[style*="--depth:0"] .label { color: #777; }
-  .group[style*="--depth:1"] .label { color: #5a5a5a; }
-  .group[style*="--depth:2"] .label { color: #484848; }
+  .group[style*="--depth:0"] .label { color: rgba(var(--text-rgb), 0.47); }
+  .group[style*="--depth:1"] .label { color: rgba(var(--text-rgb), 0.35); }
+  .group[style*="--depth:2"] .label { color: rgba(var(--text-rgb), 0.28); }
 
   .label-input {
     flex: 1;
-    background: #1e1e1e;
-    border: 1px solid #3b7fff88;
+    background: var(--panel-bg);
+    border: 1px solid rgba(var(--accent-rgb), 0.53);
     border-radius: 3px;
-    color: #e2e2e2;
+    color: var(--text);
     font-size: 11px;
     font-family: inherit;
     padding: 1px 5px;
@@ -220,10 +220,10 @@
 
   .capture-btn {
     padding: 2px 6px;
-    border: 1px solid #3b7fff33;
+    border: 1px solid rgba(var(--accent-rgb), 0.2);
     border-radius: 3px;
     background: transparent;
-    color: #6fa3ff66;
+    color: var(--accent-light);
     font-size: 10px;
     font-family: inherit;
     cursor: pointer;
@@ -231,14 +231,14 @@
     flex-shrink: 0;
     white-space: nowrap;
   }
-  .capture-btn:hover { border-color: #3b7fff88; color: #6fa3ffaa; }
+  .capture-btn:hover { border-color: rgba(var(--accent-rgb), 0.53); color: var(--accent-light); }
 
   .del-group {
     width: 16px;
     height: 16px;
     border: none;
     background: transparent;
-    color: #333;
+    color: rgba(var(--text-rgb), 0.21);
     font-size: 13px;
     cursor: pointer;
     border-radius: 3px;
@@ -249,13 +249,13 @@
     transition: background 0.1s, color 0.1s;
     flex-shrink: 0;
   }
-  .del-group:hover { background: #2e2e2e; color: #888; }
+  .del-group:hover { background: var(--grid); color: rgba(var(--text-rgb), 0.58); }
 
   .group-body { }
 
   .empty-group {
     padding: 10px 28px;
     font-size: 11px;
-    color: #333;
+    color: rgba(var(--text-rgb), 0.21);
   }
 </style>

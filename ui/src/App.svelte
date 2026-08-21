@@ -128,8 +128,8 @@
 <style>
   :global(*, *::before, *::after) { box-sizing: border-box; margin: 0; padding: 0; }
   :global(body) {
-    background: #111;
-    color: #e2e2e2;
+    background: var(--bg);
+    color: var(--text);
     font-family: 'Segoe UI', system-ui, sans-serif;
     font-size: 13px;
     overflow: hidden;
@@ -142,12 +142,12 @@
     flex-direction: column;
     height: 100vh;
   }
-  main.edit { outline: 1px solid #3b7fff33; }
+  main.edit { outline: 1px solid rgba(var(--accent-rgb), 0.2); }
 
   .global-toolbar {
     flex-shrink: 0;
-    background: #161616;
-    border-bottom: 1px solid #1a1a1a;
+    background: var(--panel-bg);
+    border-bottom: 1px solid var(--bg);
   }
 
   .layout-root {

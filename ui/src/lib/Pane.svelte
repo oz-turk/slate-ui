@@ -618,13 +618,13 @@
     height: 100%;
     overflow: hidden;
     position: relative;
-    background: #111;
+    background: var(--bg);
   }
 
   header {
     flex-shrink: 0;
-    background: #161616;
-    border-bottom: 1px solid #252525;
+    background: var(--panel-bg);
+    border-bottom: 1px solid var(--grid);
   }
 
   .content {
@@ -634,23 +634,23 @@
   }
   .content::-webkit-scrollbar       { width: 4px; }
   .content::-webkit-scrollbar-track { background: transparent; }
-  .content::-webkit-scrollbar-thumb { background: #2e2e2e; border-radius: 2px; }
+  .content::-webkit-scrollbar-thumb { background: var(--grid); border-radius: 2px; }
 
   .empty {
     padding: 36px 20px;
-    color: #444;
+    color: rgba(var(--text-rgb), 0.3);
     font-size: 12px;
     line-height: 1.7;
   }
-  .empty strong { color: #666; font-weight: 500; }
+  .empty strong { color: rgba(var(--text-rgb), 0.45); font-weight: 500; }
 
-  /* split preview — new pane area highlighted blue */
+  /* split preview — new pane area highlighted */
   .split-preview-pane {
     position: absolute;
     pointer-events: none;
     z-index: 15;
-    background: #3b7fff1a;
-    border: 2px solid #3b7fff66;
+    background: rgba(var(--accent-rgb), 0.1);
+    border: 2px solid rgba(var(--accent-rgb), 0.4);
   }
 
   /* corner collapse intent overlay */
@@ -661,7 +661,7 @@
     z-index: 15;
     border: 2px solid;
   }
-  .intent-collapse { background: #ff3b3b18; border-color: #ff3b3b88; }
+  .intent-collapse { background: rgba(var(--danger-rgb), 0.1); border-color: rgba(var(--danger-rgb), 0.53); }
 
   /* cross-pane drop overlay */
   .drop-overlay {
@@ -672,14 +672,14 @@
     border: 2px solid transparent;
     transition: border-color 0.1s;
   }
-  .drop-target .drop-overlay  { border-color: #3b7fff44; }
+  .drop-target .drop-overlay  { border-color: rgba(var(--accent-rgb), 0.27); }
   .zone-center .drop-overlay,
-  .drop-overlay.zone-center   { border-color: #3b7fff; background: #3b7fff11; }
+  .drop-overlay.zone-center   { border-color: var(--accent); background: rgba(var(--accent-rgb), 0.07); }
 
   .split-preview {
     position: absolute;
-    background: #3b7fff33;
-    border: 2px solid #3b7fff;
+    background: rgba(var(--accent-rgb), 0.2);
+    border: 2px solid var(--accent);
     pointer-events: none;
   }
   .split-preview.split-left   { inset: 0 50% 0 0; }

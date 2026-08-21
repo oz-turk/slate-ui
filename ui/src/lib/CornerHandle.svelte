@@ -103,14 +103,14 @@
     height: 20px;
     z-index: 20;
     cursor: crosshair;
-    color: #666;
+    color: rgba(var(--text-rgb), 0.43);
     opacity: 0.3;
     transition: opacity 0.12s, color 0.12s;
     display: flex;
     align-items: center;
     justify-content: center;
   }
-  .corner:hover, .corner.active { opacity: 1; color: #bbb; }
+  .corner:hover, .corner.active { opacity: 1; color: rgba(var(--text-rgb), 0.78); }
   .corner.tl { top: 0;    left: 0;  }
   .corner.tr { top: 0;    right: 0; }
   .corner.bl { bottom: 0; left: 0;  }

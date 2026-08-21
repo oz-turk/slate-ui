@@ -32,14 +32,14 @@
     gap: 8px;
     padding: 0 12px;
     height: 34px;
-    background: #151d30;
-    border-bottom: 1px solid #2a3a60;
+    background: rgba(var(--accent-rgb), 0.08);
+    border-bottom: 1px solid rgba(var(--accent-rgb), 0.27);
     flex-shrink: 0;
   }
 
   .count {
     font-size: 11px;
-    color: #6fa3ff;
+    color: var(--accent-light);
     font-weight: 600;
     white-space: nowrap;
   }
@@ -54,23 +54,23 @@
 
   .label {
     font-size: 11px;
-    color: #444;
+    color: rgba(var(--text-rgb), 0.29);
     white-space: nowrap;
   }
 
   .tab-btn {
     padding: 2px 8px;
     height: 22px;
-    border: 1px solid #2a3a60;
-    background: #1a2540;
-    color: #8ab4ff;
+    border: 1px solid rgba(var(--accent-rgb), 0.27);
+    background: rgba(var(--accent-rgb), 0.15);
+    color: var(--accent-light);
     font-size: 11px;
     border-radius: 3px;
     cursor: pointer;
     white-space: nowrap;
     transition: background 0.1s, border-color 0.1s;
   }
-  .tab-btn:hover { background: #243050; border-color: #3b7fff; }
+  .tab-btn:hover { background: rgba(var(--accent-rgb), 0.22); border-color: var(--accent); }
 
   .sep {
     flex: 1;
@@ -79,23 +79,23 @@
   .group-btn {
     padding: 2px 10px;
     height: 22px;
-    border: 1px solid #303030;
-    background: #222;
-    color: #999;
+    border: 1px solid var(--panel-bg);
+    background: rgba(var(--panel-bg-rgb), 0.7);
+    color: rgba(var(--text-rgb), 0.65);
     font-size: 11px;
     border-radius: 3px;
     cursor: pointer;
     white-space: nowrap;
     transition: background 0.1s, color 0.1s;
   }
-  .group-btn:hover { background: #2a2a2a; color: #ccc; }
+  .group-btn:hover { background: var(--panel-bg); color: rgba(var(--text-rgb), 0.85); }
 
   .clear-btn {
     width: 22px;
     height: 22px;
     border: none;
     background: transparent;
-    color: #444;
+    color: rgba(var(--text-rgb), 0.29);
     font-size: 12px;
     cursor: pointer;
     border-radius: 3px;
@@ -105,5 +105,5 @@
     padding: 0;
     transition: background 0.1s, color 0.1s;
   }
-  .clear-btn:hover { background: #2a2a2a; color: #888; }
+  .clear-btn:hover { background: var(--panel-bg); color: rgba(var(--text-rgb), 0.58); }
 </style>

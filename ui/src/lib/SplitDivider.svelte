@@ -40,7 +40,7 @@
 
 <style>
   .divider {
-    background: #1a1a1a;
+    background: var(--bg);
     flex-shrink: 0;
     position: relative;
     z-index: 5;
@@ -52,7 +52,7 @@
     background: transparent;
     transition: background 0.12s;
   }
-  .divider:hover, .divider.dragging { background: #3b7fff; }
+  .divider:hover, .divider.dragging { background: var(--accent); }
 
   .dir-h {
     width: 4px;
