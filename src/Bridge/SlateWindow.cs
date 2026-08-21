@@ -250,27 +250,19 @@ public class SlateWindow : Form
 
     private void CaptureSelected(string tabId, string? groupId = null)
     {
-        Log($"CaptureSelected called, tabId='{tabId}', groupId='{groupId}'");
-
         var doc = HostDocument
                ?? Grasshopper.Instances.ActiveCanvas?.Document;
-        Log($"Document: {(doc == null ? "NULL" : $"ok, {doc.ObjectCount} objects")}");
-
         if (doc == null) return;
 
-        var allSelected = doc.Objects.Where(o => o.Attributes?.Selected == true).ToList();
-        Log($"Selected objects: {allSelected.Count}");
-
-        var sliders = allSelected.OfType<GH_NumberSlider>().ToList();
-        Log($"Selected sliders: {sliders.Count}");
+        var sliders = doc.Objects
+            .Where(o => o.Attributes?.Selected == true)
+            .OfType<GH_NumberSlider>()
+            .ToList();
 
         foreach (var s in sliders)
-        {
-            Log($"  Adding: '{s.NickName}' [{s.Slider.Minimum}–{s.Slider.Maximum}]");
             AddSlider(tabId, groupId, s);
-        }
 
-        Log($"Capture done.");
+        Log($"Captured {sliders.Count} slider(s).");
     }
 
     // ── C# → JS ──────────────────────────────────────────────────────────────
