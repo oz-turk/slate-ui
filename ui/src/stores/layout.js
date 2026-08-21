@@ -1,10 +1,25 @@
-import { writable } from 'svelte/store'
+import { writable, derived, get } from 'svelte/store'
 
 // ── ID generators ─────────────────────────────────────────────────────────────
-let _pc = 0, _sc = 0, _tc = 0
+let _pc = 0, _sc = 0, _tc = 0, _wc = 0
 const pid  = () => 'pane_'  + (++_pc)
 const sid  = () => 'split_' + (++_sc)
+const wid  = () => 'ws_'    + (++_wc)
 export const newTabId = () => 'tab_' + Date.now() + '_' + (++_tc)
+
+// Smallest "{prefix} N" (N >= 1) not already present in existingLabels — so
+// naming fills gaps left by deletions instead of climbing forever.
+function nextAvailableName(existingLabels, prefix) {
+  const used = new Set()
+  const re = new RegExp('^' + prefix + ' (\\d+)$')
+  for (const label of existingLabels) {
+    const m = re.exec(label)
+    if (m) used.add(parseInt(m[1], 10))
+  }
+  let n = 1
+  while (used.has(n)) n++
+  return prefix + ' ' + n
+}
 
 // ── constructors ──────────────────────────────────────────────────────────────
 export function makeLeaf(tabs, activeTabId) {
@@ -16,12 +31,35 @@ export function makeLeaf(tabs, activeTabId) {
   return { type: 'leaf', paneId: pid(), tabs, activeTabId: activeTabId ?? tabs[0]?.id ?? null }
 }
 
-function makeSplit(dir, a, b, ratio = 0.5) {
-  return { type: 'split', splitId: sid(), dir, ratio, a, b }
+// sizeA = pixel width/height of pane `a` (the earlier/top-or-left side); `b` is
+// always flex:1 and absorbs the rest — so growing the window only grows `b`.
+function makeSplit(dir, a, b, sizeA = 260) {
+  return { type: 'split', splitId: sid(), dir, sizeA, a, b }
 }
 
 // ── store ─────────────────────────────────────────────────────────────────────
-export const layout = writable(makeLeaf())
+// Each workspace is a fully independent pane/split/tab tree — switching the
+// active one swaps the whole layout, like a separate desktop.
+const _initialWorkspaceId = wid()
+export const workspaces = writable([
+  { id: _initialWorkspaceId, label: 'Workspace 1', layout: makeLeaf() }
+])
+export const activeWorkspaceId = writable(_initialWorkspaceId)
+
+// `layout` stays a store holding just the ACTIVE workspace's tree, so every
+// existing read site ($layout / get(layout)) keeps working unchanged.
+export const layout = derived(
+  [workspaces, activeWorkspaceId],
+  ([$workspaces, $activeId]) => $workspaces.find(w => w.id === $activeId)?.layout ?? $workspaces[0]?.layout
+)
+
+// All the tree-mutating exports below funnel through this instead of a plain
+// `layout.set/update`, so they transparently operate on whichever workspace
+// is currently active.
+function updateActiveLayout(fn) {
+  const activeId = get(activeWorkspaceId)
+  workspaces.update(list => list.map(w => w.id === activeId ? { ...w, layout: fn(w.layout) } : w))
+}
 
 // ── tree helpers ──────────────────────────────────────────────────────────────
 export function findLeaf(node, paneId) {
@@ -45,14 +83,15 @@ function mapSplit(node, splitId, fn) {
   return { ...node, a: mapSplit(node.a, splitId, fn), b: mapSplit(node.b, splitId, fn) }
 }
 
-function doSplit(node, paneId, dir, side, ratio) {
+function doSplit(node, paneId, dir, side, sizeA, label) {
   if (node.type === 'leaf') {
     if (node.paneId !== paneId) return node
-    const fresh = makeLeaf([], null)
+    const tabId = newTabId()
+    const fresh = makeLeaf([{ id: tabId, label, sliders: [], groups: [] }], tabId)
     const [a, b] = side === 'before' ? [fresh, node] : [node, fresh]
-    return makeSplit(dir, a, b, ratio)
+    return makeSplit(dir, a, b, sizeA)
   }
-  return { ...node, a: doSplit(node.a, paneId, dir, side, ratio), b: doSplit(node.b, paneId, dir, side, ratio) }
+  return { ...node, a: doSplit(node.a, paneId, dir, side, sizeA, label), b: doSplit(node.b, paneId, dir, side, sizeA, label) }
 }
 
 function doCollapse(node, paneId) {
@@ -100,21 +139,25 @@ function doSplitWithTab(node, targetPaneId, dir, side, fromPaneId, tabId) {
   return splitAndInsert(extracted)
 }
 
-// ── exported mutations ────────────────────────────────────────────────────────
+// ── exported mutations (all apply to the active workspace) ───────────────────
 export function updatePane(paneId, fn) {
-  layout.update(l => mapLeaf(l, paneId, fn))
+  updateActiveLayout(l => mapLeaf(l, paneId, fn))
 }
 
-export function setRatio(splitId, ratio) {
-  layout.update(l => mapSplit(l, splitId, () => ({ ratio })))
+export function setSplitSize(splitId, sizeA) {
+  updateActiveLayout(l => mapSplit(l, splitId, () => ({ sizeA })))
 }
 
-export function splitPane(paneId, dir, side = 'after', ratio = 0.5) {
-  layout.update(l => doSplit(l, paneId, dir, side, ratio))
+export function splitPane(paneId, dir, side = 'after', sizeA = 260) {
+  updateActiveLayout(l => {
+    const labels = allLeaves(l).flatMap(leaf => leaf.tabs.map(t => t.label))
+    const label  = nextAvailableName(labels, 'Tab')
+    return doSplit(l, paneId, dir, side, sizeA, label)
+  })
 }
 
 export function collapsePane(paneId) {
-  layout.update(l => {
+  updateActiveLayout(l => {
     const result = doCollapse(l, paneId)
     // Don't collapse the last pane
     return result?.type ? result : l
@@ -123,7 +166,7 @@ export function collapsePane(paneId) {
 
 export function moveTab(fromPaneId, tabId, toPaneId) {
   if (fromPaneId === toPaneId) return
-  layout.update(l => {
+  updateActiveLayout(l => {
     const [extracted, tab] = doExtractTab(l, fromPaneId, tabId)
     if (!tab) return l
     return doInsertTab(extracted, toPaneId, tab)
@@ -131,12 +174,125 @@ export function moveTab(fromPaneId, tabId, toPaneId) {
 }
 
 export function splitWithTab(targetPaneId, dir, side, fromPaneId, tabId) {
-  layout.update(l => doSplitWithTab(l, targetPaneId, dir, side, fromPaneId, tabId))
+  updateActiveLayout(l => doSplitWithTab(l, targetPaneId, dir, side, fromPaneId, tabId))
 }
 
-// Restore entire layout (from C# state)
+// Legacy restore path: an old save had a single tree, not a workspace list —
+// collapse it into the current (or a fresh) single workspace.
 export function restoreLayout(newLayout) {
-  layout.set(newLayout)
+  const id = get(activeWorkspaceId) ?? wid()
+  workspaces.set([{ id, label: 'Workspace 1', layout: newLayout }])
+  activeWorkspaceId.set(id)
+}
+
+// Full restore from the new multi-workspace state format.
+export function restoreWorkspaces(workspaceList, activeId) {
+  workspaces.set(workspaceList)
+  activeWorkspaceId.set(activeId ?? workspaceList[0]?.id ?? null)
+}
+
+// ── workspace management ──────────────────────────────────────────────────────
+export function addWorkspace() {
+  const id = wid()
+  workspaces.update(list => {
+    const label = nextAvailableName(list.map(w => w.label), 'Workspace')
+    return [...list, { id, label, layout: makeLeaf() }]
+  })
+  activeWorkspaceId.set(id)
+}
+
+export function removeWorkspace(id) {
+  let nextActive = null
+  workspaces.update(list => {
+    if (list.length <= 1) return list   // never remove the last workspace
+    const filtered = list.filter(w => w.id !== id)
+    nextActive = filtered[0]?.id ?? null
+    return filtered
+  })
+  if (get(activeWorkspaceId) === id && nextActive) activeWorkspaceId.set(nextActive)
+}
+
+export function renameWorkspace(id, label) {
+  workspaces.update(list => list.map(w => w.id === id ? { ...w, label } : w))
+}
+
+export function setActiveWorkspace(id) {
+  activeWorkspaceId.set(id)
+}
+
+// Maps every tab, in every pane, of one layout tree through fn — used to reach
+// into every workspace at once (a captured GH object's id could in principle
+// show up in more than one, e.g. slider name sync or a global clear).
+function mapAllTabs(node, fn) {
+  if (node.type === 'leaf') return { ...node, tabs: node.tabs.map(fn) }
+  return { ...node, a: mapAllTabs(node.a, fn), b: mapAllTabs(node.b, fn) }
+}
+function updateAllWorkspaces(fn) {
+  workspaces.update(list => list.map(w => ({ ...w, layout: fn(w.layout) })))
+}
+
+// Maps every tab, in every pane, across every workspace through fn.
+export function updateAllTabs(fn) {
+  updateAllWorkspaces(node => mapAllTabs(node, fn))
+}
+
+// Clears sliders/groups from every tab, across ALL workspaces — mirrors the
+// C# side's ClearAll(), which drops every tracked GH object regardless of
+// which workspace it happened to be captured into.
+export function clearAllWorkspaces() {
+  updateAllTabs(t => ({ ...t, sliders: [], groups: [] }))
+}
+
+// ── targeted control sync (name / panel text / item-picker options) ──────────
+// C# pushes these on every GH document solve — for every tracked slider,
+// panel, item picker, across every workspace, whether or not it's the one
+// currently visible. A blind updateAllTabs() rebuild would reconstruct every
+// workspace's whole tree for every single push. syncControl instead skips any
+// workspace/pane/tab/group that doesn't actually contain the id, so unrelated
+// branches keep their exact object reference — no wasted work, and Svelte
+// doesn't even consider re-rendering what didn't change.
+function patchGroupsIfPresent(groups, id, patch) {
+  let changed = false
+  const next = groups.map(g => {
+    const hasHere = g.sliders.some(s => s.id === id)
+    const [subGroups, subChanged] = patchGroupsIfPresent(g.groups ?? [], id, patch)
+    if (!hasHere && !subChanged) return g
+    changed = true
+    return {
+      ...g,
+      sliders: hasHere ? g.sliders.map(s => s.id === id ? { ...s, ...patch } : s) : g.sliders,
+      groups: subGroups
+    }
+  })
+  return [changed ? next : groups, changed]
+}
+
+function patchNodeIfPresent(node, id, patch) {
+  if (node.type === 'leaf') {
+    let changed = false
+    const tabs = node.tabs.map(t => {
+      const hasHere = t.sliders.some(s => s.id === id)
+      const [groups, subChanged] = patchGroupsIfPresent(t.groups, id, patch)
+      if (!hasHere && !subChanged) return t
+      changed = true
+      return {
+        ...t,
+        sliders: hasHere ? t.sliders.map(s => s.id === id ? { ...s, ...patch } : s) : t.sliders,
+        groups
+      }
+    })
+    return changed ? { ...node, tabs } : node
+  }
+  const a = patchNodeIfPresent(node.a, id, patch)
+  const b = patchNodeIfPresent(node.b, id, patch)
+  return (a === node.a && b === node.b) ? node : { ...node, a, b }
+}
+
+export function syncControl(id, patch) {
+  workspaces.update(list => list.map(w => {
+    const layout = patchNodeIfPresent(w.layout, id, patch)
+    return layout === w.layout ? w : { ...w, layout }
+  }))
 }
 
 // Find the splitId of the immediate parent split that contains paneId as a direct leaf child
@@ -169,29 +325,42 @@ export function findNeighborPane(node, paneId, dir, side) {
   return walk(node, [])
 }
 
-// Move a slider or group from one pane/tab to another pane/tab
-export function moveCrossPaneItem(fromPaneId, fromTabId, fromGroupId, itemId, itemType, toPaneId, toTabId) {
-  layout.update(l => {
-    let item = null
+// Pulls every slider whose id is in idSet out of a tab (top-level + any depth of
+// nested groups), preserving each list's relative order.
+function extractSlidersByIds(tab, idSet) {
+  const extracted = []
+  function stripSliders(sliders) {
+    return sliders.filter(s => {
+      if (idSet.has(s.id)) { extracted.push(s); return false }
+      return true
+    })
+  }
+  function stripGroups(groups) {
+    return groups.map(g => ({ ...g, sliders: stripSliders(g.sliders), groups: stripGroups(g.groups ?? []) }))
+  }
+  const sliders = stripSliders(tab.sliders)
+  const groups  = stripGroups(tab.groups)
+  return [{ ...tab, sliders, groups }, extracted]
+}
+
+// Move a slider (or a whole multi-selected block of sliders) or a single group
+// from one pane/tab to another pane/tab
+export function moveCrossPaneItem(fromPaneId, fromTabId, itemIds, itemType, toPaneId, toTabId) {
+  updateActiveLayout(l => {
+    let items = []
     function extract(n) {
       if (n.type === 'split') return { ...n, a: extract(n.a), b: extract(n.b) }
       if (n.paneId !== fromPaneId) return n
       return { ...n, tabs: n.tabs.map(t => {
         if (t.id !== fromTabId) return t
         if (itemType === 'slider') {
-          if (fromGroupId) {
-            return { ...t, groups: t.groups.map(g => {
-              if (g.id !== fromGroupId) return g
-              item = g.sliders.find(s => s.id === itemId)
-              return { ...g, sliders: g.sliders.filter(s => s.id !== itemId) }
-            })}
-          } else {
-            item = t.sliders.find(s => s.id === itemId)
-            return { ...t, sliders: t.sliders.filter(s => s.id !== itemId) }
-          }
+          const [stripped, extracted] = extractSlidersByIds(t, new Set(itemIds))
+          items = extracted
+          return stripped
         } else {
-          item = t.groups.find(g => g.id === itemId)
-          return { ...t, groups: t.groups.filter(g => g.id !== itemId) }
+          const found = t.groups.find(g => g.id === itemIds[0])
+          items = found ? [found] : []
+          return { ...t, groups: t.groups.filter(g => g.id !== itemIds[0]) }
         }
       })}
     }
@@ -200,12 +369,12 @@ export function moveCrossPaneItem(fromPaneId, fromTabId, fromGroupId, itemId, it
       if (n.paneId !== toPaneId) return n
       return { ...n, tabs: n.tabs.map(t => {
         if (t.id !== toTabId) return t
-        if (itemType === 'slider') return { ...t, sliders: [...t.sliders, item] }
-        return { ...t, groups: [...t.groups, item] }
+        if (itemType === 'slider') return { ...t, sliders: [...t.sliders, ...items] }
+        return { ...t, groups: [...t.groups, ...items] }
       })}
     }
     const extracted = extract(l)
-    if (!item) return l
+    if (!items.length) return l
     return insert(extracted)
   })
 }

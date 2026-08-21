@@ -1,10 +1,10 @@
 import { get } from 'svelte/store'
-import { layout } from '../stores/layout.js'
+import { workspaces, activeWorkspaceId } from '../stores/layout.js'
 
 export function postToCs(obj) {
   window.chrome?.webview?.postMessage(obj)
 }
 
 export function postStateSnapshot() {
-  postToCs({ type: 'state_snapshot', layout: get(layout) })
+  postToCs({ type: 'state_snapshot', workspaces: get(workspaces), activeWorkspaceId: get(activeWorkspaceId) })
 }

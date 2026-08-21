@@ -58,6 +58,20 @@ public class SlatePanel : GH_Component
     {
         var state = SlateWindow.GetSerializedState();
         if (state != null) writer.SetString("ui_state", state);
+
+        var size = SlateWindow.GetCurrentWindowSize();
+        var loc  = SlateWindow.GetCurrentWindowLocation();
+        if (size is System.Drawing.Size sz)
+        {
+            writer.SetInt32("win_w", sz.Width);
+            writer.SetInt32("win_h", sz.Height);
+        }
+        if (loc is System.Drawing.Point pt)
+        {
+            writer.SetInt32("win_x", pt.X);
+            writer.SetInt32("win_y", pt.Y);
+        }
+
         return base.Write(writer);
     }
 
@@ -68,6 +82,10 @@ public class SlatePanel : GH_Component
             SlateWindow.PendingFileState = reader.GetString("ui_state");
             SlateWindow.NeedsFileRestore = true;
         }
+        if (reader.ItemExists("win_w") && reader.ItemExists("win_h"))
+            SlateWindow.PendingWindowSize = new System.Drawing.Size(reader.GetInt32("win_w"), reader.GetInt32("win_h"));
+        if (reader.ItemExists("win_x") && reader.ItemExists("win_y"))
+            SlateWindow.PendingWindowLocation = new System.Drawing.Point(reader.GetInt32("win_x"), reader.GetInt32("win_y"));
         return base.Read(reader);
     }
 
@@ -115,19 +133,44 @@ public class SlatePanel : GH_Component
             if (capture)
             {
                 var doc = OnPingDocument();
-                var sliders = doc?.Objects
+                var selected = doc?.Objects
                     .Where(o => o.Attributes?.Selected == true)
-                    .OfType<GH_NumberSlider>()
-                    .ToList() ?? new List<GH_NumberSlider>();
+                    .ToList() ?? new List<IGH_DocumentObject>();
 
-                if (sliders.Count == 0)
-                    log += "No sliders selected.";
+                var sliders    = selected.OfType<GH_NumberSlider>().ToList();
+                var toggles    = selected.OfType<GH_BooleanToggle>().ToList();
+                var buttons    = selected.OfType<GH_ButtonObject>().ToList();
+                var valueLists = selected.OfType<GH_ValueList>().ToList();
+                var panels     = selected.OfType<GH_Panel>().ToList();
+                var itemPickers = selected.OfType<GH_ItemPicker>().ToList();
+                var humanLists  = selected.Where(SlateWindow.IsHumanValueList).OfType<IGH_Param>().ToList();
+                var colourPickers = selected.OfType<GH_ColourPickerObject>().ToList();
+                var pancakeButtons = selected.Where(SlateWindow.IsPancakeTrueOnlyButton).OfType<IGH_Param>().ToList();
+
+                if (sliders.Count == 0 && toggles.Count == 0 && buttons.Count == 0 && valueLists.Count == 0 && panels.Count == 0 && itemPickers.Count == 0 && humanLists.Count == 0 && colourPickers.Count == 0 && pancakeButtons.Count == 0)
+                    log += "Nothing selected.";
                 else
                 {
                     var win = SlateWindow.GetOrCreate();
                     foreach (var s in sliders)
                         win.AddSlider(tab, s);
-                    log += $"Captured {sliders.Count} slider(s) → \"{tab}\".";
+                    foreach (var t in toggles)
+                        win.AddToggle(tab, null, t);
+                    foreach (var b in buttons)
+                        win.AddButton(tab, null, b);
+                    foreach (var v in valueLists)
+                        win.AddValueList(tab, null, v);
+                    foreach (var p in panels)
+                        win.AddPanel(tab, null, p);
+                    foreach (var ip in itemPickers)
+                        win.AddItemPicker(tab, null, ip);
+                    foreach (var h in humanLists)
+                        win.AddHumanValueList(tab, null, h);
+                    foreach (var c in colourPickers)
+                        win.AddColourPicker(tab, null, c);
+                    foreach (var pb in pancakeButtons)
+                        win.AddPancakeTrueOnlyButton(tab, null, pb);
+                    log += $"Captured {sliders.Count} slider(s), {toggles.Count} toggle(s), {buttons.Count} button(s), {valueLists.Count} value list(s), {panels.Count} panel(s), {itemPickers.Count} item picker(s), {humanLists.Count} item selector(s), {colourPickers.Count} colour picker(s), {pancakeButtons.Count} true-only button(s) → \"{tab}\".";
                 }
             }
 

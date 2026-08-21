@@ -1,8 +1,10 @@
 <script>
-  import { setRatio } from '../stores/layout.js'
+  import { setSplitSize } from '../stores/layout.js'
 
   export let dir      // 'h' = vertical bar (left|right), 'v' = horizontal bar (top|bottom)
   export let splitId
+
+  const MIN_PANE_PX = 60
 
   let el
   let dragging = false
@@ -18,10 +20,11 @@
     const parent = el.parentElement
     if (!parent) return
     const rect = parent.getBoundingClientRect()
+    const dim  = dir === 'h' ? rect.width : rect.height
     const raw  = dir === 'h'
-      ? (e.clientX - rect.left) / rect.width
-      : (e.clientY - rect.top)  / rect.height
-    setRatio(splitId, Math.max(0.1, Math.min(0.9, raw)))
+      ? (e.clientX - rect.left)
+      : (e.clientY - rect.top)
+    setSplitSize(splitId, Math.max(MIN_PANE_PX, Math.min(dim - MIN_PANE_PX, raw)))
   }
 
   function onPointerUp() { dragging = false }

@@ -9,11 +9,11 @@
   <Pane paneId={node.paneId} />
 {:else}
   <div class="split split-{node.dir}">
-    <div class="child" style="flex: {node.ratio}">
+    <div class="child" style="flex: 0 1 {node.sizeA ?? 260}px">
       <svelte:self node={node.a} />
     </div>
     <SplitDivider dir={node.dir} splitId={node.splitId} />
-    <div class="child" style="flex: {1 - node.ratio}">
+    <div class="child" style="flex: 1 1 0">
       <svelte:self node={node.b} />
     </div>
   </div>

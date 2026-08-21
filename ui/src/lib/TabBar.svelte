@@ -118,12 +118,12 @@
     display: flex;
     align-items: center;
     gap: 4px;
-    padding: 0 12px;
-    height: 32px;
+    padding: 0 10px;
+    height: 24px;
     cursor: pointer;
     border-bottom: 2px solid transparent;
     color: rgba(var(--text-rgb), 0.36);
-    font-size: 12px;
+    font-size: 11px;
     white-space: nowrap;
     transition: color 0.15s, border-color 0.15s, background 0.1s;
     flex-shrink: 0;
@@ -150,24 +150,26 @@
 
   .add-tab {
     display: flex; align-items: center; justify-content: center;
-    width: 24px; height: 32px;
+    width: 20px; height: 24px;
     border: none; background: transparent;
-    color: rgba(var(--text-rgb), 0.29); font-size: 16px;
+    color: rgba(var(--text-rgb), 0.29); font-size: 14px;
     cursor: pointer; flex-shrink: 0;
     transition: color 0.1s;
     padding: 0;
   }
   .add-tab:hover { color: rgba(var(--text-rgb), 0.58); }
 
-  .sep { width: 1px; height: 16px; background: var(--grid); margin: 0 2px; flex-shrink: 0; }
+  .sep { width: 1px; height: 14px; background: var(--grid); margin: 0 2px; flex-shrink: 0; }
 
   .capture-btn {
-    padding: 3px 8px;
+    height: 20px;
+    align-self: center;
+    padding: 0 7px;
     border: 1px solid rgba(var(--accent-rgb), 0.27);
-    border-radius: 4px;
+    border-radius: 3px;
     background: transparent;
     color: var(--accent-light);
-    font-size: 11px;
+    font-size: 10px;
     font-family: inherit;
     cursor: pointer;
     transition: border-color 0.15s, color 0.15s;

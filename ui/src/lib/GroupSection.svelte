@@ -3,7 +3,16 @@
   import { flip } from 'svelte/animate'
   import { cubicOut } from 'svelte/easing'
   import SliderRow from './SliderRow.svelte'
+  import ToggleRow from './ToggleRow.svelte'
+  import ButtonRow from './ButtonRow.svelte'
+  import ValueListRow from './ValueListRow.svelte'
+  import PanelRow from './PanelRow.svelte'
+  import ColourPickerRow from './ColourPickerRow.svelte'
+  import { hoverHint } from '../stores/uiState.js'
   const dispatch = createEventDispatcher()
+
+  // slider.type → row component (falls back to SliderRow when unset/unknown)
+  const ROW_COMPONENTS = { toggle: ToggleRow, button: ButtonRow, valueList: ValueListRow, panel: PanelRow, itemPicker: ValueListRow, humanValueList: ValueListRow, colourPicker: ColourPickerRow, pancakeButton: ButtonRow }
 
   export let group        = {}
   export let mode         = 'preview'
@@ -12,6 +21,7 @@
   export let dropBefore    = false
   export let dropTarget    = null
   export let depth         = 0
+  export let resizingSliderId = null  // row currently being resized — flip is skipped for it
 
   let editingLabel = false
   let labelValue   = ''
@@ -46,6 +56,8 @@
       class:drop-highlight={dropHighlight}
       style="padding-left: {6 + depth * 14}px"
       on:click={() => dispatch('toggle', group.id)}
+      on:mouseenter={() => hoverHint.set('Groups keep sliders together — drag items onto the header to add them, drag the group itself to move or nest it')}
+      on:mouseleave={() => hoverHint.set(null)}
       on:dragover|preventDefault={headerDragOver}
       on:dragleave={headerDragLeave}
       on:drop|preventDefault={headerDrop}
@@ -87,15 +99,24 @@
 
   {#if !group.collapsed}
     <div class="group-body">
+      {#if group.sliders.length === 0 && (group.groups ?? []).length === 0}
+        <div class="empty-group">Empty group</div>
+      {/if}
+
       {#each group.sliders as slider, i (slider.id)}
-        <div class="row-slot" animate:flip={{ duration: 150, easing: cubicOut }}>
-          <SliderRow
+        <div class="row-slot" animate:flip={{ duration: slider.id === resizingSliderId ? 0 : 150, easing: cubicOut }}>
+          <svelte:component
+            this={ROW_COMPONENTS[slider.type] ?? SliderRow}
             {slider} {mode}
             selected={selectedIds.has(slider.id)}
             isFirst={i === 0}
             isLast={i === group.sliders.length - 1}
-            on:change={e      => dispatch('sliderChange',      { id: slider.id, value: e.detail })}
-            on:commit={e      => dispatch('sliderCommit',      { id: slider.id, value: e.detail })}
+            on:change={e      => dispatch('sliderChange',      { id: slider.id, type: slider.type, value: e.detail, multiSelect: slider.multiSelect })}
+            on:commit={e      => dispatch('sliderCommit',      { id: slider.id, type: slider.type, value: e.detail })}
+            on:resize={e       => dispatch('sliderResize',       { id: slider.id, height: e.detail })}
+            on:resizeCommit={e => dispatch('sliderResizeCommit', { id: slider.id, height: e.detail })}
+            on:resizeStart={e  => dispatch('sliderResizeStart', e.detail)}
+            on:resizeEnd={()   => dispatch('sliderResizeEnd')}
             on:select={e      => dispatch('sliderSelect',      { id: slider.id, multi: e.detail })}
             on:remove={()      => dispatch('sliderRemove',     { groupId: group.id, sliderId: slider.id })}
             on:dragStart={()  => dispatch('sliderDragStart',   { sliderId: slider.id, groupId: group.id })}
@@ -113,6 +134,7 @@
           {mode}
           {selectedIds}
           {dropTarget}
+          {resizingSliderId}
           depth={depth + 1}
           dropHighlight={dropTarget?.type === 'group-header' && dropTarget.id === subGroup.id && false}
           dropBefore={false}
@@ -121,6 +143,10 @@
           on:remove
           on:sliderChange
           on:sliderCommit
+          on:sliderResize
+          on:sliderResizeCommit
+          on:sliderResizeStart
+          on:sliderResizeEnd
           on:sliderSelect
           on:sliderRemove
           on:headerDragStart

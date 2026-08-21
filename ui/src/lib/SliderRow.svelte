@@ -93,7 +93,7 @@
 
 <!-- svelte-ignore a11y-no-static-element-interactions -->
 <!-- svelte-ignore a11y-click-events-have-key-events -->
-<div class="row" class:edit={mode === 'edit'} class:selected
+<div class="row" data-slider-id={slider.id} class:edit={mode === 'edit'} class:selected
     class:row-dragging={rowDragging}
     bind:this={rowEl}
     style={dragTranslateY ? `transform: translateY(${dragTranslateY}px)` : ''}

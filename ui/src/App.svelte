@@ -3,8 +3,15 @@
   import { get }        from 'svelte/store'
   import PaneLayout     from './lib/PaneLayout.svelte'
   import EditToolbar    from './lib/EditToolbar.svelte'
-  import { layout, allLeaves, restoreLayout, updatePane, makeLeaf } from './stores/layout.js'
-  import { mode, pinned } from './stores/uiState.js'
+  import WorkspaceTabs  from './lib/WorkspaceTabs.svelte'
+  import StatusBar      from './lib/StatusBar.svelte'
+  import SettingsPanel  from './lib/SettingsPanel.svelte'
+  import {
+    layout, workspaces, activeWorkspaceId, allLeaves, restoreLayout, restoreWorkspaces,
+    updatePane, syncControl, clearAllWorkspaces, makeLeaf, setActiveWorkspace
+  } from './stores/layout.js'
+  import { mode, pinned, deleteRequest, captureRequest, settingsOpen } from './stores/uiState.js'
+  import { undo } from './stores/history.js'
   import { postToCs, postStateSnapshot } from './lib/ipc.js'
 
   // ── C# ↔ JS ───────────────────────────────────────────────────────────────────
@@ -15,6 +22,68 @@
     postToCs({ type: 'ui_ready' })
   })
 
+  // ── Global keyboard shortcuts ────────────────────────────────────────────────
+  // Ignored while typing in a text field (renaming a tab/group, editing a value)
+  // so keys like x/c/Tab still behave normally there instead of being hijacked.
+  function isTextEditable(el) {
+    return el?.tagName === 'INPUT' || el?.tagName === 'TEXTAREA' || el?.isContentEditable
+  }
+
+  // Tracked continuously so x/c can resolve "whatever's under the mouse" without
+  // needing a real pointer event at keypress time.
+  let mouseX = 0, mouseY = 0
+  onMount(() => {
+    function onPointerMove(e) { mouseX = e.clientX; mouseY = e.clientY }
+    window.addEventListener('pointermove', onPointerMove)
+    return () => window.removeEventListener('pointermove', onPointerMove)
+  })
+
+  onMount(() => {
+    function onKeydown(e) {
+      if (isTextEditable(document.activeElement)) return
+
+      if (e.key === 'Tab') {
+        e.preventDefault()
+        mode.update(m => m === 'edit' ? 'preview' : 'edit')
+        return
+      }
+
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+        e.preventDefault()
+        undo()
+        return
+      }
+
+      if ((e.ctrlKey || e.metaKey) && e.key >= '1' && e.key <= '9') {
+        const idx = parseInt(e.key, 10) - 1
+        const ws = get(workspaces)[idx]
+        if (ws) { e.preventDefault(); setActiveWorkspace(ws.id) }
+        return
+      }
+
+      if (get(mode) !== 'edit') return
+
+      if (e.key === 'x') {
+        const el = document.elementFromPoint(mouseX, mouseY)
+        const sliderEl = el?.closest('[data-slider-id]')
+        const paneEl   = el?.closest('[data-pane-id]')
+        if (sliderEl && paneEl) deleteRequest.set({ paneId: paneEl.dataset.paneId, sliderId: sliderEl.dataset.sliderId })
+        return
+      }
+
+      if (e.key === 'c') {
+        const el = document.elementFromPoint(mouseX, mouseY)
+        const paneEl = el?.closest('[data-pane-id]')
+        if (paneEl) captureRequest.set(paneEl.dataset.paneId)
+        return
+      }
+    }
+    window.addEventListener('keydown', onKeydown)
+    return () => window.removeEventListener('keydown', onKeydown)
+  })
+
+  // Spans every workspace, not just the active one — a GH object already
+  // captured somewhere shouldn't silently get captured again into another.
   function allSliderIds() {
     const ids = new Set()
     function collectGroups(groups) {
@@ -23,11 +92,12 @@
         collectGroups(g.groups ?? [])
       }
     }
-    for (const leaf of allLeaves(get(layout)))
-      for (const t of leaf.tabs) {
-        t.sliders.forEach(s => ids.add(s.id))
-        collectGroups(t.groups)
-      }
+    for (const w of get(workspaces))
+      for (const leaf of allLeaves(w.layout))
+        for (const t of leaf.tabs) {
+          t.sliders.forEach(s => ids.add(s.id))
+          collectGroups(t.groups)
+        }
     return ids
   }
 
@@ -39,60 +109,110 @@
     )
   }
 
-  function updateNameInGroupTree(groups, id, name) {
-    return groups.map(g => ({
-      ...g,
-      sliders: g.sliders.map(s => s.id === id ? { ...s, name } : s),
-      groups: updateNameInGroupTree(g.groups ?? [], id, name)
+  // Shared by every "captured a control" message (slider_added, toggle_added, ...) —
+  // finds where it should land (by tabId/label, falling back to the first pane/tab)
+  // and inserts it into that tab's top-level list or the target group.
+  function addCapturedControl(control, msg) {
+    if (allSliderIds().has(control.id)) return
+    const $l  = get(layout)
+    const leaves = allLeaves($l)
+    let targetPaneId = null, targetTabId = null
+    for (const leaf of leaves) {
+      const t = leaf.tabs.find(t => t.id === msg.tabId)
+             ?? leaf.tabs.find(t => t.label.toLowerCase() === (msg.tabId ?? '').toLowerCase())
+      if (t) { targetPaneId = leaf.paneId; targetTabId = t.id; break }
+    }
+    if (!targetPaneId) { targetPaneId = leaves[0]?.paneId; targetTabId = leaves[0]?.activeTabId }
+    if (!targetPaneId) return
+    const groupId = msg.groupId ?? null
+    updatePane(targetPaneId, p => ({
+      tabs: p.tabs.map(t => t.id !== targetTabId ? t : groupId
+        ? { ...t, groups: addSliderToGroupInTree(t.groups, groupId, control) }
+        : { ...t, sliders: [...t.sliders, control] })
     }))
+    postStateSnapshot()
   }
 
   function handleMessage(msg) {
     if (msg.type === 'slider_added') {
-      if (allSliderIds().has(msg.id)) return
-      const slider = { id: msg.id, name: msg.name, min: msg.min, max: msg.max, value: msg.value }
-      const $l  = get(layout)
-      const leaves = allLeaves($l)
-      let targetPaneId = null, targetTabId = null
-      for (const leaf of leaves) {
-        const t = leaf.tabs.find(t => t.id === msg.tabId)
-               ?? leaf.tabs.find(t => t.label.toLowerCase() === (msg.tabId ?? '').toLowerCase())
-        if (t) { targetPaneId = leaf.paneId; targetTabId = t.id; break }
-      }
-      if (!targetPaneId) { targetPaneId = leaves[0]?.paneId; targetTabId = leaves[0]?.activeTabId }
-      if (!targetPaneId) return
-      const groupId = msg.groupId ?? null
-      updatePane(targetPaneId, p => ({
-        tabs: p.tabs.map(t => t.id !== targetTabId ? t : groupId
-          ? { ...t, groups: addSliderToGroupInTree(t.groups, groupId, slider) }
-          : { ...t, sliders: [...t.sliders, slider] })
-      }))
-      postStateSnapshot()
+      addCapturedControl({ id: msg.id, type: 'slider', name: msg.name, min: msg.min, max: msg.max, value: msg.value }, msg)
+    }
+
+    if (msg.type === 'toggle_added') {
+      addCapturedControl({ id: msg.id, type: 'toggle', name: msg.name, value: msg.value }, msg)
+    }
+
+    if (msg.type === 'button_added') {
+      addCapturedControl({ id: msg.id, type: 'button', name: msg.name, value: msg.value }, msg)
+    }
+
+    if (msg.type === 'valueList_added') {
+      addCapturedControl({ id: msg.id, type: 'valueList', name: msg.name, options: msg.options, value: msg.value, multiSelect: msg.multiSelect }, msg)
+    }
+
+    if (msg.type === 'panel_added') {
+      addCapturedControl({ id: msg.id, type: 'panel', name: msg.name, value: msg.value, readOnly: msg.readOnly, height: 88 }, msg)
+    }
+
+    if (msg.type === 'itemPicker_added') {
+      addCapturedControl({ id: msg.id, type: 'itemPicker', name: msg.name, options: msg.options, value: msg.value }, msg)
+    }
+
+    // Human plugin's "Item Selector" — same shape as valueList/itemPicker on the
+    // wire, kept as its own type so it round-trips through RestoreState correctly.
+    if (msg.type === 'humanValueList_added') {
+      addCapturedControl({ id: msg.id, type: 'humanValueList', name: msg.name, options: msg.options, value: msg.value, multiSelect: msg.multiSelect }, msg)
+    }
+
+    if (msg.type === 'colourPicker_added') {
+      addCapturedControl({ id: msg.id, type: 'colourPicker', name: msg.name, value: msg.value }, msg)
+    }
+
+    // Pancake plugin's "True Only Button" — same shape as a core button on the
+    // wire, kept as its own type so it round-trips through RestoreState correctly.
+    if (msg.type === 'pancakeButton_added') {
+      addCapturedControl({ id: msg.id, type: 'pancakeButton', name: msg.name, value: msg.value }, msg)
     }
 
     if (msg.type === 'slider_name_update') {
-      for (const leaf of allLeaves(get(layout))) {
-        updatePane(leaf.paneId, p => ({
-          tabs: p.tabs.map(t => ({
-            ...t,
-            sliders: t.sliders.map(s => s.id === msg.id ? { ...s, name: msg.name } : s),
-            groups:  updateNameInGroupTree(t.groups, msg.id, msg.name)
-          }))
-        }))
-      }
+      syncControl(msg.id, { name: msg.name })
+    }
+
+    // Panels, item pickers and Item Selectors can change on their own between
+    // solves (panel: upstream data flowing into a connected/read-only one; the
+    // other two: their wired candidate list) — synced separately since they
+    // carry more than a name.
+    if (msg.type === 'panel_text_update') {
+      syncControl(msg.id, { name: msg.name, value: msg.text, readOnly: msg.readOnly })
+    }
+
+    if (msg.type === 'itemPicker_update') {
+      syncControl(msg.id, { name: msg.name, options: msg.options, value: msg.value })
+    }
+
+    if (msg.type === 'humanValueList_update') {
+      syncControl(msg.id, { name: msg.name, options: msg.options, value: msg.value, multiSelect: msg.multiSelect })
+    }
+
+    if (msg.type === 'colourPicker_update') {
+      syncControl(msg.id, { name: msg.name, value: msg.value })
     }
 
     if (msg.type === 'cleared') {
-      const leaves = allLeaves(get(layout))
-      for (const leaf of leaves)
-        updatePane(leaf.paneId, p => ({ tabs: p.tabs.map(t => ({ ...t, sliders: [], groups: [] })) }))
+      clearAllWorkspaces()
       postStateSnapshot()
     }
 
     if (msg.type === 'restore_state') {
-      // msg.layout is the full layout tree (new format)
-      // msg.tabs is the legacy flat format
-      if (msg.layout) {
+      // msg.workspaces is the current multi-workspace format
+      // msg.layout is the older single-tree format
+      // msg.tabs is the oldest, legacy flat format
+      if (msg.workspaces) {
+        restoreWorkspaces(
+          msg.workspaces.map(w => ({ ...w, layout: reconcileLayout(w.layout) })),
+          msg.activeWorkspaceId
+        )
+      } else if (msg.layout) {
         restoreLayout(reconcileLayout(msg.layout))
       } else if (msg.tabs) {
         // legacy: single pane
@@ -113,16 +233,20 @@
 
 <main class:edit={$mode === 'edit'}>
   <header class="global-toolbar">
+    <WorkspaceTabs mode={$mode} />
     <EditToolbar
       bind:mode={$mode}
       bind:pinned={$pinned}
       on:pin={e => postToCs({ type: 'pin', value: e.detail })}
     />
+    {#if $settingsOpen}<SettingsPanel />{/if}
   </header>
 
   <div class="layout-root">
     <PaneLayout node={$layout} />
   </div>
+
+  <StatusBar />
 </main>
 
 <style>
@@ -145,7 +269,10 @@
   main.edit { outline: 1px solid rgba(var(--accent-rgb), 0.2); }
 
   .global-toolbar {
+    position: relative;
     flex-shrink: 0;
+    display: flex;
+    align-items: stretch;
     background: var(--panel-bg);
     border-bottom: 1px solid var(--bg);
   }

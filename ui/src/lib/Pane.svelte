@@ -1,23 +1,46 @@
 <script>
   import TabBar       from './TabBar.svelte'
   import SliderRow    from './SliderRow.svelte'
+  import ToggleRow    from './ToggleRow.svelte'
+  import ButtonRow    from './ButtonRow.svelte'
+  import ValueListRow from './ValueListRow.svelte'
+  import PanelRow     from './PanelRow.svelte'
+  import ColourPickerRow from './ColourPickerRow.svelte'
   import GroupSection from './GroupSection.svelte'
   import ActionBar    from './ActionBar.svelte'
   import CornerHandle from './CornerHandle.svelte'
+  import ContextMenu  from './ContextMenu.svelte'
   import { layout, updatePane, findLeaf, newTabId, splitPane, collapsePane, findNeighborPane, moveCrossPaneItem } from '../stores/layout.js'
   import { tabDrag, itemDrag, collapsePreview } from '../stores/dragState.js'
-  import { mode } from '../stores/uiState.js'
+  import { mode, deleteRequest, captureRequest } from '../stores/uiState.js'
   import { postToCs, postStateSnapshot } from './ipc.js'
   import { flip } from 'svelte/animate'
   import { cubicOut } from 'svelte/easing'
 
   export let paneId
 
+  // slider.type → row component (falls back to SliderRow when unset/unknown)
+  // itemPicker reuses ValueListRow — same "pick one from a list" UI, the only
+  // difference (candidate list from a wired input vs manually authored) lives
+  // entirely on the C# side.
+  const ROW_COMPONENTS = { toggle: ToggleRow, button: ButtonRow, valueList: ValueListRow, panel: PanelRow, itemPicker: ValueListRow, humanValueList: ValueListRow, colourPicker: ColourPickerRow, pancakeButton: ButtonRow }
+
   // ── derive pane state reactively (not derived() — paneId must stay live) ─────
   $: pane        = findLeaf($layout, paneId)
   $: tabs        = pane?.tabs        ?? []
   $: activeTabId = pane?.activeTabId ?? null
   $: activeTab   = tabs.find(t => t.id === activeTabId) ?? tabs[0]
+
+  // "x"/"c" hotkeys — App.svelte resolves what's under the mouse via the DOM
+  // (data-pane-id / data-slider-id) and sets these; whichever Pane matches acts.
+  $: if ($deleteRequest?.paneId === paneId && activeTab) {
+    removeSlider(activeTab.id, $deleteRequest.sliderId)
+    deleteRequest.set(null)
+  }
+  $: if ($captureRequest === paneId && activeTabId) {
+    postToCs({ type: 'capture', tabId: activeTabId })
+    captureRequest.set(null)
+  }
 
   // ── local UI state ────────────────────────────────────────────────────────────
   let selectedIds   = new Set()
@@ -31,6 +54,23 @@
   let edgeZone     = null   // 'left' | 'right' | 'top' | 'bottom' | 'center' | null
   let itemDragHover = false  // true only while a cross-pane item drag is hovering this pane
   let paneEl
+  let resizingSliderId = null  // row currently being resized — flip is skipped for it (see row-slot)
+  let contextMenu = null  // { x, y, items } | null — right-click menu on the pane itself
+
+  function onPaneContextMenu(e) {
+    e.preventDefault()
+    const menuW = 170, menuH = 130
+    contextMenu = {
+      x: Math.min(e.clientX, window.innerWidth  - menuW - 8),
+      y: Math.min(e.clientY, window.innerHeight - menuH - 8),
+      items: [
+        { label: 'Split Horizontally', action: () => splitPane(paneId, 'h', 'after') },
+        { label: 'Split Vertically',   action: () => splitPane(paneId, 'v', 'after') },
+        'sep',
+        { label: 'Close Pane', danger: true, action: () => collapsePane(paneId) },
+      ]
+    }
+  }
 
   // ── pane mutation helpers ─────────────────────────────────────────────────────
   function mutateTabs(fn) {
@@ -72,10 +112,49 @@
     }
     return [walk(groups), found]
   }
+  // Pulls every slider whose id is in idSet out of a tab (top-level + any depth of
+  // nested groups), preserving each list's relative order. Used so a multi-selection
+  // drag can move/reorder together even when its members live in different places.
+  function extractSlidersByIds(tab, idSet) {
+    const extracted = []
+    function stripSliders(sliders) {
+      return sliders.filter(s => {
+        if (idSet.has(s.id)) { extracted.push(s); return false }
+        return true
+      })
+    }
+    function stripGroups(groups) {
+      return groups.map(g => ({ ...g, sliders: stripSliders(g.sliders), groups: stripGroups(g.groups ?? []) }))
+    }
+    const sliders = stripSliders(tab.sliders)
+    const groups  = stripGroups(tab.groups)
+    return [{ ...tab, sliders, groups }, extracted]
+  }
+
+  // Inserts a block of sliders together, next to targetId, in whichever list
+  // (top-level or targetGroupId's) it lives in — order within the block is kept.
+  function insertSlidersAt(tab, targetGroupId, targetId, pos, items) {
+    if (targetGroupId) {
+      return { ...tab, groups: mapGroupTree(tab.groups, targetGroupId, g => {
+        const sliders = [...g.sliders]
+        const toIdx = sliders.findIndex(s => s.id === targetId)
+        sliders.splice(toIdx < 0 ? sliders.length : pos === 'after' ? toIdx + 1 : toIdx, 0, ...items)
+        return { sliders }
+      })}
+    }
+    const sliders = [...tab.sliders]
+    const toIdx = sliders.findIndex(s => s.id === targetId)
+    sliders.splice(toIdx < 0 ? sliders.length : pos === 'after' ? toIdx + 1 : toIdx, 0, ...items)
+    return { ...tab, sliders }
+  }
+
+  // value may be a plain value or a (prevValue => newValue) updater — the
+  // latter lets callers (e.g. checklist toggles) compute the new value from
+  // whatever it currently is, without a separate read first.
   function updateSliderInGroups(groups, sliderId, value) {
     return groups.map(g => ({
       ...g,
-      sliders: g.sliders.map(s => s.id === sliderId ? { ...s, value } : s),
+      sliders: g.sliders.map(s => s.id === sliderId ? { ...s, value: typeof value === 'function' ? value(s.value) : value } : s),
       groups: updateSliderInGroups(g.groups ?? [], sliderId, value)
     }))
   }
@@ -92,19 +171,53 @@
     updatePane(paneId, p => ({
       tabs: p.tabs.map(t => ({
         ...t,
-        sliders: t.sliders.map(s => s.id === sliderId ? { ...s, value } : s),
+        sliders: t.sliders.map(s => s.id === sliderId ? { ...s, value: typeof value === 'function' ? value(s.value) : value } : s),
         groups:  updateSliderInGroups(t.groups, sliderId, value)
       }))
     }))
   }
 
-  function onSliderChange(sliderId, value) {
-    updateSliderValue(sliderId, value)
-    postToCs({ type: 'slider_change', id: sliderId, value })
+  // For a multiSelect control (CheckList/Sequence), `value` is the index the
+  // user just clicked — toggle it into/out of the current selection locally,
+  // but tell C# just that one index; ToggleItem() there does the rest.
+  function changeMessageType(controlType) {
+    if (controlType === 'panel') return 'panel_change'
+    if (controlType === 'colourPicker') return 'colour_change'
+    return 'slider_change'
   }
-  function onSliderCommit(sliderId, value) {
+  function onSliderChange(sliderId, value, controlType, multiSelect) {
+    if (multiSelect) {
+      updateSliderValue(sliderId, prev => {
+        const arr = Array.isArray(prev) ? prev : []
+        return arr.includes(value) ? arr.filter(i => i !== value) : [...arr, value].sort((a, b) => a - b)
+      })
+    } else {
+      updateSliderValue(sliderId, value)
+    }
+    postToCs({ type: changeMessageType(controlType), id: sliderId, value })
+  }
+  function onSliderCommit(sliderId, value, controlType) {
     updateSliderValue(sliderId, value)
-    postToCs({ type: 'slider_change', id: sliderId, value })
+    postToCs({ type: changeMessageType(controlType), id: sliderId, value })
+  }
+
+  // ── panel resize (UI-only — no postToCs, GH doesn't know about row height) ───
+  function patchSliderFieldInGroups(groups, sliderId, patch) {
+    return groups.map(g => ({
+      ...g,
+      sliders: g.sliders.map(s => s.id === sliderId ? { ...s, ...patch } : s),
+      groups: patchSliderFieldInGroups(g.groups ?? [], sliderId, patch)
+    }))
+  }
+  function onPanelResize(sliderId, height, commit) {
+    updatePane(paneId, p => ({
+      tabs: p.tabs.map(t => ({
+        ...t,
+        sliders: t.sliders.map(s => s.id === sliderId ? { ...s, height } : s),
+        groups:  patchSliderFieldInGroups(t.groups, sliderId, { height })
+      }))
+    }))
+    if (commit) postStateSnapshot()
   }
 
   // ── tab management ────────────────────────────────────────────────────────────
@@ -132,8 +245,13 @@
 
   // ── slider & group drag-drop (within pane) ────────────────────────────────────
   function startDrag(type, id, fromTabId, fromGroupId = null) {
-    activeDrag = { type, id, fromTabId, fromGroupId }
-    itemDrag.set({ type, id, fromPaneId: paneId, fromTabId, fromGroupId })
+    // If the grabbed row is part of the current multi-selection, drag the whole
+    // selection together — otherwise just this one item.
+    const ids = (type === 'slider' && selectedIds.has(id) && selectedIds.size > 1)
+      ? [...selectedIds]
+      : [id]
+    activeDrag = { type, id, ids, fromTabId, fromGroupId }
+    itemDrag.set({ type, id, ids, fromPaneId: paneId, fromTabId, fromGroupId })
   }
   function endDrag() {
     activeDrag = null; dropTarget = null; itemDrag.set(null); lastReorderKey = null
@@ -164,13 +282,13 @@
 
   function executeDrop(type, id, pos) {
     if (!activeDrag) return
-    const { type: dt, id: di, fromTabId, fromGroupId } = activeDrag
+    const { type: dt, id: di, ids: dragIds, fromTabId } = activeDrag
     if (type === 'tab') {
       if (fromTabId === id) { endDrag(); return }
-      if (dt === 'slider') moveSliderToTab(di, fromTabId, fromGroupId, id)
+      if (dt === 'slider') moveSlidersToTab(dragIds, fromTabId, id)
       else                 moveGroupToTab(di, fromTabId, id)
     } else if (type === 'group-header') {
-      if (dt === 'slider') moveSliderToGroup(di, fromTabId, fromGroupId, id)
+      if (dt === 'slider') moveSlidersToGroup(dragIds, fromTabId, id)
       else if (dt === 'group') nestGroupInGroup(di, fromTabId, id)
     }
     // slider-row reordering already happened live during dragover — drop just finalizes
@@ -182,41 +300,18 @@
     mutateTabs(tabs => tabs.map(t => t.id === tabId ? fn(t) : t))
   }
 
-  function extractSlider(sliderId, fromTabId, fromGroupId) {
-    let extracted = null
-    mutateTabs(tabs => tabs.map(t => {
-      if (t.id !== fromTabId) return t
-      if (fromGroupId) {
-        return { ...t, groups: t.groups.map(g => {
-          if (g.id !== fromGroupId) return g
-          extracted = g.sliders.find(s => s.id === sliderId)
-          return { ...g, sliders: g.sliders.filter(s => s.id !== sliderId) }
-        })}
-      } else {
-        extracted = t.sliders.find(s => s.id === sliderId)
-        return { ...t, sliders: t.sliders.filter(s => s.id !== sliderId) }
-      }
-    }))
-    return extracted
-  }
-
-  function moveSliderToTab(sliderId, fromTabId, fromGroupId, toTabId) {
-    let slider = null
+  function moveSlidersToTab(sliderIds, fromTabId, toTabId) {
+    const idSet = new Set(sliderIds)
+    let moved = []
     mutateTabs(tabs => {
       const t1 = tabs.map(t => {
         if (t.id !== fromTabId) return t
-        if (fromGroupId) {
-          return { ...t, groups: t.groups.map(g => {
-            if (g.id !== fromGroupId) return g
-            slider = g.sliders.find(s => s.id === sliderId)
-            return { ...g, sliders: g.sliders.filter(s => s.id !== sliderId) }
-          })}
-        }
-        slider = t.sliders.find(s => s.id === sliderId)
-        return { ...t, sliders: t.sliders.filter(s => s.id !== sliderId) }
+        const [stripped, items] = extractSlidersByIds(t, idSet)
+        moved = items
+        return stripped
       })
-      if (!slider) return tabs
-      return t1.map(t => t.id === toTabId ? { ...t, sliders: [...t.sliders, slider] } : t)
+      if (!moved.length) return tabs
+      return t1.map(t => t.id === toTabId ? { ...t, sliders: [...t.sliders, ...moved] } : t)
     })
   }
 
@@ -234,72 +329,39 @@
   }
 
   // Reorders live, on every dragover hover change (not just on drop), so siblings
-  // visibly shift out of the way as the drag progresses. Handles moving across
-  // group boundaries (or in/out of a group) the same way the old drop-time
-  // reorder did — insert next to targetId, in whichever list (top-level or
-  // targetGroupId's) it lives in.
+  // visibly shift out of the way as the drag progresses. Moves the whole dragged
+  // block (activeDrag.ids — more than one when dragging a multi-selection) together,
+  // wherever each member currently lives, into targetId's list (top-level or
+  // targetGroupId's), preserving the block's relative order.
   function liveReorderSlider(targetId, targetGroupId, pos) {
-    if (!activeDrag || activeDrag.id === targetId) return
-    const dragId      = activeDrag.id
-    const fromGroupId = activeDrag.fromGroupId
+    if (!activeDrag) return
+    const dragIds = new Set(activeDrag.ids ?? [activeDrag.id])
+    if (dragIds.has(targetId)) return
 
     mutateTabsQuiet(tabs => tabs.map(t => {
       if (t.id !== activeDrag.fromTabId) return t
-
-      let slider     = null
-      let groups     = t.groups
-      let topSliders = t.sliders
-
-      if (fromGroupId) {
-        groups = mapGroupTree(groups, fromGroupId, g => {
-          slider = g.sliders.find(s => s.id === dragId)
-          return { sliders: g.sliders.filter(s => s.id !== dragId) }
-        })
-      } else {
-        slider     = topSliders.find(s => s.id === dragId)
-        topSliders = topSliders.filter(s => s.id !== dragId)
-      }
-      if (!slider) return t
-
-      if (targetGroupId) {
-        groups = mapGroupTree(groups, targetGroupId, g => {
-          const sliders = [...g.sliders]
-          const toIdx = sliders.findIndex(s => s.id === targetId)
-          sliders.splice(toIdx < 0 ? sliders.length : pos === 'after' ? toIdx + 1 : toIdx, 0, slider)
-          return { sliders }
-        })
-      } else {
-        const sliders = [...topSliders]
-        const toIdx = sliders.findIndex(s => s.id === targetId)
-        sliders.splice(toIdx < 0 ? sliders.length : pos === 'after' ? toIdx + 1 : toIdx, 0, slider)
-        topSliders = sliders
-      }
-
-      return { ...t, sliders: topSliders, groups }
+      const [stripped, items] = extractSlidersByIds(t, dragIds)
+      if (!items.length) return t
+      return insertSlidersAt(stripped, targetGroupId, targetId, pos, items)
     }))
 
     activeDrag = { ...activeDrag, fromGroupId: targetGroupId }
   }
 
-  function moveSliderToGroup(sliderId, fromTabId, fromGroupId, targetGroupId) {
-    if (fromGroupId === targetGroupId) return
-    let slider = null
+  function moveSlidersToGroup(sliderIds, fromTabId, targetGroupId) {
+    const idSet = new Set(sliderIds)
+    let moved = []
     mutateTabs(tabs => {
       const t1 = tabs.map(t => {
         if (t.id !== fromTabId) return t
-        if (fromGroupId) {
-          return { ...t, groups: mapGroupTree(t.groups, fromGroupId, g => {
-            slider = g.sliders.find(s => s.id === sliderId)
-            return { sliders: g.sliders.filter(s => s.id !== sliderId) }
-          })}
-        }
-        slider = t.sliders.find(s => s.id === sliderId)
-        return { ...t, sliders: t.sliders.filter(s => s.id !== sliderId) }
+        const [stripped, items] = extractSlidersByIds(t, idSet)
+        moved = items
+        return stripped
       })
-      if (!slider) return tabs
+      if (!moved.length) return tabs
       return t1.map(t => t.id !== fromTabId ? t : {
         ...t,
-        groups: mapGroupTree(t.groups, targetGroupId, g => ({ sliders: [...g.sliders, slider] }))
+        groups: mapGroupTree(t.groups, targetGroupId, g => ({ sliders: [...g.sliders, ...moved] }))
       })
     })
   }
@@ -332,30 +394,18 @@
   // ── ActionBar ─────────────────────────────────────────────────────────────────
   function moveSelectedTo(targetTabId) {
     if (!selectedIds.size) return
-    const toMove = []
-    mutateTabs(tabs => {
-      const base = tabs.map(t => {
-        if (t.id !== activeTab.id) return t
-        const kept   = t.sliders.filter(s => { if (selectedIds.has(s.id)) { toMove.push(s); return false } return true })
-        const groups = t.groups.map(g => {
-          const gKept = g.sliders.filter(s => { if (selectedIds.has(s.id)) { toMove.push(s); return false } return true })
-          return { ...g, sliders: gKept }
-        })
-        return { ...t, sliders: kept, groups }
-      })
-      return base.map(t => t.id === targetTabId ? { ...t, sliders: [...t.sliders, ...toMove] } : t)
-    })
+    moveSlidersToTab([...selectedIds], activeTab.id, targetTabId)
     selectedIds = new Set()
   }
 
   function groupSelected() {
     if (!selectedIds.size) return
-    const groupSliders = []
+    const idSet = selectedIds
     mutateTabs(tabs => tabs.map(t => {
       if (t.id !== activeTab.id) return t
-      const remaining = t.sliders.filter(s => { if (selectedIds.has(s.id)) { groupSliders.push(s); return false } return true })
-      const newGroup  = { id: 'g_' + Date.now(), label: 'Group', collapsed: false, sliders: groupSliders, groups: [] }
-      return { ...t, sliders: remaining, groups: [...t.groups, newGroup] }
+      const [stripped, items] = extractSlidersByIds(t, idSet)
+      const newGroup = { id: 'g_' + Date.now(), label: 'Group', collapsed: false, sliders: items, groups: [] }
+      return { ...stripped, groups: [...stripped.groups, newGroup] }
     }))
     selectedIds = new Set()
   }
@@ -417,8 +467,10 @@
       return
     }
     // kind === 'split': update preview overlay only, DOM stays intact until commit
-    const rect = paneEl.getBoundingClientRect()
-    splitPreview = { dir: detail.dir, side: detail.side, ratio: clampRatio(ratioFromRect(detail, rect)) }
+    const rect  = paneEl.getBoundingClientRect()
+    const ratio = clampRatio(ratioFromRect(detail, rect))
+    const dim   = detail.dir === 'h' ? rect.width : rect.height
+    splitPreview = { dir: detail.dir, side: detail.side, ratio, sizeA: ratio * dim }
   }
 
   function onCornerCommit(detail) {
@@ -429,7 +481,7 @@
       collapsePreview.set(null)
       postStateSnapshot()
     } else if (detail.kind === 'split' && splitPreview) {
-      splitPane(paneId, splitPreview.dir, splitPreview.side, splitPreview.ratio)
+      splitPane(paneId, splitPreview.dir, splitPreview.side, splitPreview.sizeA)
       splitPreview = null
       postStateSnapshot()
     }
@@ -502,8 +554,8 @@
       return
     }
     if ($itemDrag && $itemDrag.fromPaneId !== paneId && activeTabId) {
-      const { type, id, fromPaneId: fp, fromTabId: ft, fromGroupId: fg } = $itemDrag
-      moveCrossPaneItem(fp, ft, fg, id, type, paneId, activeTabId)
+      const { type, id, ids, fromPaneId: fp, fromTabId: ft } = $itemDrag
+      moveCrossPaneItem(fp, ft, ids ?? [id], type, paneId, activeTabId)
       itemDrag.set(null)
       itemDragHover = false
       postStateSnapshot()
@@ -516,17 +568,18 @@
   $: canDragTabs   = true
   $: isDraggingTab = $tabDrag !== null
   $: isDropTarget  = isDraggingTab && $tabDrag?.fromPaneId !== paneId
-  $: isDraggingItem = $itemDrag !== null && $itemDrag.fromPaneId !== paneId
 </script>
 
 <!-- svelte-ignore a11y-no-static-element-interactions -->
 <div
   class="pane"
+  data-pane-id={paneId}
   bind:this={paneEl}
   class:drop-target={isDropTarget || itemDragHover}
   on:dragover={onPaneDragOver}
   on:dragleave={onPaneDragLeave}
   on:drop={onPaneDrop}
+  on:contextmenu={onPaneContextMenu}
 >
   <CornerHandle corner="tl" on:preview={e => onCornerPreview(e.detail)} on:commit={e => onCornerCommit(e.detail)} />
   <CornerHandle corner="tr" on:preview={e => onCornerPreview(e.detail)} on:commit={e => onCornerCommit(e.detail)} />
@@ -575,14 +628,19 @@
       </div>
     {:else}
       {#each activeTab.sliders as slider, i (slider.id)}
-        <div class="row-slot" animate:flip={{ duration: 150, easing: cubicOut }}>
-          <SliderRow
+        <div class="row-slot" animate:flip={{ duration: slider.id === resizingSliderId ? 0 : 150, easing: cubicOut }}>
+          <svelte:component
+            this={ROW_COMPONENTS[slider.type] ?? SliderRow}
             {slider} mode={$mode}
             selected={selectedIds.has(slider.id)}
             isFirst={i === 0}
             isLast={i === activeTab.sliders.length - 1}
-            on:change={e      => onSliderChange(slider.id, e.detail)}
-            on:commit={e      => onSliderCommit(slider.id, e.detail)}
+            on:change={e      => onSliderChange(slider.id, e.detail, slider.type, slider.multiSelect)}
+            on:commit={e      => onSliderCommit(slider.id, e.detail, slider.type)}
+            on:resize={e       => onPanelResize(slider.id, e.detail, false)}
+            on:resizeCommit={e => onPanelResize(slider.id, e.detail, true)}
+            on:resizeStart={e  => resizingSliderId = e.detail}
+            on:resizeEnd={()   => resizingSliderId = null}
             on:select={e      => onSliderSelect(slider.id, e.detail)}
             on:remove={() => removeSlider(activeTab.id, slider.id)}
             on:dragStart={() => startDrag('slider', slider.id, activeTab.id, null)}
@@ -596,14 +654,18 @@
 
       {#each activeTab.groups as group (group.id)}
         <GroupSection
-          {group} mode={$mode} {selectedIds} {dropTarget}
+          {group} mode={$mode} {selectedIds} {dropTarget} {resizingSliderId}
           dropHighlight={dropTarget?.type === 'group-header' && dropTarget.id === group.id && activeDrag?.type === 'slider'}
           dropBefore={dropTarget?.type === 'group-header' && dropTarget.id === group.id && activeDrag?.type === 'group'}
           on:toggle={e              => toggleGroup(e.detail)}
           on:rename={e              => renameGroup(e.detail.id, e.detail.label)}
           on:remove={e              => removeGroup(e.detail)}
-          on:sliderChange={e        => onSliderChange(e.detail.id, e.detail.value)}
-          on:sliderCommit={e        => onSliderCommit(e.detail.id, e.detail.value)}
+          on:sliderChange={e        => onSliderChange(e.detail.id, e.detail.value, e.detail.type, e.detail.multiSelect)}
+          on:sliderCommit={e        => onSliderCommit(e.detail.id, e.detail.value, e.detail.type)}
+          on:sliderResize={e        => onPanelResize(e.detail.id, e.detail.height, false)}
+          on:sliderResizeCommit={e  => onPanelResize(e.detail.id, e.detail.height, true)}
+          on:sliderResizeStart={e   => resizingSliderId = e.detail}
+          on:sliderResizeEnd={()    => resizingSliderId = null}
           on:sliderSelect={e        => onSliderSelect(e.detail.id, e.detail.multi)}
           on:sliderRemove={e        => removeSlider(activeTab.id, e.detail.sliderId)}
           on:headerDragStart={() => startDrag('group', group.id, activeTab.id, null)}
@@ -652,6 +714,10 @@
     </div>
   {/if}
 </div>
+
+{#if contextMenu}
+  <ContextMenu x={contextMenu.x} y={contextMenu.y} items={contextMenu.items} on:close={() => contextMenu = null} />
+{/if}
 
 <style>
   .pane {
