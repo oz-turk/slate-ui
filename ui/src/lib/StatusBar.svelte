@@ -36,20 +36,20 @@
       </span>
       <span class="hint-item">
         <span class="kbd">Drag</span>
-        Move to another pane
+        Move
       </span>
       <span class="hint-item">
         <span class="kbd">x</span>
-        Delete under mouse
+        Delete
       </span>
       <span class="hint-item">
         <span class="kbd">c</span>
-        Capture into pane under mouse
+        Capture
       </span>
     {:else}
       <span class="hint-item">
         <span class="kbd">Tab</span>
-        Enter Edit mode
+        Edit
       </span>
     {/if}
   </div>

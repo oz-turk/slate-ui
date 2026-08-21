@@ -1,8 +1,9 @@
 <script>
   import { createEventDispatcher } from 'svelte'
+  import ColourPickerPopup from './ColourPickerPopup.svelte'
   const dispatch = createEventDispatcher()
 
-  export let slider    = {}   // { id, name, value } — value is a "#rrggbb" hex string
+  export let slider    = {}   // { id, name, value } — value is an "#rrggbbaa" hex string
   export let mode      = 'preview'
   export let selected  = false
   export let isFirst   = false
@@ -23,9 +24,37 @@
     else                                          dragTranslateY = 0
   }
 
-  function onPick(e) {
-    dispatch('change', e.target.value)
+  // ── popup ─────────────────────────────────────────────────────────────────────
+  let popup = null   // { x, y } | null
+  function openPopup(e) {
+    const rect = e.currentTarget.getBoundingClientRect()
+    const w = 216, h = 300
+    popup = {
+      x: Math.min(rect.left, window.innerWidth  - w - 8),
+      y: Math.min(rect.bottom + 4, window.innerHeight - h - 8),
+    }
   }
+  function onPopupChange(e) {
+    dispatch('change', e.detail)
+  }
+
+  $: hexDisplay = (slider.value ?? '').slice(1, 7)
+  $: alphaByte  = parseInt((slider.value ?? '').slice(7, 9), 16)
+  $: alphaPct   = isNaN(alphaByte) ? 100 : Math.round(alphaByte / 255 * 100)
+
+  // A flat-colour layer over a checkerboard — background-color would sit
+  // *behind* the checkerboard image and never show through, so the colour
+  // has to be its own background-image layer instead. Built as one inline
+  // style string (not the `background` shorthand) so each layer keeps its
+  // own background-size — the shorthand would reset the checker tiling.
+  $: swatchStyle = `background-image: linear-gradient(${slider.value}, ${slider.value}),
+      linear-gradient(45deg, #4a4a4a 25%, transparent 25%),
+      linear-gradient(-45deg, #4a4a4a 25%, transparent 25%),
+      linear-gradient(45deg, transparent 75%, #4a4a4a 75%),
+      linear-gradient(-45deg, transparent 75%, #4a4a4a 75%);
+    background-size: 100% 100%, 8px 8px, 8px 8px, 8px 8px, 8px 8px;
+    background-position: 0 0, 0 0, 0 4px, 4px -4px, -4px 0;
+    background-color: #2a2a2a;`
 
   function rowDragOver(e) {
     e.dataTransfer.dropEffect = 'move'
@@ -76,15 +105,20 @@
 
   <div class="spacer"></div>
 
-  <span class="hex">{slider.value}</span>
-  <label class="swatch" style="background: {slider.value}" on:click|stopPropagation>
-    <input type="color" value={slider.value} on:input={onPick} />
-  </label>
+  <span class="hex">{hexDisplay}{alphaPct < 100 ? `  ${alphaPct}%` : ''}</span>
+  <button class="swatch" style={swatchStyle} title="Edit colour" on:click|stopPropagation={openPopup}></button>
 
   {#if mode === 'edit'}
     <button class="del" on:click|stopPropagation={() => dispatch('remove')} title="Remove">×</button>
   {/if}
 </div>
+
+{#if popup}
+  <ColourPickerPopup x={popup.x} y={popup.y} hex={slider.value}
+      on:change={onPopupChange}
+      on:close={() => popup = null}
+  />
+{/if}
 
 <style>
   .row {
@@ -145,18 +179,9 @@
     display: block;
     overflow: hidden;
     position: relative;
-  }
-  .swatch:hover { border-color: var(--border); }
-  .swatch input {
-    position: absolute;
-    inset: -4px;
-    width: calc(100% + 8px);
-    height: calc(100% + 8px);
-    opacity: 0;
-    cursor: pointer;
-    border: none;
     padding: 0;
   }
+  .swatch:hover { border-color: var(--border); }
 
   .del {
     width: 20px;

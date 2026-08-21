@@ -68,14 +68,16 @@ public class SlateWindow : Form
     // and runs fine on a machine without Pancake installed.
     private readonly Dictionary<string, IGH_Param> _pancakeTrueOnlyButtons = new();
 
-    private static string ColorToHex(Color c) => $"#{c.R:X2}{c.G:X2}{c.B:X2}";
+    // 8-digit hex (#RRGGBBAA) so alpha round-trips through the wire alongside RGB.
+    private static string ColorToHex(Color c) => $"#{c.R:X2}{c.G:X2}{c.B:X2}{c.A:X2}";
     private static Color HexToColor(string hex)
     {
         hex = hex.TrimStart('#');
         int r = Convert.ToInt32(hex.Substring(0, 2), 16);
         int g = Convert.ToInt32(hex.Substring(2, 2), 16);
         int b = Convert.ToInt32(hex.Substring(4, 2), 16);
-        return Color.FromArgb(r, g, b);
+        int a = hex.Length >= 8 ? Convert.ToInt32(hex.Substring(6, 2), 16) : 255;
+        return Color.FromArgb(a, r, g, b);
     }
     private static Type? _humanValueListType;
     private static bool  _humanReflectionChecked;
@@ -179,6 +181,7 @@ public class SlateWindow : Form
             if (_hostDocument != null) _hostDocument.SolutionEnd -= OnDocSolutionEnd;
             _hostDocument = value;
             _latestValues.Clear();
+            _latestColourValues.Clear();
             _solveRunning = false;
             if (_hostDocument != null) _hostDocument.SolutionEnd += OnDocSolutionEnd;
         }
@@ -201,6 +204,10 @@ public class SlateWindow : Form
     // Only the most recent value per slider ID survives to the next solve.
     // SetSliderValue is called exactly once per slider per solve, never on every IPC message.
     private static readonly Dictionary<string, double> _latestValues = new();
+    // Colour is a hex string, not a double — same batching, its own dictionary,
+    // shares the _solveRunning gate so a drag on either kind of control coalesces
+    // into the same single-solve cycle instead of flooding ExpireSolution calls.
+    private static readonly Dictionary<string, string> _latestColourValues = new();
     private static bool _solveRunning;
 
     private static void OnDocSolutionEnd(object sender, Grasshopper.Kernel.GH_SolutionEventArgs e)
@@ -209,7 +216,7 @@ public class SlateWindow : Form
         var win = _instance;
         win?.BeginInvoke((Action)(() =>
         {
-            if (_latestValues.Count == 0) _solveRunning = false;
+            if (_latestValues.Count == 0 && _latestColourValues.Count == 0) _solveRunning = false;
             else ApplyLatestValues();
             PushSliderNameUpdates();
             PushPanelTextUpdates();
@@ -372,7 +379,7 @@ public class SlateWindow : Form
     private static void ApplyLatestValues()
     {
         var win = _instance;
-        if (win == null) { _latestValues.Clear(); _solveRunning = false; return; }
+        if (win == null) { _latestValues.Clear(); _latestColourValues.Clear(); _solveRunning = false; return; }
 
         foreach (var kv in _latestValues)
         {
@@ -414,7 +421,17 @@ public class SlateWindow : Form
             }
         }
 
+        foreach (var kv in _latestColourValues)
+        {
+            if (win._colourPickers.TryGetValue(kv.Key, out var cp))
+            {
+                cp.SwatchColour = HexToColor(kv.Value);
+                cp.ExpireSolution(false);
+            }
+        }
+
         _latestValues.Clear();
+        _latestColourValues.Clear();
         _hostDocument?.ScheduleSolution(1, null);
     }
 
@@ -566,10 +583,10 @@ public class SlateWindow : Form
                 case "colour_change":
                     string cid = root.GetProperty("id").GetString() ?? "";
                     string hex = root.GetProperty("value").GetString() ?? "";
-                    if (_colourPickers.TryGetValue(cid, out var picker))
+                    if (_colourPickers.ContainsKey(cid))
                     {
-                        picker.SwatchColour = HexToColor(hex);
-                        picker.ExpireSolution(true);
+                        _latestColourValues[cid] = hex;   // same latest-value batching as slider_change
+                        if (!_solveRunning) { _solveRunning = true; ApplyLatestValues(); }
                     }
                     break;
 
