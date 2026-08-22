@@ -1,40 +1,45 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net7.0-windows</TargetFramework>
+    <!-- net48, not net7.0-windows: Rhino 7 only hosts .NET Framework plugins.
+         Rhino 8 still loads netfx .gha's via its compat runtime, so a single
+         net48 target covers both. -->
+    <TargetFramework>net48</TargetFramework>
     <Version>0.1.0</Version>
     <AssemblyName>Slate</AssemblyName>
     <RootNamespace>Slate</RootNamespace>
     <TargetExt>.gha</TargetExt>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>11</LangVersion>
     <UseWindowsForms>true</UseWindowsForms>
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- Built against Rhino 7's assemblies (the older baseline) so the same
+         .gha loads on both Rhino 7 and Rhino 8. -->
     <Reference Include="Grasshopper">
-      <HintPath>C:\Program Files\Rhino 8\Plug-ins\Grasshopper\Grasshopper.dll</HintPath>
+      <HintPath>C:\Program Files\Rhino 7\Plug-ins\Grasshopper\Grasshopper.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="GH_IO">
-      <HintPath>C:\Program Files\Rhino 8\Plug-ins\Grasshopper\GH_IO.dll</HintPath>
+      <HintPath>C:\Program Files\Rhino 7\Plug-ins\Grasshopper\GH_IO.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="RhinoCommon">
-      <HintPath>C:\Program Files\Rhino 8\System\RhinoCommon.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <!-- Use Rhino's own Core.dll — avoids version mismatch at runtime -->
-    <Reference Include="Microsoft.Web.WebView2.Core">
-      <HintPath>C:\Program Files\Rhino 8\System\Microsoft.Web.WebView2.Core.dll</HintPath>
+      <HintPath>C:\Program Files\Rhino 7\System\RhinoCommon.dll</HintPath>
       <Private>False</Private>
     </Reference>
   </ItemGroup>
 
-  <!-- WinForms wrapper must match Core version (1.0.1938.49) -->
+  <!-- Rhino 7 doesn't bundle its own WebView2 Core.dll (only Rhino 8 does),
+       so we take Core + WinForms from the NuGet package itself and rely on
+       the system Edge WebView2 Evergreen runtime at load time, instead of
+       hint-pathing to a Rhino-provided copy. -->
   <ItemGroup>
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.1938.49" />
+    <PackageReference Include="System.Text.Json" Version="8.0.5" />
   </ItemGroup>
 
   <!-- Embed compiled Svelte output -->
@@ -44,7 +49,11 @@
 
   <Target Name="DeployToGrasshopper" AfterTargets="Build">
     <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(APPDATA)\Grasshopper\Libraries" />
-    <!-- Only WinForms.dll — Core.dll is already in Rhino\System\ -->
+    <!-- Core.dll + WinForms.dll both now come from the NuGet package, not
+         from Rhino\System\ (Rhino 7 doesn't ship its own copy). -->
+    <Copy SourceFiles="$(TargetDir)Microsoft.Web.WebView2.Core.dll"
+          DestinationFolder="$(APPDATA)\Grasshopper\Libraries"
+          Condition="Exists('$(TargetDir)Microsoft.Web.WebView2.Core.dll')" />
     <Copy SourceFiles="$(TargetDir)Microsoft.Web.WebView2.WinForms.dll"
           DestinationFolder="$(APPDATA)\Grasshopper\Libraries"
           Condition="Exists('$(TargetDir)Microsoft.Web.WebView2.WinForms.dll')" />

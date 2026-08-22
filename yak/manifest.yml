@@ -1,0 +1,7 @@
+---
+name: Slate
+version: 0.1.0
+authors:
+- Burak Öztürk
+description: Modern parametric UI panel for Grasshopper.
+url: https://github.com/oz-turk/slate-ui

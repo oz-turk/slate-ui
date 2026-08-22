@@ -2,6 +2,8 @@
 src/bin/
 src/obj/
 src/Resources/assets/
+yak/*.gha
+yak/*.yak
 
 # Node
 ui/node_modules/

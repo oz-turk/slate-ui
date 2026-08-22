@@ -3,7 +3,6 @@ using Grasshopper.Kernel;
 using Grasshopper.Kernel.Special;
 using Slate.Bridge;
 using System.Drawing;
-using System.Drawing.Drawing2D;
 
 namespace Slate.Components;
 
@@ -18,28 +17,8 @@ public class SlatePanel : GH_Component
     public override Guid ComponentGuid => new Guid("F1E2D3C4-B5A6-7890-FEDC-BA9876543210");
     public override GH_Exposure Exposure => GH_Exposure.primary;
 
-    protected override Bitmap Icon
-    {
-        get
-        {
-            var bmp = new Bitmap(24, 24);
-            using var g = Graphics.FromImage(bmp);
-            g.SmoothingMode = SmoothingMode.AntiAlias;
-            g.Clear(Color.Transparent);
-
-            using var pen   = new Pen(Color.FromArgb(100, 160, 255), 1.5f);
-            using var brush = new SolidBrush(Color.FromArgb(100, 160, 255));
-
-            // "S" lettermark, minimal
-            g.DrawLine(pen, 6, 7, 15, 7);
-            g.DrawLine(pen, 6, 7, 6, 12);
-            g.DrawLine(pen, 6, 12, 15, 12);
-            g.DrawLine(pen, 15, 12, 15, 17);
-            g.DrawLine(pen, 6, 17, 15, 17);
-
-            return bmp;
-        }
-    }
+    protected override Bitmap Icon =>
+        Bridge.SlateLogo.ToBitmap(24, Bridge.SlateLogo.CanvasOutline, Bridge.SlateLogo.CanvasFill);
 
     protected override void RegisterInputParams(GH_InputParamManager pManager)
     {

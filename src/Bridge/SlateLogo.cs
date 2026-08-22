@@ -1,0 +1,82 @@
+using System.Drawing;
+using System.Drawing.Drawing2D;
+
+namespace Slate.Bridge;
+
+// Shared brand mark: two rounded squares, offset diagonally (outline
+// upper-left... actually lower-left, fill upper-right), per the "Tur 3 / 1A"
+// design (Slate Logo.dc.html, Claude Design project 656ee7cb). Proportions
+// are normalized against the design's 64px reference frame so the same
+// helper draws crisply at GH-canvas size (24px) and titlebar-icon size (32px).
+internal static class SlateLogo
+{
+    // Fractions of the target square size, taken from the 64px reference:
+    // outline square at (0, 11) size 46 radius 10; fill square at (18, 0) size 46 radius 10.
+    const float OutlineX = 0f       / 64f, OutlineY = 11f / 64f;
+    const float FillX    = 18f      / 64f, FillY    = 0f  / 64f;
+    const float SquareSz = 46f      / 64f;
+    const float Radius   = 10f      / 64f;
+    const float StrokeFr = 3f       / 64f;
+
+    public static void Draw(Graphics g, RectangleF bounds, Color outline, Color fill)
+    {
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        float size = bounds.Width;
+
+        float sq     = size * SquareSz;
+        float radius = size * Radius;
+        float stroke = Math.Max(1.5f, size * StrokeFr);
+
+        // Outline first, fill on top — matches the original design's DOM
+        // order (outline div before the filled div), where the blue square
+        // sits in front and visibly overlaps the outline's corner.
+        var outlineRect = new RectangleF(
+            bounds.X + size * OutlineX + stroke / 2,
+            bounds.Y + size * OutlineY + stroke / 2,
+            sq - stroke, sq - stroke);
+        using (var path = RoundedRect(outlineRect, radius - stroke / 2))
+        using (var pen = new Pen(outline, stroke))
+            g.DrawPath(pen, path);
+
+        var fillRect = new RectangleF(bounds.X + size * FillX, bounds.Y + size * FillY, sq, sq);
+        using (var path = RoundedRect(fillRect, radius))
+        using (var brush = new SolidBrush(fill))
+            g.FillPath(brush, path);
+    }
+
+    static GraphicsPath RoundedRect(RectangleF r, float radius)
+    {
+        radius = Math.Max(0, radius);
+        float d = radius * 2;
+        var path = new GraphicsPath();
+        path.AddArc(r.X, r.Y, d, d, 180, 90);
+        path.AddArc(r.Right - d, r.Y, d, d, 270, 90);
+        path.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90);
+        path.AddArc(r.X, r.Bottom - d, d, d, 90, 90);
+        path.CloseFigure();
+        return path;
+    }
+
+    // One-time GDI handle for the process lifetime — built once and cached
+    // by the caller, not worth the DestroyIcon P/Invoke.
+    public static Icon ToIcon(int size, Color outline, Color fill)
+    {
+        using var bmp = ToBitmap(size, outline, fill);
+        return Icon.FromHandle(bmp.GetHicon());
+    }
+
+    // Light-background pairing (dark outline, blue fill) — used wherever
+    // the mark sits on GH's own light canvas/ribbon chrome: the component
+    // icon (SlatePanel.Icon) and the category tab icon (SlateAssemblyPriority).
+    public static readonly Color CanvasOutline = Color.FromArgb(0x16, 0x18, 0x1c);
+    public static readonly Color CanvasFill    = Color.FromArgb(0x5b, 0x8e, 0xf5);
+
+    public static Bitmap ToBitmap(int size, Color outline, Color fill)
+    {
+        var bmp = new Bitmap(size, size);
+        using var g = Graphics.FromImage(bmp);
+        g.Clear(Color.Transparent);
+        Draw(g, new RectangleF(0, 0, size, size), outline, fill);
+        return bmp;
+    }
+}

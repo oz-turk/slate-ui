@@ -19,6 +19,34 @@ public class SlateWindow : Form
     static readonly IntPtr HWND_NOTOPMOST  = new(-2);
     const uint SWP_NOMOVE = 0x0002, SWP_NOSIZE = 0x0001;
 
+    // ── titlebar icon ────────────────────────────────────────────────────────
+    // Form.Icon can't be used for this: under net48 (Rhino 7 compat) its
+    // getter always substitutes an embedded "wfc.ico" default the moment you
+    // touch the property, even mid-assignment, so per-theme swapping via
+    // Icon doesn't work reliably across both runtimes. WM_SETICON sent
+    // directly bypasses that and lets each theme show its own brand mark
+    // (SlateLogo): coloured for light, monochrome for dark — see
+    // ApplyTitleBarTheme, which already runs on every theme change.
+    [DllImport("user32.dll")] static extern IntPtr SendMessage(
+        IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
+    const int WM_SETICON  = 0x0080;
+    const int ICON_SMALL  = 0;
+    const int ICON_BIG    = 1;
+
+    static Icon? _iconLight, _iconDark;
+
+    static void ApplyWindowIcon(IntPtr hWnd, bool dark)
+    {
+        // Built once and cached — see SlateLogo.ToIcon's own note on the
+        // one-time GDI handle cost.
+        _iconLight ??= SlateLogo.ToIcon(32, outline: Color.FromArgb(0x20, 0x1e, 0x1d), fill: Color.FromArgb(0x5b, 0x8e, 0xf5));
+        _iconDark  ??= SlateLogo.ToIcon(32, outline: Color.FromArgb(0xef, 0xef, 0xef), fill: Color.FromArgb(0xef, 0xef, 0xef));
+
+        var icon = (dark ? _iconDark : _iconLight).Handle;
+        SendMessage(hWnd, WM_SETICON, (IntPtr)ICON_SMALL, icon);
+        SendMessage(hWnd, WM_SETICON, (IntPtr)ICON_BIG,   icon);
+    }
+
     // ── dark title bar (Windows 11) ─────────────────────────────────────────
     [DllImport("dwmapi.dll")] static extern int DwmSetWindowAttribute(
         IntPtr hwnd, int dwAttribute, ref int pvAttribute, int cbAttribute);
@@ -40,6 +68,7 @@ public class SlateWindow : Form
         DwmSetWindowAttribute(Handle, DWMWA_CAPTION_COLOR, ref caption, sizeof(int));
         DwmSetWindowAttribute(Handle, DWMWA_BORDER_COLOR, ref caption, sizeof(int));
         DwmSetWindowAttribute(Handle, DWMWA_TEXT_COLOR, ref text, sizeof(int));
+        ApplyWindowIcon(Handle, dark);
     }
 
     string _lastAppliedTheme = "dark";
@@ -1066,7 +1095,8 @@ public class SlateWindow : Form
     private static string FixResourcePath(string resourceName)
     {
         // Strip "Slate.Resources." prefix
-        string rel = resourceName["Slate.Resources.".Length..];
+        // (Substring, not the [x..] range operator — System.Range isn't in net48's mscorlib)
+        string rel = resourceName.Substring("Slate.Resources.".Length);
 
         // Known web extensions — find the last occurrence to reconstruct the path
         string[] exts = { ".html", ".js", ".css", ".svg", ".png", ".ico", ".json" };
@@ -1076,7 +1106,7 @@ public class SlateWindow : Form
             int idx = rel.LastIndexOf('.' + extKey);
             if (idx < 0) continue;
 
-            string withoutExt = rel[..idx].Replace('.', Path.DirectorySeparatorChar);
+            string withoutExt = rel.Substring(0, idx).Replace('.', Path.DirectorySeparatorChar);
             return withoutExt + ext;
         }
 
