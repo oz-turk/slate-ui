@@ -1,5 +1,7 @@
 <script>
   import { createEventDispatcher } from 'svelte'
+  import ContextMenu from './ContextMenu.svelte'
+  import ColourPickerPopup from './ColourPickerPopup.svelte'
   const dispatch = createEventDispatcher()
 
   export let tabs        = []
@@ -11,6 +13,32 @@
 
   let editingId = null
   let editValue = ''
+
+  // ── tab colour (right-click, like Obsidian's per-folder colours) ───────────────
+  let colorMenu   = null   // { x, y, items } | null
+  let colorPicker = null   // { x, y, tab } | null
+
+  function onTabContextMenu(e, tab) {
+    if (mode !== 'edit') return
+    e.preventDefault()
+    const cx = e.clientX, cy = e.clientY
+    const items = [{ label: 'Change colour…', action: () => openColorPicker(tab, cx, cy) }]
+    if (tab.color) items.push({ label: 'Remove colour', danger: true, action: () => dispatch('setColor', { id: tab.id, color: null }) })
+    const menuW = 170, menuH = items.length * 30 + 10
+    colorMenu = {
+      x: Math.min(cx, window.innerWidth  - menuW - 8),
+      y: Math.min(cy, window.innerHeight - menuH - 8),
+      items,
+    }
+  }
+  function openColorPicker(tab, cx, cy) {
+    const w = 216, h = 300
+    colorPicker = {
+      x: Math.min(cx, window.innerWidth  - w - 8),
+      y: Math.min(cy, window.innerHeight - h - 8),
+      tab,
+    }
+  }
 
   // ── rename ────────────────────────────────────────────────────────────────────
   function startRename(tab) {
@@ -59,8 +87,10 @@
       class:drag-over={dropTabId === tab.id}
       class:being-dragged={dragTabId === tab.id}
       draggable={canDragTabs && mode === 'edit'}
+      style={tab.id === activeTabId && tab.color ? `border-bottom-color: ${tab.color}` : ''}
       on:click={() => dispatch('select', tab.id)}
       on:dblclick={() => startRename(tab)}
+      on:contextmenu={e => onTabContextMenu(e, tab)}
       on:pointerdown={e => onTabPointerDown(e, tab)}
       on:dragstart={e => onTabDragStart(e, tab)}
       on:dragend={onTabDragEnd}
@@ -82,6 +112,7 @@
           on:click|stopPropagation
         />
       {:else}
+        {#if tab.color}<span class="color-dot" style="background: {tab.color}"></span>{/if}
         <span class="label">{tab.label}</span>
         {#if mode === 'edit' && tabs.length > 1}
           <button
@@ -102,6 +133,16 @@
     </button>
   {/if}
 </div>
+
+{#if colorMenu}
+  <ContextMenu x={colorMenu.x} y={colorMenu.y} items={colorMenu.items} on:close={() => colorMenu = null} />
+{/if}
+{#if colorPicker}
+  <ColourPickerPopup x={colorPicker.x} y={colorPicker.y} hex={colorPicker.tab.color ?? '#74a2ffff'}
+      on:change={e => dispatch('setColor', { id: colorPicker.tab.id, color: e.detail })}
+      on:close={() => colorPicker = null}
+  />
+{/if}
 
 <style>
   .tabbar {
@@ -136,6 +177,14 @@
   .tab.being-dragged      { opacity: 0.4; }
 
   .label { pointer-events: none; }
+
+  .color-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    pointer-events: none;
+  }
 
   .remove {
     display: flex; align-items: center; justify-content: center;

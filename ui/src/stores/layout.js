@@ -6,6 +6,7 @@ const pid  = () => 'pane_'  + (++_pc)
 const sid  = () => 'split_' + (++_sc)
 const wid  = () => 'ws_'    + (++_wc)
 export const newTabId = () => 'tab_' + Date.now() + '_' + (++_tc)
+export const newSplitId = () => sid()
 
 // Smallest "{prefix} N" (N >= 1) not already present in existingLabels — so
 // naming fills gaps left by deletions instead of climbing forever.
@@ -33,8 +34,10 @@ export function makeLeaf(tabs, activeTabId) {
 
 // sizeA = pixel width/height of pane `a` (the earlier/top-or-left side); `b` is
 // always flex:1 and absorbs the rest — so growing the window only grows `b`.
-function makeSplit(dir, a, b, sizeA = 260) {
-  return { type: 'split', splitId: sid(), dir, sizeA, a, b }
+// presetId lets a caller know the new split's id before the store update
+// resolves (see splitPane's own presetId param).
+function makeSplit(dir, a, b, sizeA = 260, presetId) {
+  return { type: 'split', splitId: presetId ?? sid(), dir, sizeA, a, b }
 }
 
 // ── store ─────────────────────────────────────────────────────────────────────
@@ -83,15 +86,15 @@ function mapSplit(node, splitId, fn) {
   return { ...node, a: mapSplit(node.a, splitId, fn), b: mapSplit(node.b, splitId, fn) }
 }
 
-function doSplit(node, paneId, dir, side, sizeA, label) {
+function doSplit(node, paneId, dir, side, sizeA, label, presetId) {
   if (node.type === 'leaf') {
     if (node.paneId !== paneId) return node
     const tabId = newTabId()
     const fresh = makeLeaf([{ id: tabId, label, sliders: [], groups: [] }], tabId)
     const [a, b] = side === 'before' ? [fresh, node] : [node, fresh]
-    return makeSplit(dir, a, b, sizeA)
+    return makeSplit(dir, a, b, sizeA, presetId)
   }
-  return { ...node, a: doSplit(node.a, paneId, dir, side, sizeA, label), b: doSplit(node.b, paneId, dir, side, sizeA, label) }
+  return { ...node, a: doSplit(node.a, paneId, dir, side, sizeA, label, presetId), b: doSplit(node.b, paneId, dir, side, sizeA, label, presetId) }
 }
 
 function doCollapse(node, paneId) {
@@ -148,11 +151,15 @@ export function setSplitSize(splitId, sizeA) {
   updateActiveLayout(l => mapSplit(l, splitId, () => ({ sizeA })))
 }
 
-export function splitPane(paneId, dir, side = 'after', sizeA = 260) {
+// presetId (optional): if the caller already generated the new split's id via
+// newSplitId() (e.g. to target it with setSplitSize before this update
+// resolves), pass it here so the tree uses that same id instead of minting
+// its own.
+export function splitPane(paneId, dir, side = 'after', sizeA = 260, presetId) {
   updateActiveLayout(l => {
     const labels = allLeaves(l).flatMap(leaf => leaf.tabs.map(t => t.label))
     const label  = nextAvailableName(labels, 'Tab')
-    return doSplit(l, paneId, dir, side, sizeA, label)
+    return doSplit(l, paneId, dir, side, sizeA, label, presetId)
   })
 }
 

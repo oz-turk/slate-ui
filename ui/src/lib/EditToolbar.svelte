@@ -29,7 +29,7 @@
     </svg>
   </button>
 
-  <button class="pin-btn" class:active={$settingsOpen} on:click={() => settingsOpen.update(v => !v)}
+  <button class="pin-btn" class:active={$settingsOpen} data-settings-toggle on:click={() => settingsOpen.update(v => !v)}
       on:mouseenter={() => hoverHint.set('Shortcuts & settings')}
       on:mouseleave={() => hoverHint.set(null)}
       title="Shortcuts & settings">

@@ -182,7 +182,7 @@
     align-items: center;
     gap: 4px;
     padding-right: 6px;
-    height: 30px;
+    height: 44px;
     cursor: pointer;
     user-select: none;
     transition: background 0.1s;

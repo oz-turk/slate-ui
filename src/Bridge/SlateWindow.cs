@@ -30,21 +30,24 @@ public class SlateWindow : Form
     // COLORREF is 0x00BBGGRR, not RGB — build it from the palette's own tones
     static int ColorRef(Color c) => c.R | (c.G << 8) | (c.B << 16);
 
-    void ApplyDarkTitleBar()
+    // Colours mirror app.css's --bg/--text for each theme, dark or light.
+    void ApplyTitleBarTheme(bool dark)
     {
-        var caption = ColorRef(Color.FromArgb(26, 26, 26));   // matches app.css --bg
-        var text    = ColorRef(Color.FromArgb(239, 239, 239)); // matches app.css --text
-        var enabled = 1;
+        var caption = ColorRef(dark ? Color.FromArgb(26, 26, 26)   : Color.FromArgb(228, 225, 216));
+        var text    = ColorRef(dark ? Color.FromArgb(239, 239, 239) : Color.FromArgb(42, 39, 36));
+        var enabled = dark ? 1 : 0;
         DwmSetWindowAttribute(Handle, DWMWA_USE_IMMERSIVE_DARK_MODE, ref enabled, sizeof(int));
         DwmSetWindowAttribute(Handle, DWMWA_CAPTION_COLOR, ref caption, sizeof(int));
         DwmSetWindowAttribute(Handle, DWMWA_BORDER_COLOR, ref caption, sizeof(int));
         DwmSetWindowAttribute(Handle, DWMWA_TEXT_COLOR, ref text, sizeof(int));
     }
 
+    string _lastAppliedTheme = "dark";
+
     protected override void OnHandleCreated(EventArgs e)
     {
         base.OnHandleCreated(e);
-        ApplyDarkTitleBar();
+        ApplyTitleBarTheme(true);
     }
 
     private readonly WebView2 _webView = new();
@@ -617,6 +620,12 @@ public class SlateWindow : Form
 
                 case "state_snapshot":
                     _stateSnapshot = e.WebMessageAsJson;
+                    string themeName = root.TryGetProperty("theme", out var th) ? th.GetString() ?? "dark" : "dark";
+                    if (themeName != _lastAppliedTheme)
+                    {
+                        _lastAppliedTheme = themeName;
+                        ApplyTitleBarTheme(themeName != "light");
+                    }
                     break;
             }
         }

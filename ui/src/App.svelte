@@ -10,7 +10,7 @@
     layout, workspaces, activeWorkspaceId, allLeaves, restoreLayout, restoreWorkspaces,
     updatePane, syncControl, clearAllWorkspaces, makeLeaf, setActiveWorkspace
   } from './stores/layout.js'
-  import { mode, pinned, deleteRequest, captureRequest, settingsOpen, clearSelectionTick } from './stores/uiState.js'
+  import { mode, pinned, theme, deleteRequest, captureRequest, settingsOpen, clearSelectionTick } from './stores/uiState.js'
   import { undo } from './stores/history.js'
   import { postToCs, postStateSnapshot } from './lib/ipc.js'
 
@@ -224,6 +224,7 @@
         const leaf = makeLeaf(msg.tabs, msg.activeTabId)
         restoreLayout(leaf)
       }
+      if (msg.theme) theme.set(msg.theme)
       postStateSnapshot()
     }
   }
@@ -236,7 +237,7 @@
   }
 </script>
 
-<main class:edit={$mode === 'edit'}>
+<main class:edit={$mode === 'edit'} data-theme={$theme}>
   <header class="global-toolbar">
     <WorkspaceTabs mode={$mode} />
     <EditToolbar

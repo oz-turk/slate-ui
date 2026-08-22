@@ -18,7 +18,7 @@
   let dragTranslateY = 0
 
   // ── custom resize handle — custom (not native CSS resize) so we control the
-  // math: no upper limit, and Ctrl snaps to whole MODULE increments ─────────────
+  // math: capped to the pane's visible area, and Ctrl snaps to whole MODULE increments ─
   let resizing     = false
   let resizeStartY = 0
   let resizeStartH = 0
@@ -28,6 +28,13 @@
     return `${h}px${snapped ? ' (snapped)' : ''}  ·  Hold Ctrl to snap to slider-row size`
   }
 
+  // header/margin/handle/padding/border around the resizable body — not itself
+  // a multiple of MODULE, so snapping bodyHeight alone can never land the
+  // row's outer edge on the grid. Measured live (not hardcoded) so it keeps
+  // working if the surrounding layout ever changes.
+  let resizeOverhead = 0
+  let maxBodyHeight  = Infinity   // capped to the pane's visible area — can't drag past the window
+
   function onResizeDown(e) {
     e.preventDefault()
     e.stopPropagation()
@@ -35,23 +42,41 @@
     resizeStartY  = e.clientY
     resizeStartH  = bodyHeight
     liveHeight    = bodyHeight
+    lastCtrlKey   = false
+    resizeOverhead = rowEl ? rowEl.offsetHeight - bodyHeight : 0
+    const contentEl = rowEl?.closest('.content')
+    maxBodyHeight = contentEl && rowEl
+      ? contentEl.getBoundingClientRect().bottom - rowEl.getBoundingClientRect().top - resizeOverhead
+      : Infinity
     hoverHint.set(resizeHint(liveHeight, false))
     dispatch('resizeStart', slider.id)
     e.currentTarget.setPointerCapture(e.pointerId)
   }
+  let lastCtrlKey = false
+  function computeHeight(e, snapped = e.ctrlKey) {
+    let h = resizeStartH + (e.clientY - resizeStartY)
+    if (snapped) h = Math.round((h + resizeOverhead) / MODULE) * MODULE - resizeOverhead
+    h = Math.max(MODULE, Math.round(h))
+    h = Math.min(h, Math.max(MODULE, Math.round(maxBodyHeight)))
+    return { h, snapped }
+  }
   function onResizeMove(e) {
     if (!resizing) return
-    let h = resizeStartH + (e.clientY - resizeStartY)
-    const snapped = e.ctrlKey
-    if (snapped) h = Math.round(h / MODULE) * MODULE
-    h = Math.max(MODULE, Math.round(h))
+    lastCtrlKey = e.ctrlKey
+    const { h, snapped } = computeHeight(e)
     liveHeight = h
     hoverHint.set(resizeHint(h, snapped))
     dispatch('resize', h)
   }
-  function onResizeUp() {
+  function onResizeUp(e) {
     if (!resizing) return
     resizing = false
+    // Recompute from the pointerup event's own clientY — pointermove can
+    // coalesce/drop under the browser, so the last onResizeMove reading can
+    // lag behind the actual release point. OR the ctrlKey with the last move's
+    // reading too: releasing Ctrl a hair before the mouse button is a common
+    // muscle-memory pattern, and shouldn't silently drop the snap on release.
+    liveHeight = computeHeight(e, e.ctrlKey || lastCtrlKey).h
     hoverHint.set(null)
     dispatch('resizeCommit', liveHeight)
     dispatch('resizeEnd')
@@ -70,6 +95,13 @@
   function commit(e) {
     if (slider.readOnly) return
     dispatch('change', e.target.value)
+  }
+
+  function onTextKeydown(e) {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+      e.preventDefault()
+      commit(e)
+    }
   }
 
   function rowDragOver(e) {
@@ -139,9 +171,10 @@
       <textarea
         class="text-input"
         value={slider.value}
-        placeholder="Type text…"
+        placeholder="Type text… (Ctrl+Enter to apply)"
         on:click|stopPropagation
         on:pointerdown|stopPropagation
+        on:keydown|stopPropagation={onTextKeydown}
         on:change={commit}
         on:blur={commit}
       ></textarea>
@@ -154,6 +187,7 @@
       on:pointermove={onResizeMove}
       on:pointerup={onResizeUp}
       on:pointercancel={onResizeUp}
+      on:click|stopPropagation
       title="Drag to resize — hold Ctrl to snap to slider-row increments"
   >
     <span class="grip"></span>
@@ -164,12 +198,12 @@
   .row {
     display: flex;
     flex-direction: column;
-    padding: 6px 12px 10px;
+    padding: 0 12px 10px;
     border-bottom: 1px solid var(--grid);
     transition: background 0.1s, transform 0.08s ease-out;
     position: relative;
   }
-  .row.edit            { padding: 6px 8px 10px 6px; }
+  .row.edit            { padding: 0 8px 10px 6px; }
   .row:hover          { background: var(--bg); }
   .row.selected       { background: rgba(var(--accent-rgb), 0.15); }
   .row.selected:hover { background: rgba(var(--accent-rgb), 0.22); }
@@ -178,7 +212,7 @@
   .header {
     display: flex;
     align-items: center;
-    height: 22px;
+    height: 44px;
     margin-bottom: 4px;
   }
 

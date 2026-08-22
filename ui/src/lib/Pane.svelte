@@ -10,7 +10,7 @@
   import ActionBar    from './ActionBar.svelte'
   import CornerHandle from './CornerHandle.svelte'
   import ContextMenu  from './ContextMenu.svelte'
-  import { layout, updatePane, findLeaf, newTabId, splitPane, collapsePane, findNeighborPane, moveCrossPaneItem } from '../stores/layout.js'
+  import { layout, updatePane, findLeaf, newTabId, splitPane, newSplitId, setSplitSize, collapsePane, findNeighborPane, moveCrossPaneItem } from '../stores/layout.js'
   import { tabDrag, itemDrag, collapsePreview } from '../stores/dragState.js'
   import { mode, deleteRequest, captureRequest, clearSelectionTick } from '../stores/uiState.js'
   import { postToCs, postStateSnapshot } from './ipc.js'
@@ -45,13 +45,16 @@
   // Escape — every pane clears its own selection, not just the one under the mouse.
   $: if ($clearSelectionTick) clearSelection()
 
+  // Leaving edit mode: selection is an edit-mode concept, so the blue
+  // highlight shouldn't persist once preview mode hides the ActionBar.
+  $: if ($mode !== 'edit') clearSelection()
+
   // ── local UI state ────────────────────────────────────────────────────────────
   let selectedIds   = new Set()
   let activeDrag    = null
   let dropTarget    = null
   let lastReorderKey = null  // dedupe key so hovering the same slider-row spot doesn't re-splice every event
   let reorderRaf      = null // pending rAF for the deferred live reorder (see setDropTarget)
-  let splitPreview = null   // { dir, side, ratio } | null — live preview while dragging
 
   // ── tab drag (cross-pane) drop state ─────────────────────────────────────────
   let edgeZone     = null   // 'left' | 'right' | 'top' | 'bottom' | 'center' | null
@@ -232,6 +235,10 @@
 
   function renameTab(id, label) {
     mutateTabs(tabs => tabs.map(t => t.id === id ? { ...t, label } : t))
+  }
+
+  function setTabColor(id, color) {
+    mutateTabs(tabs => tabs.map(t => t.id === id ? { ...t, color } : t))
   }
 
   function removeTab(id) {
@@ -457,55 +464,69 @@
   }
 
   // ── corner drag (split / collapse) ───────────────────────────────────────────
+  // Split creates the pane immediately on the first confirmed intent
+  // (CornerHandle already applies its own 8px lock threshold before it ever
+  // dispatches 'split', so this doesn't need a separate one), then live-resizes
+  // it for the rest of the drag — instead of the old preview-overlay-then-
+  // commit-on-release flow, which felt laggy/indirect.
+  //
+  // Window-level listeners because splitPane() turns this pane's leaf node
+  // into a split (this whole Pane instance + its CornerHandles get destroyed
+  // and replaced), which drops whatever pointer capture CornerHandle was
+  // holding — the eventual pointerup would otherwise never reach us. An
+  // earlier version of this feature called splitPane() on every preview tick
+  // instead of once and hit exactly this problem (see "Corner drag tek akış"
+  // in Çözülen Problemler) — calling it once, then handing off to window
+  // listeners, avoids it.
   function onCornerPreview(detail) {
     if (!detail) {
       collapsePreview.set(null)
-      splitPreview = null
       return
     }
     if (detail.kind === 'collapse') {
       const neighborId = findNeighborPane($layout, paneId, detail.dir, detail.side)
       collapsePreview.set(neighborId ?? null)
-      splitPreview = null
       return
     }
-    // kind === 'split': update preview overlay only, DOM stays intact until commit
-    const rect  = paneEl.getBoundingClientRect()
-    const ratio = clampRatio(ratioFromRect(detail, rect))
-    const dim   = detail.dir === 'h' ? rect.width : rect.height
-    splitPreview = { dir: detail.dir, side: detail.side, ratio, sizeA: ratio * dim }
+
+    // kind === 'split' — fires exactly once per drag: after this, the pane
+    // this CornerHandle belonged to no longer exists as a leaf.
+    const rect = paneEl.getBoundingClientRect()
+    const dim  = detail.dir === 'h' ? rect.width : rect.height
+    const ratioAt = (clientX, clientY) => {
+      let r = clampRatio(detail.dir === 'h' ? (clientX - rect.left) / dim : (clientY - rect.top) / dim)
+      // Hidden magnetic snap to dead-center (50/50) — same pull as
+      // SplitDivider's resize snap.
+      if (Math.abs(r - 0.5) * dim < CENTER_SNAP_PX) r = 0.5
+      return r
+    }
+
+    const newId = newSplitId()
+    splitPane(paneId, detail.dir, detail.side, ratioAt(detail.clientX, detail.clientY) * dim, newId)
+
+    function onWindowMove(e) { setSplitSize(newId, ratioAt(e.clientX, e.clientY) * dim) }
+    function onWindowUp(e) {
+      onWindowMove(e)   // final position from the release coords themselves
+      window.removeEventListener('pointermove', onWindowMove)
+      window.removeEventListener('pointerup', onWindowUp)
+      window.removeEventListener('pointercancel', onWindowUp)
+      postStateSnapshot()
+    }
+    window.addEventListener('pointermove', onWindowMove)
+    window.addEventListener('pointerup', onWindowUp)
+    window.addEventListener('pointercancel', onWindowUp)
   }
 
   function onCornerCommit(detail) {
-    if (!detail) return
-    if (detail.kind === 'collapse') {
-      const neighborId = findNeighborPane($layout, paneId, detail.dir, detail.side)
-      if (neighborId) collapsePane(neighborId)
-      collapsePreview.set(null)
-      postStateSnapshot()
-    } else if (detail.kind === 'split' && splitPreview) {
-      splitPane(paneId, splitPreview.dir, splitPreview.side, splitPreview.sizeA)
-      splitPreview = null
-      postStateSnapshot()
-    }
-  }
-
-  function ratioFromRect({ dir, clientX, clientY }, rect) {
-    return dir === 'h'
-      ? (clientX - rect.left) / rect.width
-      : (clientY - rect.top)  / rect.height
+    if (!detail || detail.kind !== 'collapse') return
+    const neighborId = findNeighborPane($layout, paneId, detail.dir, detail.side)
+    if (neighborId) collapsePane(neighborId)
+    collapsePreview.set(null)
+    postStateSnapshot()
   }
 
   function clampRatio(r) { return Math.max(0.1, Math.min(0.9, r)) }
-
-  function splitPreviewInset({ dir, side, ratio }) {
-    if (dir === 'h') return side === 'before'
-      ? `0 ${(1-ratio)*100}% 0 0`
-      : `0 0 0 ${ratio*100}%`
-    return side === 'before'
-      ? `0 0 ${(1-ratio)*100}% 0`
-      : `${ratio*100}% 0 0 0`
-  }
+  const CENTER_SNAP_PX = 10   // magnetic pull toward dead-center — same value as SplitDivider's
 
   // ── cross-pane tab drag ───────────────────────────────────────────────────────
   import { moveTab, splitWithTab } from '../stores/layout.js'
@@ -597,6 +618,7 @@
       {canDragTabs}
       on:select={e        => { setActive(e.detail); clearSelection() }}
       on:rename={e        => renameTab(e.detail.id, e.detail.label)}
+      on:setColor={e      => setTabColor(e.detail.id, e.detail.color)}
       on:remove={e        => removeTab(e.detail)}
       on:add={addTab}
       on:tabDragOver={e   => setDropTarget('tab', e.detail)}
@@ -687,11 +709,6 @@
     {/if}
   </section>
 
-  <!-- split preview overlay (shows where the new pane will appear) -->
-  {#if splitPreview}
-    <div class="split-preview-pane" style="inset: {splitPreviewInset(splitPreview)}"></div>
-  {/if}
-
   <!-- collapse intent overlay (shown on the pane that WOULD be collapsed) -->
   {#if $collapsePreview === paneId}
     <div class="intent-overlay intent-collapse"></div>
@@ -756,15 +773,6 @@
     line-height: 1.7;
   }
   .empty strong { color: rgba(var(--text-rgb), 0.45); font-weight: 500; }
-
-  /* split preview — new pane area highlighted */
-  .split-preview-pane {
-    position: absolute;
-    pointer-events: none;
-    z-index: 15;
-    background: rgba(var(--accent-rgb), 0.1);
-    border: 2px solid rgba(var(--accent-rgb), 0.4);
-  }
 
   /* corner collapse intent overlay */
   .intent-overlay {

@@ -6,6 +6,8 @@ handles, etc.) are original.
 
 Icons used:
 - `pin` — window pin/unpin toggle (`ui/src/lib/EditToolbar.svelte`), used as-is
+- `pipette` — eyedropper button in the custom colour picker
+  (`ui/src/lib/ColourPickerPopup.svelte`), used as-is
 - "mouse-left" — status bar shortcut hint (`ui/src/lib/StatusBar.svelte`), a
   custom composite: body shape based on Lucide's `mouse` icon, with an added
   filled rect highlighting the left button (Lucide has no dedicated

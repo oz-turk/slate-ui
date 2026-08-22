@@ -2,6 +2,10 @@ import { writable } from 'svelte/store'
 export const mode   = writable('preview')
 export const pinned = writable(true)
 
+// 'dark' | 'light' — toggled in the settings panel, persisted with the rest
+// of the workspace state (see ipc.js / App.svelte's restore_state handler).
+export const theme = writable('dark')
+
 // Status bar hint — null means "show the default, mode-based shortcut list";
 // any component can set() its own hint on hover and clear it (set null) on leave.
 export const hoverHint = writable(null)

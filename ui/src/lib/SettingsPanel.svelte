@@ -1,12 +1,15 @@
 <script>
   import { onMount } from 'svelte'
-  import { settingsOpen } from '../stores/uiState.js'
+  import { settingsOpen, theme } from '../stores/uiState.js'
   import { undoLimit } from '../stores/history.js'
+  import { postStateSnapshot } from './ipc.js'
 
   let panelEl
 
   function onDocPointerDown(e) {
-    if (panelEl && !panelEl.contains(e.target)) settingsOpen.set(false)
+    if (panelEl && !panelEl.contains(e.target) && !e.target.closest('[data-settings-toggle]')) {
+      settingsOpen.set(false)
+    }
   }
   function onKeydown(e) {
     if (e.key === 'Escape') settingsOpen.set(false)
@@ -38,6 +41,11 @@
     const n = Math.max(1, Math.min(50, parseInt(e.target.value, 10) || 1))
     undoLimit.set(n)
   }
+
+  function setTheme(t) {
+    theme.set(t)
+    postStateSnapshot()
+  }
 </script>
 
 <div class="panel" bind:this={panelEl}>
@@ -62,6 +70,14 @@
   <div class="setting-row">
     <label for="undo-limit">Undo history depth</label>
     <input id="undo-limit" type="number" min="1" max="50" value={$undoLimit} on:change={clampUndoLimit} />
+  </div>
+
+  <div class="setting-row">
+    <span class="setting-label">Theme</span>
+    <div class="theme-toggle">
+      <button class:active={$theme === 'dark'}  on:click={() => setTheme('dark')}>Dark</button>
+      <button class:active={$theme === 'light'} on:click={() => setTheme('light')}>Light</button>
+    </div>
   </div>
 </div>
 
@@ -146,7 +162,7 @@
     justify-content: space-between;
     gap: 10px;
   }
-  .setting-row label {
+  .setting-row label, .setting-row .setting-label {
     font-size: 11px;
     color: rgba(var(--text-rgb), 0.73);
   }
@@ -163,4 +179,24 @@
     padding: 0 4px;
   }
   .setting-row input:focus { border-color: var(--accent); outline: none; }
+
+  .theme-toggle {
+    display: flex;
+    gap: 4px;
+  }
+  .theme-toggle button {
+    height: 20px;
+    padding: 0 8px;
+    border: 1px solid var(--grid);
+    border-radius: 3px;
+    background: transparent;
+    color: rgba(var(--text-rgb), 0.58);
+    font-size: 10px;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+    transition: border-color 0.15s, color 0.15s;
+  }
+  .theme-toggle button:hover  { border-color: var(--border); color: rgba(var(--text-rgb), 0.73); }
+  .theme-toggle button.active { border-color: rgba(var(--accent-rgb), 0.4); color: var(--accent-light); }
 </style>

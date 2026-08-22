@@ -5,20 +5,22 @@
   export let dir      // 'h' = vertical bar (left|right), 'v' = horizontal bar (top|bottom)
   export let splitId
 
-  const MIN_PANE_PX = 60
-  const MODULE       = 44   // one slider row's height — same grid PanelRow/ValueListRow snap to
+  const MIN_PANE_PX     = 60
+  const MODULE          = 44   // one slider row's height — same grid PanelRow/ValueListRow snap to
+  const CENTER_SNAP_PX  = 10   // magnetic pull toward dead-center — no modifier needed, always on
 
   let el
   let dragging = false
+  let lastCtrlKey = false
 
   function onPointerDown(e) {
     e.preventDefault()
     dragging = true
+    lastCtrlKey = false
     el.setPointerCapture(e.pointerId)
   }
 
-  function onPointerMove(e) {
-    if (!dragging) return
+  function applyMove(e, snapOverride = e.ctrlKey) {
     const parent = el.parentElement
     if (!parent) return
     const rect = parent.getBoundingClientRect()
@@ -27,19 +29,41 @@
       ? (e.clientX - rect.left)
       : (e.clientY - rect.top)
 
+    // Hidden magnetic snap to dead-center (50/50) — no modifier needed, just a
+    // gentle pull when the pointer passes within a few px of the midpoint.
+    // Takes priority over the row-grid snap below when both are in play.
+    const center = dim / 2
+    const centered = Math.abs(raw - center) < CENTER_SNAP_PX
+
     // Ctrl-snap to the row-height grid — horizontal dividers only (top/bottom
     // split), so stacked panes' rows land on the same grid and line up with
     // whatever's beside them, which pixel-exact dragging can't guarantee.
-    const snapped = dir === 'v' && e.ctrlKey
-    if (snapped) raw = Math.round(raw / MODULE) * MODULE
+    const snapped = !centered && dir === 'v' && snapOverride
+
+    if (centered) raw = center
+    else if (snapped) raw = Math.round(raw / MODULE) * MODULE
 
     const size = Math.max(MIN_PANE_PX, Math.min(dim - MIN_PANE_PX, raw))
     setSplitSize(splitId, size)
-    hoverHint.set(dir === 'v' ? `${Math.round(size)}px${snapped ? ' (snapped)' : ''}  ·  Hold Ctrl to snap to slider-row size` : null)
+    const label = centered ? ' (centered)' : snapped ? ' (snapped)' : ''
+    hoverHint.set(`${Math.round(size)}px${label}${dir === 'v' ? '  ·  Hold Ctrl to snap to slider-row size' : ''}`)
   }
 
-  function onPointerUp() {
+  function onPointerMove(e) {
+    if (!dragging) return
+    lastCtrlKey = e.ctrlKey
+    applyMove(e)
+  }
+
+  function onPointerUp(e) {
+    if (!dragging) return
     dragging = false
+    // Recompute from the pointerup event's own coordinates — pointermove can
+    // coalesce/drop under the browser, so the last onPointerMove reading can
+    // lag behind the actual release point. OR the ctrlKey with the last move's
+    // reading too: releasing Ctrl a hair before the mouse button is a common
+    // muscle-memory pattern, and shouldn't silently drop the snap on release.
+    applyMove(e, e.ctrlKey || lastCtrlKey)
     hoverHint.set(null)
   }
 </script>

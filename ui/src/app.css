@@ -19,6 +19,30 @@
   color-scheme: dark;
 }
 
+/* Light mode — paper-like, close to Grasshopper's own canvas tone: warm
+   near-white surfaces, near-black text, a single muted accent hue. Kept
+   deliberately low-colour, same spirit as the dark theme. */
+main[data-theme="light"] {
+  --bg:             #e4e1d8;
+  --bg-rgb:         228, 225, 216;
+  --panel-bg:       #f7f5f0;
+  --panel-bg-rgb:   247, 245, 240;
+  --grid:           #e8e6df;
+  --grid-rgb:       232, 230, 223;
+  --border:         #c7c3b8;
+  --border-rgb:     199, 195, 184;
+  --border-active:  #3a3a3a;
+  --accent:         #3d6fd6;
+  --accent-rgb:     61, 111, 214;
+  --accent-light:   #2557b8;
+  --text:           #2a2724;
+  --text-rgb:       42, 39, 36;
+  --danger:         #c23b3b;
+  --danger-rgb:     194, 59, 59;
+
+  color-scheme: light;
+}
+
 body {
   margin: 0;
 }

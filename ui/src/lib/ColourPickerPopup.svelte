@@ -49,6 +49,17 @@
     if (v.length === 6) emit({ ...hex8ToRgba('#' + v), a })
   }
 
+  const hasEyeDropper = typeof window !== 'undefined' && !!window.EyeDropper
+  async function pickEyedropper() {
+    if (!hasEyeDropper) return
+    try {
+      const result = await new window.EyeDropper().open()
+      emit({ ...hex8ToRgba(result.sRGBHex), a })
+    } catch {
+      // user cancelled the pick — nothing to do
+    }
+  }
+
   function onDocPointerDown(e) {
     if (panelEl && !panelEl.contains(e.target)) dispatch('close')
   }
@@ -85,7 +96,16 @@
     <div class="swatch" style="background: {hex}"></div>
     <span class="hash">#</span>
     <input class="hex-input" value={hexRgb} maxlength="6" spellcheck="false" on:change={onHexInput} />
-    <span class="alpha-readout">{alphaPct}%</span>
+    {#if hasEyeDropper}
+      <button class="eyedrop-btn" on:click={pickEyedropper} title="Pick a colour from the screen">
+        <!-- Lucide "pipette" icon (ISC license) — https://lucide.dev/icons/pipette -->
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="m12 9-8.414 8.414A2 2 0 0 0 3 18.828v1.344a2 2 0 0 1-.586 1.414A2 2 0 0 1 3.828 21h1.344a2 2 0 0 0 1.414-.586L15 12" />
+          <path d="m18 9 .4.4a1 1 0 1 1-3 3l-3.8-3.8a1 1 0 1 1 3-3l.4.4 3.4-3.4a1 1 0 1 1 3 3z" />
+          <path d="m2 22 .414-.414" />
+        </svg>
+      </button>
+    {/if}
   </div>
 
   {#if tab === 'hsla'}
@@ -225,14 +245,22 @@
     padding: 0 6px;
   }
   .hex-input:focus { border-color: var(--accent); outline: none; }
-  .alpha-readout {
-    font-family: 'Segoe UI Mono', Consolas, monospace;
-    font-size: 10px;
-    color: rgba(var(--text-rgb), 0.43);
+  .eyedrop-btn {
+    width: 20px;
+    height: 20px;
+    border: 1px solid var(--grid);
+    border-radius: 3px;
+    background: transparent;
+    color: rgba(var(--text-rgb), 0.58);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
     flex-shrink: 0;
-    width: 30px;
-    text-align: right;
+    padding: 0;
+    transition: border-color 0.15s, color 0.15s;
   }
+  .eyedrop-btn:hover { border-color: rgba(var(--accent-rgb), 0.4); color: var(--accent-light); }
 
   .channel {
     display: grid;
