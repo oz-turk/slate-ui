@@ -18,6 +18,7 @@ public class SlateWindow : Form
     static readonly IntPtr HWND_TOPMOST    = new(-1);
     static readonly IntPtr HWND_NOTOPMOST  = new(-2);
     const uint SWP_NOMOVE = 0x0002, SWP_NOSIZE = 0x0001;
+    const uint SWP_NOZORDER = 0x0004, SWP_NOACTIVATE = 0x0010, SWP_FRAMECHANGED = 0x0020;
 
     // ── titlebar icon ────────────────────────────────────────────────────────
     // Form.Icon can't be used for this: under net48 (Rhino 7 compat) its
@@ -45,6 +46,15 @@ public class SlateWindow : Form
         var icon = (dark ? _iconDark : _iconLight).Handle;
         SendMessage(hWnd, WM_SETICON, (IntPtr)ICON_SMALL, icon);
         SendMessage(hWnd, WM_SETICON, (IntPtr)ICON_BIG,   icon);
+
+        // WM_SETICON alone doesn't repaint the caption when sent before the
+        // window is first shown (e.g. from OnHandleCreated) — DWM hasn't
+        // composited the titlebar yet, so the icon silently doesn't appear
+        // until something else forces a non-client repaint (which is why it
+        // only showed up after a theme toggle before this fix). Force that
+        // repaint immediately instead of waiting for one.
+        SetWindowPos(hWnd, IntPtr.Zero, 0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
     }
 
     // ── dark title bar (Windows 11) ─────────────────────────────────────────
