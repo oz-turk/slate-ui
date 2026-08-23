@@ -800,7 +800,7 @@
     z-index: 15;
     border: 2px solid;
   }
-  .intent-collapse { background: rgba(var(--danger-rgb), 0.05); border-color: rgba(var(--danger-rgb), 0.22); }
+  .intent-collapse { background: rgba(var(--danger-rgb), 0.1); border-color: rgba(var(--danger-rgb), 0.35); }
 
   /* cross-pane drop overlay */
   .drop-overlay {

@@ -1,5 +1,6 @@
 <script>
   import { createEventDispatcher } from 'svelte'
+  import { altHeld } from '../stores/uiState.js'
 
   export let corner   // 'tl' | 'tr' | 'bl' | 'br'
 
@@ -51,9 +52,13 @@
     }
 
     if (lockedInward) {
-      // Alt held = spanning split (pushes the whole row/column the pane
-      // belongs to, not just the one pane) — read live so toggling Alt
-      // mid-drag still applies at the moment the split actually fires.
+      // Alt held = spanning split (pushes the whole window aside, not just
+      // the one pane) — read live so toggling Alt mid-drag still applies at
+      // the moment the split actually fires (which, per Pane.svelte's
+      // splitInFlight guard, is on the FIRST preview after intent locks —
+      // in practice that's within ~8px of pointerdown, so Alt needs to
+      // already be held by then; pressing it after doesn't retroactively
+      // apply).
       dispatch('preview', { kind: 'split', dir: lockedDir, side: lockedSide, clientX: e.clientX, clientY: e.clientY, spanning: e.altKey })
     } else {
       dispatch('preview', { kind: 'collapse' })
@@ -85,6 +90,7 @@
 <div
   class="corner {corner}"
   class:active
+  class:alt-highlight={$altHeld && !active}
   bind:this={el}
   on:pointerdown={onPointerDown}
   on:pointermove={onPointerMove}
@@ -114,6 +120,7 @@
     justify-content: center;
   }
   .corner:hover, .corner.active { opacity: 1; color: rgba(var(--text-rgb), 0.78); }
+  .corner.alt-highlight { opacity: 0.8; color: rgba(255, 255, 255, 0.9); }
   .corner.tl { top: 0;    left: 0;  }
   .corner.tr { top: 0;    right: 0; }
   .corner.bl { bottom: 0; left: 0;  }

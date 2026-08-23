@@ -97,48 +97,20 @@ function doSplit(node, paneId, dir, side, sizeA, label, presetId) {
   return { ...node, a: doSplit(node.a, paneId, dir, side, sizeA, label, presetId), b: doSplit(node.b, paneId, dir, side, sizeA, label, presetId) }
 }
 
-// Like doSplit, but instead of splitting just the leaf, climbs up through
-// ancestor splits that run PERPENDICULAR to `dir` (they only subdivide
-// within the same row/column as the leaf, so the new pane should span past
-// them too) and stops at the nearest ancestor that splits ALONG `dir` — that
-// ancestor's whole subtree becomes what gets pushed aside, instead of just
-// the one leaf. E.g. in a 2x2 grid, spanning-splitting the bottom-left pane
-// horizontally pushes both the bottom-left AND top-left panes (the entire
-// column), not just the bottom-left cell.
-function doSplitSpanning(node, paneId, dir, side, sizeA, label, presetId) {
-  function findPath(n, path) {
-    if (n.type === 'leaf') return n.paneId === paneId ? path : null
-    return findPath(n.a, [...path, { node: n, which: 'a' }])
-        ?? findPath(n.b, [...path, { node: n, which: 'b' }])
-  }
-  const path = findPath(node, [])
-  if (!path) return node
-
-  let stopIndex = -1
-  for (let i = path.length - 1; i >= 0; i--) {
-    if (path[i].node.dir === dir) { stopIndex = i; break }
-  }
-
+// Like doSplit, but instead of splitting just the leaf under the pointer,
+// wraps the WHOLE tree — every other pane gets pushed aside to make room,
+// regardless of where in the tree the dragged pane lives. Tried scoping this
+// to "just the row/column the pane belongs to" via nearest-matching-ancestor
+// climbing, but that heuristic only reads as correct on a clean, regular
+// grid — once the tree gets lopsided from a run of uneven splits, "nearest
+// matching ancestor" stops lining up with what a person actually sees as
+// the pane's row/column, and the push silently comes up short. Unconditional
+// whole-tree wrapping has no such judgment call to get wrong.
+function doSplitSpanning(node, dir, side, sizeA, label, presetId) {
   const tabId = newTabId()
   const fresh = makeLeaf([{ id: tabId, label, sliders: [], groups: [] }], tabId)
-
-  if (stopIndex === -1) {
-    // No ancestor splits along `dir` anywhere above — span the whole tree.
-    const [a, b] = side === 'before' ? [fresh, node] : [node, fresh]
-    return makeSplit(dir, a, b, sizeA, presetId)
-  }
-
-  const { node: stopSplit, which: stopWhich } = path[stopIndex]
-  const target = stopSplit[stopWhich]
-  const [a, b] = side === 'before' ? [fresh, target] : [target, fresh]
-  const wrapped = makeSplit(dir, a, b, sizeA, presetId)
-
-  function rebuildFrom(idx) {
-    const { node: cur, which } = path[idx]
-    const newChild = idx === stopIndex ? wrapped : rebuildFrom(idx + 1)
-    return { ...cur, [which]: newChild }
-  }
-  return rebuildFrom(0)
+  const [a, b] = side === 'before' ? [fresh, node] : [node, fresh]
+  return makeSplit(dir, a, b, sizeA, presetId)
 }
 
 function doCollapse(node, paneId) {
@@ -207,13 +179,15 @@ export function splitPane(paneId, dir, side = 'after', sizeA = 260, presetId) {
   })
 }
 
-// Alt-modified corner drag: pushes the whole row/column the pane belongs to
-// instead of just that one pane — see doSplitSpanning.
+// Alt-modified corner drag: pushes the whole window aside instead of just
+// the one pane — see doSplitSpanning. paneId is unused (the push is
+// whole-tree regardless of which pane was dragged from) but kept in the
+// signature so callers can treat this and splitPane() interchangeably.
 export function splitPaneSpanning(paneId, dir, side = 'after', sizeA = 260, presetId) {
   updateActiveLayout(l => {
     const labels = allLeaves(l).flatMap(leaf => leaf.tabs.map(t => t.label))
     const label  = nextAvailableName(labels, 'Tab')
-    return doSplitSpanning(l, paneId, dir, side, sizeA, label, presetId)
+    return doSplitSpanning(l, dir, side, sizeA, label, presetId)
   })
 }
 

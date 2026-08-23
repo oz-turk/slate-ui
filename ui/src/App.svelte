@@ -10,7 +10,7 @@
     layout, workspaces, activeWorkspaceId, allLeaves, restoreLayout, restoreWorkspaces,
     updatePane, syncControl, clearAllWorkspaces, resetToDefault, makeLeaf, setActiveWorkspace
   } from './stores/layout.js'
-  import { mode, pinned, theme, deleteRequest, captureRequest, settingsOpen, clearSelectionTick } from './stores/uiState.js'
+  import { mode, pinned, theme, deleteRequest, captureRequest, settingsOpen, clearSelectionTick, altHeld } from './stores/uiState.js'
   import { undo } from './stores/history.js'
   import { postToCs, postStateSnapshot } from './lib/ipc.js'
 
@@ -36,6 +36,24 @@
     function onPointerMove(e) { mouseX = e.clientX; mouseY = e.clientY }
     window.addEventListener('pointermove', onPointerMove)
     return () => window.removeEventListener('pointermove', onPointerMove)
+  })
+
+  // altHeld drives the faint highlight on corner-handles (see
+  // CornerHandle.svelte) so the user sees what a spanning-split drag would
+  // grab before they start dragging. blur is needed too — Alt+Tabbing away
+  // from the window doesn't fire a keyup here.
+  onMount(() => {
+    function onKeydown(e) { if (e.key === 'Alt') altHeld.set(true) }
+    function onKeyup(e)   { if (e.key === 'Alt') altHeld.set(false) }
+    function onBlur()     { altHeld.set(false) }
+    window.addEventListener('keydown', onKeydown)
+    window.addEventListener('keyup', onKeyup)
+    window.addEventListener('blur', onBlur)
+    return () => {
+      window.removeEventListener('keydown', onKeydown)
+      window.removeEventListener('keyup', onKeyup)
+      window.removeEventListener('blur', onBlur)
+    }
   })
 
   onMount(() => {

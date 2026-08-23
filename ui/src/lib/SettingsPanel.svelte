@@ -35,7 +35,9 @@
     { keys: ['Ctrl', '1–9'],  desc: 'Switch workspace' },
     { keys: ['Ctrl', 'Z'],    desc: 'Undo' },
     { keys: ['Ctrl', 'drag'], desc: 'Snap resize to slider-row size' },
-    { keys: ['Alt', 'corner drag'], desc: 'Split pushes the whole row/column, not just one pane' },
+    { keys: ['Alt', 'corner drag'], desc: 'Split pushes the whole window, not just one pane' },
+    { keys: ['Edge drag'],          desc: 'Aligned edges move together automatically' },
+    { keys: ['Alt', 'edge drag'],   desc: 'Break this edge off the group (or just shake it)' },
   ]
 
   function clampUndoLimit(e) {
