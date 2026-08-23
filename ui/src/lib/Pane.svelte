@@ -10,7 +10,7 @@
   import ActionBar    from './ActionBar.svelte'
   import CornerHandle from './CornerHandle.svelte'
   import ContextMenu  from './ContextMenu.svelte'
-  import { layout, updatePane, findLeaf, newTabId, splitPane, newSplitId, setSplitSize, collapsePane, findNeighborPane, moveCrossPaneItem } from '../stores/layout.js'
+  import { layout, updatePane, findLeaf, newTabId, splitPane, splitPaneSpanning, newSplitId, setSplitSize, collapsePane, findNeighborPane, moveCrossPaneItem } from '../stores/layout.js'
   import { tabDrag, itemDrag, collapsePreview } from '../stores/dragState.js'
   import { mode, deleteRequest, captureRequest, clearSelectionTick } from '../stores/uiState.js'
   import { postToCs, postStateSnapshot } from './ipc.js'
@@ -478,6 +478,20 @@
   // instead of once and hit exactly this problem (see "Corner drag tek akış"
   // in Çözülen Problemler) — calling it once, then handing off to window
   // listeners, avoids it.
+  // Guards the 'split' branch below against firing twice for one drag.
+  // It's supposed to fire exactly once because splitPane()/splitPaneSpanning()
+  // turns this pane's leaf into a split, which should destroy this Pane
+  // instance and its CornerHandles before another pointermove can arrive —
+  // true for a plain splitPane() (the leaf's own node type flips straight
+  // from 'leaf' to 'split' at this exact tree position). splitPaneSpanning()
+  // can instead rewrite an ANCESTOR several levels up while leaving this
+  // leaf's own node object untouched further down, which can leave Svelte's
+  // reactive update (and so this component's destruction) landing one tick
+  // later than the next native pointermove — long enough for a second
+  // 'preview' to slip through and create a second, separate pane. Guarding
+  // explicitly is correct either way, not just a workaround for the timing.
+  let splitInFlight = false
+
   function onCornerPreview(detail) {
     if (!detail) {
       collapsePreview.set(null)
@@ -489,8 +503,10 @@
       return
     }
 
-    // kind === 'split' — fires exactly once per drag: after this, the pane
-    // this CornerHandle belonged to no longer exists as a leaf.
+    // kind === 'split' — must fire exactly once per drag (see splitInFlight).
+    if (splitInFlight) return
+    splitInFlight = true
+
     const rect = paneEl.getBoundingClientRect()
     const dim  = detail.dir === 'h' ? rect.width : rect.height
     const ratioAt = (clientX, clientY) => {
@@ -502,7 +518,8 @@
     }
 
     const newId = newSplitId()
-    splitPane(paneId, detail.dir, detail.side, ratioAt(detail.clientX, detail.clientY) * dim, newId)
+    const doSplitPane = detail.spanning ? splitPaneSpanning : splitPane
+    doSplitPane(paneId, detail.dir, detail.side, ratioAt(detail.clientX, detail.clientY) * dim, newId)
 
     function onWindowMove(e) { setSplitSize(newId, ratioAt(e.clientX, e.clientY) * dim) }
     function onWindowUp(e) {
@@ -510,6 +527,7 @@
       window.removeEventListener('pointermove', onWindowMove)
       window.removeEventListener('pointerup', onWindowUp)
       window.removeEventListener('pointercancel', onWindowUp)
+      splitInFlight = false
       postStateSnapshot()
     }
     window.addEventListener('pointermove', onWindowMove)
@@ -782,7 +800,7 @@
     z-index: 15;
     border: 2px solid;
   }
-  .intent-collapse { background: rgba(var(--danger-rgb), 0.1); border-color: rgba(var(--danger-rgb), 0.53); }
+  .intent-collapse { background: rgba(var(--danger-rgb), 0.05); border-color: rgba(var(--danger-rgb), 0.22); }
 
   /* cross-pane drop overlay */
   .drop-overlay {

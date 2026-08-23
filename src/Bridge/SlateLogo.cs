@@ -18,9 +18,14 @@ internal static class SlateLogo
     const float Radius   = 10f      / 64f;
     const float StrokeFr = 3f       / 64f;
 
-    public static void Draw(Graphics g, RectangleF bounds, Color outline, Color fill)
+    public static void Draw(Graphics g, RectangleF bounds, Color outline, Color fill, float scale = 1f)
     {
         g.SmoothingMode = SmoothingMode.AntiAlias;
+        if (scale != 1f)
+        {
+            float inset = bounds.Width * (1f - scale) / 2f;
+            bounds = new RectangleF(bounds.X + inset, bounds.Y + inset, bounds.Width - inset * 2, bounds.Height - inset * 2);
+        }
         float size = bounds.Width;
 
         float sq     = size * SquareSz;
@@ -71,12 +76,12 @@ internal static class SlateLogo
     public static readonly Color CanvasOutline = Color.FromArgb(0x16, 0x18, 0x1c);
     public static readonly Color CanvasFill    = Color.FromArgb(0x5b, 0x8e, 0xf5);
 
-    public static Bitmap ToBitmap(int size, Color outline, Color fill)
+    public static Bitmap ToBitmap(int size, Color outline, Color fill, float scale = 1f)
     {
         var bmp = new Bitmap(size, size);
         using var g = Graphics.FromImage(bmp);
         g.Clear(Color.Transparent);
-        Draw(g, new RectangleF(0, 0, size, size), outline, fill);
+        Draw(g, new RectangleF(0, 0, size, size), outline, fill, scale);
         return bmp;
     }
 }

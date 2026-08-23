@@ -100,6 +100,17 @@
     dispatch('change', +e.target.value)
   }
 
+  function onCycle(delta) {
+    if (!options.length) return
+    const current = typeof slider.value === 'number' ? slider.value : -1
+    dispatch('change', (current + delta + options.length) % options.length)
+  }
+
+  function onCycleWheel(e) {
+    e.preventDefault()
+    onCycle(e.deltaY < 0 ? 1 : -1)
+  }
+
   function onToggle(i) {
     dispatch('change', i)
   }
@@ -154,7 +165,17 @@
 
     <div class="spacer"></div>
 
-    {#if !slider.multiSelect}
+    {#if !slider.multiSelect && slider.cycle}
+      <div class="picker cycle" on:wheel|stopPropagation={onCycleWheel} title="Scroll, or use the arrows, to change the value">
+        <button class="cycle-arrow" on:click|stopPropagation={() => onCycle(-1)} tabindex="-1" title="Previous value">
+          <svg width="6" height="10" viewBox="0 0 6 10" fill="currentColor"><path d="M6 0L0 5L6 10Z"/></svg>
+        </button>
+        <span class="cycle-value">{options[slider.value] ?? ''}</span>
+        <button class="cycle-arrow" on:click|stopPropagation={() => onCycle(1)} tabindex="-1" title="Next value">
+          <svg width="6" height="10" viewBox="0 0 6 10" fill="currentColor"><path d="M0 0L6 5L0 10Z"/></svg>
+        </button>
+      </div>
+    {:else if !slider.multiSelect}
       <select class="picker" value={slider.value} on:click|stopPropagation on:change={onSelect}>
         {#each options as opt, i}
           <option value={i}>{opt}</option>
@@ -275,6 +296,39 @@
     background: var(--panel-bg);
     color: var(--text);
   }
+
+  /* Cycle mode shares the DropDown picker's footprint but is a prev/value/next
+     trio (click an arrow, or scroll anywhere on it) rather than a menu —
+     mirrors GH's own "◀ value ▶" look for Sequence/Cycle value lists. */
+  .picker.cycle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 4px;
+    background-image: none;
+    padding: 0 4px;
+  }
+  .cycle-value {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-align: center;
+  }
+  .cycle-arrow {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 100%;
+    padding: 0;
+    background: none;
+    border: none;
+    color: rgba(var(--text-rgb), 0.5);
+    cursor: pointer;
+  }
+  .cycle-arrow:hover { color: var(--accent-light); }
 
   /* default: no cap, fits every option so nothing needs scrolling — once the
      user drags the handle below, slider.height takes over as a fixed,

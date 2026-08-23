@@ -51,7 +51,10 @@
     }
 
     if (lockedInward) {
-      dispatch('preview', { kind: 'split', dir: lockedDir, side: lockedSide, clientX: e.clientX, clientY: e.clientY })
+      // Alt held = spanning split (pushes the whole row/column the pane
+      // belongs to, not just the one pane) — read live so toggling Alt
+      // mid-drag still applies at the moment the split actually fires.
+      dispatch('preview', { kind: 'split', dir: lockedDir, side: lockedSide, clientX: e.clientX, clientY: e.clientY, spanning: e.altKey })
     } else {
       dispatch('preview', { kind: 'collapse' })
     }
@@ -62,7 +65,7 @@
     active = false
     if (lockedDir !== null) {
       if (lockedInward) {
-        dispatch('commit', { kind: 'split', dir: lockedDir, side: lockedSide, clientX: e.clientX, clientY: e.clientY })
+        dispatch('commit', { kind: 'split', dir: lockedDir, side: lockedSide, clientX: e.clientX, clientY: e.clientY, spanning: e.altKey })
       } else {
         dispatch('commit', { kind: 'collapse', dir: lockedDir, side: lockedSide })
       }

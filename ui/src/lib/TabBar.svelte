@@ -86,7 +86,7 @@
       class:drag-target={isDragging && tab.id !== activeTabId}
       class:drag-over={dropTabId === tab.id}
       class:being-dragged={dragTabId === tab.id}
-      draggable={canDragTabs && mode === 'edit'}
+      draggable={canDragTabs && mode === 'edit' && editingId !== tab.id}
       style={tab.id === activeTabId && tab.color ? `border-bottom-color: ${tab.color}` : ''}
       on:click={() => dispatch('select', tab.id)}
       on:dblclick={() => startRename(tab)}

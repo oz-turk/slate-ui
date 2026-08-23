@@ -40,8 +40,18 @@ public class SlateWindow : Form
     {
         // Built once and cached — see SlateLogo.ToIcon's own note on the
         // one-time GDI handle cost.
+        //
+        // The dark variant used to be the SAME colour (0xefefef) for both
+        // outline and fill — with zero contrast between the two overlapping
+        // squares, the brand mark collapses into a single featureless white
+        // blob at 32x16 titlebar-icon scale (confirmed by rendering it in
+        // isolation — this is a drawing/colour-contrast issue, not a
+        // WM_SETICON/GetHicon() delivery bug like the earlier fixes here
+        // assumed). favicon.svg's own dark-theme variant already solved this
+        // the right way (light outline + accent-blue fill, see app.css
+        // --accent: #74a2ff) — mirrored here instead of true monochrome.
         _iconLight ??= SlateLogo.ToIcon(32, outline: Color.FromArgb(0x20, 0x1e, 0x1d), fill: Color.FromArgb(0x5b, 0x8e, 0xf5));
-        _iconDark  ??= SlateLogo.ToIcon(32, outline: Color.FromArgb(0xef, 0xef, 0xef), fill: Color.FromArgb(0xef, 0xef, 0xef));
+        _iconDark  ??= SlateLogo.ToIcon(32, outline: Color.FromArgb(0xe8, 0xeb, 0xf0), fill: Color.FromArgb(0x74, 0xa2, 0xff));
 
         var icon = (dark ? _iconDark : _iconLight).Handle;
         SendMessage(hWnd, WM_SETICON, (IntPtr)ICON_SMALL, icon);
@@ -83,10 +93,34 @@ public class SlateWindow : Form
 
     string _lastAppliedTheme = "dark";
 
+    // Hardcoding "dark" here and waiting for the async WebView2 → JS → JS-sends-
+    // state_snapshot round trip to correct it (via OnMessageFromJs) meant the
+    // titlebar/icon only ever matched a persisted "light" theme once that whole
+    // chain completed — invisible in practice on Rhino 8, but on Rhino 7 (no
+    // bundled WebView2 runtime, see Slate.csproj) that chain can stall or never
+    // finish, leaving the bar black and the brand-mark icon missing indefinitely.
+    // Reading the theme straight out of already-available state (reopened-in-
+    // session snapshot, or the file's persisted ui_state) makes the correct
+    // theme apply synchronously, with no dependency on WebView2 ever loading.
+    static string PeekPendingTheme()
+    {
+        string? json = _stateSnapshot ?? PendingFileState;
+        if (json == null) return "dark";
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.TryGetProperty("theme", out var th))
+                return th.GetString() ?? "dark";
+        }
+        catch { /* malformed/legacy state — fall back to dark */ }
+        return "dark";
+    }
+
     protected override void OnHandleCreated(EventArgs e)
     {
         base.OnHandleCreated(e);
-        ApplyTitleBarTheme(true);
+        _lastAppliedTheme = PeekPendingTheme();
+        ApplyTitleBarTheme(_lastAppliedTheme != "light");
     }
 
     private readonly WebView2 _webView = new();
@@ -146,36 +180,53 @@ public class SlateWindow : Form
     private static string GetHumanListMode(object obj) =>
         _humanValueListType?.GetProperty("ListMode")?.GetValue(obj)?.ToString() ?? "DropDown";
 
-    private static (List<string> options, object value, bool multi) GetHumanListItems(object obj)
+    private static (List<string> options, object value, bool multi, bool cycle) GetHumanListItems(object obj)
     {
-        var options   = new List<string>();
-        var selected  = new List<int>();
+        var options  = new List<string>();
+        var itemList = new List<object>();
         var items = _humanValueListType?.GetProperty("ListItems")?.GetValue(obj) as System.Collections.IEnumerable;
 
+        PropertyInfo? nameProp = null, selProp = null;
         if (items != null)
         {
-            PropertyInfo? nameProp = null, selProp = null;
-            int i = 0;
             foreach (var item in items)
             {
                 nameProp ??= item.GetType().GetProperty("Name");
                 selProp  ??= item.GetType().GetProperty("Selected");
                 options.Add(nameProp?.GetValue(item) as string ?? "");
-                if (selProp?.GetValue(item) is true) selected.Add(i);
-                i++;
+                itemList.Add(item);
             }
         }
 
         var mode  = GetHumanListMode(obj);
-        bool multi = mode == "CheckList" || mode == "Sequence";
-        object value = multi ? selected : (selected.Count > 0 ? selected[0] : -1);
-        return (options, value, multi);
+        // Same reclassification as the native GH_ValueList path — see
+        // IsMultiSelectMode/IsCycleMode's comment.
+        bool multi = mode == "CheckList";
+        object value;
+        if (multi)
+        {
+            // Same reasoning as the native GH_ValueList path: SelectedItems (not a
+            // ListItems scan) is what preserves Sequence's click order.
+            var selectedItems = _humanValueListType?.GetProperty("SelectedItems")?.GetValue(obj) as System.Collections.IEnumerable;
+            var indices = new List<int>();
+            if (selectedItems != null)
+                foreach (var si in selectedItems) { int idx = itemList.IndexOf(si); if (idx >= 0) indices.Add(idx); }
+            value = indices;
+        }
+        else
+        {
+            int selIdx = -1;
+            for (int i = 0; i < itemList.Count; i++)
+                if (selProp?.GetValue(itemList[i]) is true) { selIdx = i; break; }
+            value = selIdx;
+        }
+        return (options, value, multi, mode == "Cycle" || mode == "Sequence");
     }
 
     private static void SelectOrToggleHumanItem(object obj, int index)
     {
         var mode = GetHumanListMode(obj);
-        var methodName = (mode == "CheckList" || mode == "Sequence") ? "ToggleItem" : "SelectItem";
+        var methodName = mode == "CheckList" ? "ToggleItem" : "SelectItem";
         _humanValueListType?.GetMethod(methodName, new[] { typeof(int) })?.Invoke(obj, new object[] { index });
     }
 
@@ -225,12 +276,30 @@ public class SlateWindow : Form
             _latestValues.Clear();
             _latestColourValues.Clear();
             _solveRunning = false;
+
+            // The cached snapshot/window are keyed to whichever document last
+            // owned them, not to "the current session" — reusing them for a
+            // different document (e.g. closing Slate in file A via the X button,
+            // then opening a fresh Slate component in file B) would otherwise
+            // leak file A's tabs/groups into file B's blank panel. Only clear
+            // when the OWNING document actually changes; a same-document
+            // close/reopen (HostDocument never moves away from it) must still
+            // restore normally.
+            if (value != null && value != _stateSnapshotOwner)
+            {
+                _stateSnapshot = null;
+                _stateSnapshotOwner = null;
+                _instance?.ClearDicts();
+            }
+
             if (_hostDocument != null) _hostDocument.SolutionEnd += OnDocSolutionEnd;
         }
     }
 
-    // Static: survives window close/reopen within the same Rhino session
+    // Static: survives window close/reopen within the same Rhino session,
+    // but only for the document that produced it — see HostDocument's setter.
     private static string? _stateSnapshot;
+    private static Grasshopper.Kernel.GH_Document? _stateSnapshotOwner;
     public static string?  GetSerializedState()  => _stateSnapshot;
     public static string?  PendingFileState      { get; set; }
     public static bool     NeedsFileRestore      { get; set; }
@@ -401,7 +470,7 @@ public class SlateWindow : Form
         if (win == null) return;
         foreach (var kv in win._humanValueLists)
         {
-            var (options, value, multi) = GetHumanListItems(kv.Value);
+            var (options, value, multi, cycle) = GetHumanListItems(kv.Value);
             var name = kv.Value.NickName;
             var fingerprint = name + "" + multi + "" + JsonSerializer.Serialize(value) + "" + string.Join("", options);
             if (_lastPushedHumanLists.TryGetValue(kv.Key, out var last) && last == fingerprint) continue;
@@ -413,7 +482,8 @@ public class SlateWindow : Form
                 name,
                 options,
                 value,
-                multiSelect = multi
+                multiSelect = multi,
+                cycle
             }));
         }
     }
@@ -512,8 +582,17 @@ public class SlateWindow : Form
             PendingWindowLocation = null;
         }
 
-        if (!w.Visible) w.Show();
+        bool wasVisible = w.Visible;
+        if (!wasVisible) w.Show();
         w.BringToFront();
+
+        // WinForms re-asserts its own (unset/default) Form.Icon at various
+        // points around Show()/activation — same class of "Windows quietly
+        // resets our custom window state" issue as TopMost below in
+        // InitWebViewAsync. Reassert ours right after Show() wins that race
+        // instead of losing to it (this is what showed Windows' generic
+        // no-icon glyph at startup instead of the brand mark).
+        if (!wasVisible) w.ApplyTitleBarTheme(w._lastAppliedTheme != "light");
     }
 
     public static void HideIfOpen()
@@ -578,8 +657,10 @@ public class SlateWindow : Form
 
         _webView.CoreWebView2.Navigate("https://slate.local/index.html");
 
-        // Re-assert always-on-top after WebView2 init (it can reset window flags)
+        // Re-assert always-on-top and the titlebar icon after WebView2 init —
+        // both can get reset by window flag/handle churn during init.
         SetPin(true);
+        ApplyTitleBarTheme(_lastAppliedTheme != "light");
     }
 
     private void SetPin(bool pin)
@@ -659,6 +740,7 @@ public class SlateWindow : Form
 
                 case "state_snapshot":
                     _stateSnapshot = e.WebMessageAsJson;
+                    _stateSnapshotOwner = HostDocument;
                     string themeName = root.TryGetProperty("theme", out var th) ? th.GetString() ?? "dark" : "dark";
                     if (themeName != _lastAppliedTheme)
                     {
@@ -768,23 +850,41 @@ public class SlateWindow : Form
         PostToJs(SlateEvent.ButtonAdded(tabId, id, button.NickName, button.ButtonDown, groupId));
     }
 
-    // CheckList/Sequence allow more than one item checked at once (ToggleItem,
-    // value = array of indices); DropDown/Cycle are single-select (SelectItem,
-    // value = one index). Cycle isn't distinguished from DropDown yet — same
-    // single-select UI for now, just doesn't break.
+    // Only CheckList allows more than one item checked at once (ToggleItem,
+    // value = array of indices). DropDown, Cycle AND Sequence are all
+    // single-select (SelectItem, value = one index) — confirmed via reflection
+    // on GH_ValueListAttributes: it has LayoutDropDown/LayoutCheckList/
+    // LayoutSequence + RenderLeftArrow/RenderRightArrow/RenderSequence, but no
+    // Cycle-specific layout/render at all, and Sequence's own render is the
+    // "◀ value ▶" arrow widget (single current value, not a list of toggles)
+    // — this used to be misclassified as multi-select, which is why a
+    // Sequence-mode value list (what GH itself calls "Value Sequence" in that
+    // arrow-widget form) captured into Slate as a checklist instead of
+    // matching its own on-canvas look. See yapilacaklar/value-sequence.md.
     private static bool IsMultiSelectMode(GH_ValueListMode mode) =>
-        mode == GH_ValueListMode.CheckList || mode == GH_ValueListMode.Sequence;
+        mode == GH_ValueListMode.CheckList;
 
-    private static (object value, bool multi) GetValueListSelection(GH_ValueListMode mode, List<GH_ValueListItem> items)
+    // Cycle and Sequence both render as Slate's single-value "cycle" widget
+    // (current item + prev/next) rather than a dropdown — Sequence's click
+    // order (what makes it a "sequence" downstream) is preserved by clicking
+    // through Slate's own cycle button the same way GH's arrows would.
+    private static bool IsCycleMode(GH_ValueListMode mode) =>
+        mode == GH_ValueListMode.Cycle || mode == GH_ValueListMode.Sequence;
+
+    // For CheckList, item order carries no meaning, so scanning ListItems top-to-bottom
+    // is fine. Sequence's whole point is the CLICK order (its downstream value depends
+    // on it), which ListItems can't give us — SelectedItems is GH's own order-preserving
+    // record of that, so use it for both and let Sequence come out right.
+    private static (object value, bool multi) GetValueListSelection(GH_ValueList valueList)
     {
-        bool multi = IsMultiSelectMode(mode);
+        bool multi = IsMultiSelectMode(valueList.ListMode);
         if (multi)
         {
-            var indices = new List<int>();
-            for (int i = 0; i < items.Count; i++) if (items[i].Selected) indices.Add(i);
+            var items = valueList.ListItems;
+            var indices = valueList.SelectedItems.Select(si => items.IndexOf(si)).Where(i => i >= 0).ToList();
             return (indices, true);
         }
-        return (items.FindIndex(li => li.Selected), false);
+        return (valueList.ListItems.FindIndex(li => li.Selected), false);
     }
 
     public void AddValueList(string tabId, string? groupId, GH_ValueList valueList)
@@ -793,8 +893,8 @@ public class SlateWindow : Form
         _valueLists[id] = valueList;
 
         var options = valueList.ListItems.Select(i => i.Name);
-        var (value, multi) = GetValueListSelection(valueList.ListMode, valueList.ListItems);
-        PostToJs(SlateEvent.ValueListAdded(tabId, id, valueList.NickName, options, value, multi, groupId));
+        var (value, multi) = GetValueListSelection(valueList);
+        PostToJs(SlateEvent.ValueListAdded(tabId, id, valueList.NickName, options, value, multi, IsCycleMode(valueList.ListMode), groupId));
     }
 
     public void AddPanel(string tabId, string? groupId, GH_Panel panel)
@@ -819,8 +919,8 @@ public class SlateWindow : Form
         string id = humanValueList.InstanceGuid.ToString();
         _humanValueLists[id] = humanValueList;
 
-        var (options, value, multi) = GetHumanListItems(humanValueList);
-        PostToJs(SlateEvent.HumanValueListAdded(tabId, id, humanValueList.NickName, options, value, multi, groupId));
+        var (options, value, multi, cycle) = GetHumanListItems(humanValueList);
+        PostToJs(SlateEvent.HumanValueListAdded(tabId, id, humanValueList.NickName, options, value, multi, cycle, groupId));
     }
 
     public void AddColourPicker(string tabId, string? groupId, GH_ColourSwatch picker)
@@ -841,6 +941,25 @@ public class SlateWindow : Form
 
     public void ClearAll()
     {
+        ClearDicts();
+        PostToJs(SlateEvent.Cleared());
+    }
+
+    // Full structural reset — back to one empty workspace/pane/tab, as if the
+    // panel had never captured anything. Clear only empties sliders/groups and
+    // leaves the tab/pane/workspace layout as-is; this also drops that layout.
+    public void ResetAll()
+    {
+        ClearDicts();
+        PostToJs(SlateEvent.Reset());
+    }
+
+    // Drops references to captured GH objects without telling JS anything
+    // changed — used when the window is being handed off to a different
+    // document (see HostDocument's setter), where the JS side is about to
+    // get a fresh ui_ready/restore of its own instead of a "cleared" wipe.
+    internal void ClearDicts()
+    {
         _sliders.Clear();
         _toggles.Clear();
         _buttons.Clear();
@@ -851,7 +970,6 @@ public class SlateWindow : Form
         _colourPickers.Clear();
         _pancakeTrueOnlyButtons.Clear();
         ClearPushCaches();
-        PostToJs(SlateEvent.Cleared());
     }
 
     public void RestoreState(string stateJson, Grasshopper.Kernel.GH_Document doc)
@@ -935,12 +1053,13 @@ public class SlateWindow : Form
                         if (docValueLists.TryGetValue(id, out var vl))
                         {
                             _valueLists[id] = vl;
-                            var (value, multi) = GetValueListSelection(vl.ListMode, vl.ListItems);
+                            var (value, multi) = GetValueListSelection(vl);
                             s["value"] = multi
                                 ? new JsonArray(((List<int>)value).Select(v => JsonValue.Create(v)).ToArray())
                                 : JsonValue.Create((int)value);
                             s["name"]        = vl.NickName;
                             s["multiSelect"] = multi;
+                            s["cycle"]       = vl.ListMode == GH_ValueListMode.Cycle;
                             s["options"]     = new JsonArray(vl.ListItems.Select(li => JsonValue.Create(li.Name)).ToArray());
                         }
                         else arr.RemoveAt(i);
@@ -972,12 +1091,13 @@ public class SlateWindow : Form
                         if (docHumanValueLists.TryGetValue(id, out var hvl))
                         {
                             _humanValueLists[id] = hvl;
-                            var (options, value, multi) = GetHumanListItems(hvl);
+                            var (options, value, multi, cycle) = GetHumanListItems(hvl);
                             s["value"] = multi
                                 ? new JsonArray(((List<int>)value).Select(v => JsonValue.Create(v)).ToArray())
                                 : JsonValue.Create((int)value);
                             s["name"]        = hvl.NickName;
                             s["multiSelect"] = multi;
+                            s["cycle"]       = cycle;
                             s["options"]     = new JsonArray(options.Select(o => JsonValue.Create(o)).ToArray());
                         }
                         else arr.RemoveAt(i);

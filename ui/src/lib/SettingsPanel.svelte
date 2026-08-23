@@ -35,6 +35,7 @@
     { keys: ['Ctrl', '1–9'],  desc: 'Switch workspace' },
     { keys: ['Ctrl', 'Z'],    desc: 'Undo' },
     { keys: ['Ctrl', 'drag'], desc: 'Snap resize to slider-row size' },
+    { keys: ['Alt', 'corner drag'], desc: 'Split pushes the whole row/column, not just one pane' },
   ]
 
   function clampUndoLimit(e) {

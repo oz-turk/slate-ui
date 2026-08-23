@@ -8,7 +8,7 @@
   import SettingsPanel  from './lib/SettingsPanel.svelte'
   import {
     layout, workspaces, activeWorkspaceId, allLeaves, restoreLayout, restoreWorkspaces,
-    updatePane, syncControl, clearAllWorkspaces, makeLeaf, setActiveWorkspace
+    updatePane, syncControl, clearAllWorkspaces, resetToDefault, makeLeaf, setActiveWorkspace
   } from './stores/layout.js'
   import { mode, pinned, theme, deleteRequest, captureRequest, settingsOpen, clearSelectionTick } from './stores/uiState.js'
   import { undo } from './stores/history.js'
@@ -152,7 +152,7 @@
     }
 
     if (msg.type === 'valueList_added') {
-      addCapturedControl({ id: msg.id, type: 'valueList', name: msg.name, options: msg.options, value: msg.value, multiSelect: msg.multiSelect }, msg)
+      addCapturedControl({ id: msg.id, type: 'valueList', name: msg.name, options: msg.options, value: msg.value, multiSelect: msg.multiSelect, cycle: msg.cycle }, msg)
     }
 
     if (msg.type === 'panel_added') {
@@ -166,7 +166,7 @@
     // Human plugin's "Item Selector" — same shape as valueList/itemPicker on the
     // wire, kept as its own type so it round-trips through RestoreState correctly.
     if (msg.type === 'humanValueList_added') {
-      addCapturedControl({ id: msg.id, type: 'humanValueList', name: msg.name, options: msg.options, value: msg.value, multiSelect: msg.multiSelect }, msg)
+      addCapturedControl({ id: msg.id, type: 'humanValueList', name: msg.name, options: msg.options, value: msg.value, multiSelect: msg.multiSelect, cycle: msg.cycle }, msg)
     }
 
     if (msg.type === 'colourPicker_added') {
@@ -196,7 +196,7 @@
     }
 
     if (msg.type === 'humanValueList_update') {
-      syncControl(msg.id, { name: msg.name, options: msg.options, value: msg.value, multiSelect: msg.multiSelect })
+      syncControl(msg.id, { name: msg.name, options: msg.options, value: msg.value, multiSelect: msg.multiSelect, cycle: msg.cycle })
     }
 
     if (msg.type === 'colourPicker_update') {
@@ -205,6 +205,11 @@
 
     if (msg.type === 'cleared') {
       clearAllWorkspaces()
+      postStateSnapshot()
+    }
+
+    if (msg.type === 'reset') {
+      resetToDefault()
       postStateSnapshot()
     }
 

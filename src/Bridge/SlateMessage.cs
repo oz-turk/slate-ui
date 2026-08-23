@@ -18,8 +18,8 @@ public static class SlateEvent
     public static string PancakeButtonAdded(string tabId, string id, string name, bool value, string? groupId = null) =>
         JsonSerializer.Serialize(new { type = "pancakeButton_added", tabId, id, name, value = value ? 1 : 0, groupId });
 
-    public static string ValueListAdded(string tabId, string id, string name, IEnumerable<string> options, object value, bool multiSelect, string? groupId = null) =>
-        JsonSerializer.Serialize(new { type = "valueList_added", tabId, id, name, options, value, multiSelect, groupId });
+    public static string ValueListAdded(string tabId, string id, string name, IEnumerable<string> options, object value, bool multiSelect, bool cycle, string? groupId = null) =>
+        JsonSerializer.Serialize(new { type = "valueList_added", tabId, id, name, options, value, multiSelect, cycle, groupId });
 
     public static string PanelAdded(string tabId, string id, string name, string text, bool readOnly, string? groupId = null) =>
         JsonSerializer.Serialize(new { type = "panel_added", tabId, id, name, value = text, readOnly, groupId });
@@ -30,9 +30,14 @@ public static class SlateEvent
     public static string ColourPickerAdded(string tabId, string id, string name, string hex, string? groupId = null) =>
         JsonSerializer.Serialize(new { type = "colourPicker_added", tabId, id, name, value = hex, groupId });
 
-    public static string HumanValueListAdded(string tabId, string id, string name, IEnumerable<string> options, object value, bool multiSelect, string? groupId = null) =>
-        JsonSerializer.Serialize(new { type = "humanValueList_added", tabId, id, name, options, value, multiSelect, groupId });
+    public static string HumanValueListAdded(string tabId, string id, string name, IEnumerable<string> options, object value, bool multiSelect, bool cycle, string? groupId = null) =>
+        JsonSerializer.Serialize(new { type = "humanValueList_added", tabId, id, name, options, value, multiSelect, cycle, groupId });
 
     public static string Cleared() =>
         JsonSerializer.Serialize(new { type = "cleared" });
+
+    // Unlike Cleared (empties sliders/groups but keeps tabs/panes/workspaces),
+    // Reset drops the whole layout back to one empty workspace/pane/tab.
+    public static string Reset() =>
+        JsonSerializer.Serialize(new { type = "reset" });
 }

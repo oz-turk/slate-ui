@@ -97,6 +97,50 @@ function doSplit(node, paneId, dir, side, sizeA, label, presetId) {
   return { ...node, a: doSplit(node.a, paneId, dir, side, sizeA, label, presetId), b: doSplit(node.b, paneId, dir, side, sizeA, label, presetId) }
 }
 
+// Like doSplit, but instead of splitting just the leaf, climbs up through
+// ancestor splits that run PERPENDICULAR to `dir` (they only subdivide
+// within the same row/column as the leaf, so the new pane should span past
+// them too) and stops at the nearest ancestor that splits ALONG `dir` — that
+// ancestor's whole subtree becomes what gets pushed aside, instead of just
+// the one leaf. E.g. in a 2x2 grid, spanning-splitting the bottom-left pane
+// horizontally pushes both the bottom-left AND top-left panes (the entire
+// column), not just the bottom-left cell.
+function doSplitSpanning(node, paneId, dir, side, sizeA, label, presetId) {
+  function findPath(n, path) {
+    if (n.type === 'leaf') return n.paneId === paneId ? path : null
+    return findPath(n.a, [...path, { node: n, which: 'a' }])
+        ?? findPath(n.b, [...path, { node: n, which: 'b' }])
+  }
+  const path = findPath(node, [])
+  if (!path) return node
+
+  let stopIndex = -1
+  for (let i = path.length - 1; i >= 0; i--) {
+    if (path[i].node.dir === dir) { stopIndex = i; break }
+  }
+
+  const tabId = newTabId()
+  const fresh = makeLeaf([{ id: tabId, label, sliders: [], groups: [] }], tabId)
+
+  if (stopIndex === -1) {
+    // No ancestor splits along `dir` anywhere above — span the whole tree.
+    const [a, b] = side === 'before' ? [fresh, node] : [node, fresh]
+    return makeSplit(dir, a, b, sizeA, presetId)
+  }
+
+  const { node: stopSplit, which: stopWhich } = path[stopIndex]
+  const target = stopSplit[stopWhich]
+  const [a, b] = side === 'before' ? [fresh, target] : [target, fresh]
+  const wrapped = makeSplit(dir, a, b, sizeA, presetId)
+
+  function rebuildFrom(idx) {
+    const { node: cur, which } = path[idx]
+    const newChild = idx === stopIndex ? wrapped : rebuildFrom(idx + 1)
+    return { ...cur, [which]: newChild }
+  }
+  return rebuildFrom(0)
+}
+
 function doCollapse(node, paneId) {
   if (node.type === 'leaf') return node
   if (node.a.type === 'leaf' && node.a.paneId === paneId) return node.b
@@ -163,6 +207,16 @@ export function splitPane(paneId, dir, side = 'after', sizeA = 260, presetId) {
   })
 }
 
+// Alt-modified corner drag: pushes the whole row/column the pane belongs to
+// instead of just that one pane — see doSplitSpanning.
+export function splitPaneSpanning(paneId, dir, side = 'after', sizeA = 260, presetId) {
+  updateActiveLayout(l => {
+    const labels = allLeaves(l).flatMap(leaf => leaf.tabs.map(t => t.label))
+    const label  = nextAvailableName(labels, 'Tab')
+    return doSplitSpanning(l, paneId, dir, side, sizeA, label, presetId)
+  })
+}
+
 export function collapsePane(paneId) {
   updateActiveLayout(l => {
     const result = doCollapse(l, paneId)
@@ -196,6 +250,15 @@ export function restoreLayout(newLayout) {
 export function restoreWorkspaces(workspaceList, activeId) {
   workspaces.set(workspaceList)
   activeWorkspaceId.set(activeId ?? workspaceList[0]?.id ?? null)
+}
+
+// Full structural reset — back to a single empty workspace/pane/tab. Unlike
+// clearAllWorkspaces() (empties sliders/groups, keeps the layout), this drops
+// the layout itself too.
+export function resetToDefault() {
+  const id = wid()
+  workspaces.set([{ id, label: 'Workspace 1', layout: makeLeaf() }])
+  activeWorkspaceId.set(id)
 }
 
 // ── workspace management ──────────────────────────────────────────────────────
@@ -313,16 +376,37 @@ export function findParentSplitId(node, paneId) {
 function leftmostLeafId(node) { return node.type === 'leaf' ? node.paneId : leftmostLeafId(node.a) }
 function rightmostLeafId(node) { return node.type === 'leaf' ? node.paneId : rightmostLeafId(node.b) }
 
-// Find paneId of the adjacent pane in the given direction from paneId
+// Find paneId of the adjacent pane in the given direction from paneId.
+//
+// Crossing the nearest matching-direction split only tells you which SIDE
+// (a/b subtree) the neighbor is in — in a 2x2 (or deeper) grid that side is
+// itself split further, and grabbing its flat leftmost/rightmost leaf picks
+// whichever leaf happens to be first in that subtree, regardless of row/
+// column. E.g. bottom-left's "after"/horizontal neighbor in a 2x2 grid used
+// to resolve to top-right (leftmostLeafId of the whole right side) instead
+// of bottom-right (the pane actually adjacent to it).
+//
+// Fix: after crossing into the sibling subtree, replay the same a/b choices
+// the source leaf's path made at every split AFTER the crossing point (i.e.
+// every split along a different axis than the one we just crossed) — that
+// walks down to the leaf that shares the source's position on those other
+// axes, which is the one that's actually geometrically adjacent.
 export function findNeighborPane(node, paneId, dir, side) {
+  function descend(n, remainingPath) {
+    for (const { which } of remainingPath) {
+      if (n.type === 'leaf') break
+      n = n[which]
+    }
+    return n.type === 'leaf' ? n.paneId : leftmostLeafId(n)
+  }
   function walk(n, path) {
     if (n.type === 'leaf') {
       if (n.paneId !== paneId) return null
       for (let i = path.length - 1; i >= 0; i--) {
         const { split, which } = path[i]
         if (split.dir !== dir) continue
-        if (side === 'after'  && which === 'a') return leftmostLeafId(split.b)
-        if (side === 'before' && which === 'b') return rightmostLeafId(split.a)
+        if (side === 'after'  && which === 'a') return descend(split.b, path.slice(i + 1))
+        if (side === 'before' && which === 'b') return descend(split.a, path.slice(i + 1))
       }
       return null
     }
