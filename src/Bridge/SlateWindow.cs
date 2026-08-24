@@ -861,6 +861,7 @@ public class SlateWindow : Form
             (double)slider.Slider.Minimum,
             (double)slider.Slider.Maximum,
             (double)slider.CurrentValue,
+            slider.Slider.DecimalPlaces,
             groupId));
     }
 
@@ -1162,10 +1163,11 @@ public class SlateWindow : Form
                     else if (docSliders.TryGetValue(id, out var gh))
                     {
                         _sliders[id] = gh;
-                        s["value"]   = (double)gh.CurrentValue;
-                        s["min"]     = (double)gh.Slider.Minimum;
-                        s["max"]     = (double)gh.Slider.Maximum;
-                        s["name"]    = gh.NickName;
+                        s["value"]          = (double)gh.CurrentValue;
+                        s["min"]            = (double)gh.Slider.Minimum;
+                        s["max"]            = (double)gh.Slider.Maximum;
+                        s["decimalPlaces"]  = gh.Slider.DecimalPlaces;
+                        s["name"]           = gh.NickName;
                     }
                     else arr.RemoveAt(i);
                 }

@@ -27,8 +27,19 @@
     ? 0
     : ((slider.value - slider.min) / (slider.max - slider.min)) * 100
 
+  // GH's own slider rounds to this many decimals (0 for an integer slider) —
+  // captured at capture/restore time from GH_SliderBase.DecimalPlaces. Falls
+  // back to the old range-based guess only for the (shouldn't-happen) case
+  // where a slider object predates this field.
+  $: decimals = slider.decimalPlaces ?? (slider.max - slider.min < 10 ? 3 : slider.max - slider.min < 100 ? 2 : 1)
+
+  function round(v) {
+    const f = 10 ** decimals
+    return Math.round(v * f) / f
+  }
+
   function fromPct(p) {
-    return slider.min + (slider.max - slider.min) * Math.max(0, Math.min(1, p))
+    return round(slider.min + (slider.max - slider.min) * Math.max(0, Math.min(1, p)))
   }
 
   function getValueFromEvent(e) {
@@ -58,7 +69,7 @@
   function onInputChange(e) {
     const v = parseFloat(e.target.value)
     if (!isNaN(v)) {
-      const clamped = Math.max(slider.min, Math.min(slider.max, v))
+      const clamped = round(Math.max(slider.min, Math.min(slider.max, v)))
       lastValue = clamped
       dispatch('change',  clamped)
       dispatch('commit',  clamped)  // input is already "committed"
@@ -66,9 +77,7 @@
   }
 
   function fmt(v) {
-    const range = slider.max - slider.min
-    const dec   = range < 10 ? 3 : range < 100 ? 2 : 1
-    return (+v).toFixed(dec)
+    return (+v).toFixed(decimals)
   }
 
 </script>
@@ -132,7 +141,7 @@
     value={fmt(slider.value)}
     min={slider.min}
     max={slider.max}
-    step={(slider.max - slider.min) / 1000}
+    step={10 ** -decimals}
     on:change={onInputChange}
   />
 

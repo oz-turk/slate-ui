@@ -168,7 +168,7 @@
     }
 
     if (msg.type === 'slider_added') {
-      addCapturedControl({ id: msg.id, type: 'slider', name: msg.name, min: msg.min, max: msg.max, value: msg.value }, msg)
+      addCapturedControl({ id: msg.id, type: 'slider', name: msg.name, min: msg.min, max: msg.max, value: msg.value, decimalPlaces: msg.decimalPlaces }, msg)
     }
 
     if (msg.type === 'toggle_added') {
