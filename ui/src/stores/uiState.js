@@ -2,9 +2,21 @@ import { writable } from 'svelte/store'
 export const mode   = writable('preview')
 export const pinned = writable(true)
 
-// 'dark' | 'light' — toggled in the settings panel, persisted with the rest
-// of the workspace state (see ipc.js / App.svelte's restore_state handler).
-export const theme = writable('dark')
+// 'dark' | 'light' — toggled in the settings panel, persisted two ways:
+// per-file with the rest of the workspace state (ipc.js / App.svelte's
+// restore_state handler takes priority when a file has its own saved theme),
+// and as a cross-file default in localStorage (WebView2's profile — see
+// SlateWindow.cs's userDataFolder — outlives any single .gh file) so a file
+// with no saved theme opens in whatever the user picked last, not always dark.
+function readDefaultTheme() {
+  try {
+    const t = localStorage.getItem('slate-theme')
+    return t === 'light' ? 'light' : 'dark'
+  } catch {
+    return 'dark'
+  }
+}
+export const theme = writable(readDefaultTheme())
 
 // Status bar hint — null means "show the default, mode-based shortcut list";
 // any component can set() its own hint on hover and clear it (set null) on leave.

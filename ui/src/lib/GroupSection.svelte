@@ -20,6 +20,7 @@
   export let dropHighlight = false
   export let dropBefore    = false
   export let dropTarget    = null
+  export let activeDrag    = null
   export let depth         = 0
   export let resizingSliderId = null  // row currently being resized — flip is skipped for it
 
@@ -135,9 +136,10 @@
           {selectedIds}
           {dropTarget}
           {resizingSliderId}
+          {activeDrag}
           depth={depth + 1}
-          dropHighlight={dropTarget?.type === 'group-header' && dropTarget.id === subGroup.id && false}
-          dropBefore={false}
+          dropHighlight={dropTarget?.type === 'group-header' && dropTarget.id === subGroup.id && activeDrag?.type === 'slider'}
+          dropBefore={dropTarget?.type === 'group-header' && dropTarget.id === subGroup.id && activeDrag?.type === 'group'}
           on:toggle
           on:rename
           on:remove

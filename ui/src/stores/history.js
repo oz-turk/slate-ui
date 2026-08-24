@@ -40,13 +40,20 @@ export function canUndo() {
   return stack.length > 0
 }
 
+// Run fn (a programmatic state replacement — undo, or loading a file) without
+// recording it as a user action. Also resets baseline afterward so the next
+// real user action diffs against the state fn just installed, not stale state.
+export function suppressDuring(fn) {
+  suppressed = true
+  fn()
+  baseline = snapshot()
+  suppressed = false
+}
+
 export function undo() {
   clearTimeout(timer)
   settle()   // flush a pending-but-not-yet-recorded change first, so undo always reverts the last real action
   const prev = stack.pop()
   if (!prev) return
-  suppressed = true
-  restoreWorkspaces(prev.workspaces, prev.activeWorkspaceId)
-  baseline = prev
-  suppressed = false
+  suppressDuring(() => restoreWorkspaces(prev.workspaces, prev.activeWorkspaceId))
 }

@@ -26,6 +26,7 @@
 
   function setTheme(t) {
     theme.set(t)
+    try { localStorage.setItem('slate-theme', t) } catch {}
     postStateSnapshot()
   }
 </script>

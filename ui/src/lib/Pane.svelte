@@ -70,10 +70,10 @@
       x: Math.min(e.clientX, window.innerWidth  - menuW - 8),
       y: Math.min(e.clientY, window.innerHeight - menuH - 8),
       items: [
-        { label: 'Split Horizontally', action: () => splitPane(paneId, 'h', 'after') },
-        { label: 'Split Vertically',   action: () => splitPane(paneId, 'v', 'after') },
+        { label: 'Split Horizontally', action: () => { splitPane(paneId, 'h', 'after'); postStateSnapshot() } },
+        { label: 'Split Vertically',   action: () => { splitPane(paneId, 'v', 'after'); postStateSnapshot() } },
         'sep',
-        { label: 'Close Pane', danger: true, action: () => collapsePane(paneId) },
+        { label: 'Close Pane', danger: true, action: () => { collapsePane(paneId); postStateSnapshot() } },
       ]
     }
   }
@@ -671,7 +671,7 @@
 
       {#each activeTab.groups as group (group.id)}
         <GroupSection
-          {group} mode={$mode} {selectedIds} {dropTarget} {resizingSliderId}
+          {group} mode={$mode} {selectedIds} {dropTarget} {resizingSliderId} {activeDrag}
           dropHighlight={dropTarget?.type === 'group-header' && dropTarget.id === group.id && activeDrag?.type === 'slider'}
           dropBefore={dropTarget?.type === 'group-header' && dropTarget.id === group.id && activeDrag?.type === 'group'}
           on:toggle={e              => toggleGroup(e.detail)}

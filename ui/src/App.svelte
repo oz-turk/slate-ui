@@ -11,7 +11,7 @@
     updatePane, syncControl, clearAllWorkspaces, resetToDefault, makeLeaf, setActiveWorkspace
   } from './stores/layout.js'
   import { mode, pinned, theme, deleteRequest, captureRequest, settingsOpen, clearSelectionTick } from './stores/uiState.js'
-  import { undo } from './stores/history.js'
+  import { undo, suppressDuring } from './stores/history.js'
   import { postToCs, postStateSnapshot } from './lib/ipc.js'
 
   // ── C# ↔ JS ───────────────────────────────────────────────────────────────────
@@ -152,7 +152,7 @@
     }
 
     if (msg.type === 'valueList_added') {
-      addCapturedControl({ id: msg.id, type: 'valueList', name: msg.name, options: msg.options, value: msg.value, multiSelect: msg.multiSelect, cycle: msg.cycle }, msg)
+      addCapturedControl({ id: msg.id, type: 'valueList', name: msg.name, options: msg.options, value: msg.value, multiSelect: msg.multiSelect, cycle: msg.cycle, loop: msg.loop }, msg)
     }
 
     if (msg.type === 'panel_added') {
@@ -166,7 +166,7 @@
     // Human plugin's "Item Selector" — same shape as valueList/itemPicker on the
     // wire, kept as its own type so it round-trips through RestoreState correctly.
     if (msg.type === 'humanValueList_added') {
-      addCapturedControl({ id: msg.id, type: 'humanValueList', name: msg.name, options: msg.options, value: msg.value, multiSelect: msg.multiSelect, cycle: msg.cycle }, msg)
+      addCapturedControl({ id: msg.id, type: 'humanValueList', name: msg.name, options: msg.options, value: msg.value, multiSelect: msg.multiSelect, cycle: msg.cycle, loop: msg.loop }, msg)
     }
 
     if (msg.type === 'colourPicker_added') {
@@ -196,7 +196,7 @@
     }
 
     if (msg.type === 'humanValueList_update') {
-      syncControl(msg.id, { name: msg.name, options: msg.options, value: msg.value, multiSelect: msg.multiSelect, cycle: msg.cycle })
+      syncControl(msg.id, { name: msg.name, options: msg.options, value: msg.value, multiSelect: msg.multiSelect, cycle: msg.cycle, loop: msg.loop })
     }
 
     if (msg.type === 'colourPicker_update') {
@@ -217,28 +217,45 @@
       // msg.workspaces is the current multi-workspace format
       // msg.layout is the older single-tree format
       // msg.tabs is the oldest, legacy flat format
-      if (msg.workspaces) {
-        restoreWorkspaces(
-          msg.workspaces.map(w => ({ ...w, layout: reconcileLayout(w.layout) })),
-          msg.activeWorkspaceId
-        )
-      } else if (msg.layout) {
-        restoreLayout(reconcileLayout(msg.layout))
-      } else if (msg.tabs) {
-        // legacy: single pane
-        const leaf = makeLeaf(msg.tabs, msg.activeTabId)
-        restoreLayout(leaf)
-      }
+      // Loading a file is not a user action — suppress it so it doesn't land
+      // on the undo stack (undoing past it would blow away the loaded layout).
+      const winW = msg.winW ?? 900, winH = msg.winH ?? 600
+      suppressDuring(() => {
+        if (msg.workspaces) {
+          restoreWorkspaces(
+            msg.workspaces.map(w => ({ ...w, layout: reconcileLayout(w.layout, winW, winH) })),
+            msg.activeWorkspaceId
+          )
+        } else if (msg.layout) {
+          restoreLayout(reconcileLayout(msg.layout, winW, winH))
+        } else if (msg.tabs) {
+          // legacy: single pane
+          const leaf = makeLeaf(msg.tabs, msg.activeTabId)
+          restoreLayout(leaf)
+        }
+      })
       if (msg.theme) theme.set(msg.theme)
       postStateSnapshot()
     }
   }
 
-  // Walk a restored layout tree and hydrate it (re-attach live slider refs)
-  // The tree already has values/min/max from C# RestoreState
-  function reconcileLayout(node) {
+  // Walk a restored layout tree and hydrate it (re-attach live slider refs).
+  // The tree already has values/min/max from C# RestoreState.
+  //
+  // Also migrates pre-sizeA saves: those split nodes only have a fractional
+  // "ratio" (0-1), not a pixel sizeA — converted here using (w, h), the pixel
+  // space actually available to this node. That starts as the whole window
+  // (winW/winH, sent alongside restore_state — the window size the ratio was
+  // set against) and shrinks going down the tree as ancestor splits carve it
+  // up, so each split's ratio is read against the space it really had.
+  function reconcileLayout(node, w, h) {
     if (node.type === 'leaf') return node
-    return { ...node, a: reconcileLayout(node.a), b: reconcileLayout(node.b) }
+    let sizeA = node.sizeA ?? (node.ratio != null ? Math.round(node.ratio * (node.dir === 'h' ? w : h)) : 260)
+    const aw = node.dir === 'h' ? sizeA : w
+    const ah = node.dir === 'h' ? h : sizeA
+    const bw = node.dir === 'h' ? Math.max(0, w - sizeA) : w
+    const bh = node.dir === 'h' ? h : Math.max(0, h - sizeA)
+    return { ...node, sizeA, a: reconcileLayout(node.a, aw, ah), b: reconcileLayout(node.b, bw, bh) }
   }
 </script>
 

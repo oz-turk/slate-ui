@@ -1,5 +1,6 @@
 <script>
   import { workspaces, activeWorkspaceId, addWorkspace, removeWorkspace, renameWorkspace, setActiveWorkspace } from '../stores/layout.js'
+  import { postStateSnapshot } from './ipc.js'
 
   export let mode = 'preview'
 
@@ -12,12 +13,28 @@
     editValue = w.label
   }
   function commitRename() {
-    if (editingId && editValue.trim()) renameWorkspace(editingId, editValue.trim())
+    if (editingId && editValue.trim()) {
+      renameWorkspace(editingId, editValue.trim())
+      postStateSnapshot()
+    }
     editingId = null
   }
   function onKeydown(e) {
     if (e.key === 'Enter')  { commitRename(); e.preventDefault() }
     if (e.key === 'Escape') { editingId = null }
+  }
+
+  function activate(id) {
+    setActiveWorkspace(id)
+    postStateSnapshot()
+  }
+  function remove(id) {
+    removeWorkspace(id)
+    postStateSnapshot()
+  }
+  function add() {
+    addWorkspace()
+    postStateSnapshot()
   }
 </script>
 
@@ -27,9 +44,9 @@
     <div class="ws-tab" class:active={w.id === $activeWorkspaceId}
         role="tab"
         tabindex="0"
-        on:click={() => setActiveWorkspace(w.id)}
+        on:click={() => activate(w.id)}
         on:dblclick={() => startRename(w)}
-        on:keydown={e => e.key === 'Enter' && setActiveWorkspace(w.id)}
+        on:keydown={e => e.key === 'Enter' && activate(w.id)}
     >
       {#if editingId === w.id}
         <!-- svelte-ignore a11y-autofocus -->
@@ -38,14 +55,14 @@
       {:else}
         <span class="label">{w.label}</span>
         {#if mode === 'edit' && $workspaces.length > 1}
-          <button class="remove" on:click|stopPropagation={() => removeWorkspace(w.id)} title="Remove workspace">×</button>
+          <button class="remove" on:click|stopPropagation={() => remove(w.id)} title="Remove workspace">×</button>
         {/if}
       {/if}
     </div>
   {/each}
 
   {#if mode === 'edit'}
-    <button class="add-ws" on:click={addWorkspace} title="Add workspace">+</button>
+    <button class="add-ws" on:click={add} title="Add workspace">+</button>
   {/if}
 </div>
 

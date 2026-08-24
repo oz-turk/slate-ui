@@ -180,7 +180,7 @@ public class SlateWindow : Form
     private static string GetHumanListMode(object obj) =>
         _humanValueListType?.GetProperty("ListMode")?.GetValue(obj)?.ToString() ?? "DropDown";
 
-    private static (List<string> options, object value, bool multi, bool cycle) GetHumanListItems(object obj)
+    private static (List<string> options, object value, bool multi, bool cycle, bool loop) GetHumanListItems(object obj)
     {
         var options  = new List<string>();
         var itemList = new List<object>();
@@ -220,7 +220,9 @@ public class SlateWindow : Form
                 if (selProp?.GetValue(itemList[i]) is true) { selIdx = i; break; }
             value = selIdx;
         }
-        return (options, value, multi, mode == "Cycle" || mode == "Sequence");
+        // Cycle wraps at the ends; Sequence stops there (matches GH's own
+        // arrow widget — Sequence's arrows disable/no-op past the last item).
+        return (options, value, multi, mode == "Cycle" || mode == "Sequence", mode == "Cycle");
     }
 
     private static void SelectOrToggleHumanItem(object obj, int index)
@@ -470,7 +472,7 @@ public class SlateWindow : Form
         if (win == null) return;
         foreach (var kv in win._humanValueLists)
         {
-            var (options, value, multi, cycle) = GetHumanListItems(kv.Value);
+            var (options, value, multi, cycle, loop) = GetHumanListItems(kv.Value);
             var name = kv.Value.NickName;
             var fingerprint = name + "" + multi + "" + JsonSerializer.Serialize(value) + "" + string.Join("", options);
             if (_lastPushedHumanLists.TryGetValue(kv.Key, out var last) && last == fingerprint) continue;
@@ -483,7 +485,8 @@ public class SlateWindow : Form
                 options,
                 value,
                 multiSelect = multi,
-                cycle
+                cycle,
+                loop
             }));
         }
     }
@@ -643,7 +646,10 @@ public class SlateWindow : Form
 
     private async Task InitWebViewAsync()
     {
-        string userDataFolder = Path.Combine(Path.GetTempPath(), "SlateWebView2");
+        // LocalAppData, not Temp — Temp is fair game for disk-cleanup tools, which
+        // would silently wipe the WebView2 profile (and anything Slate stores in it,
+        // like localStorage) out from under a running Rhino session.
+        string userDataFolder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Slate", "WebView2");
         var env = await CoreWebView2Environment.CreateAsync(null, userDataFolder);
         await _webView.EnsureCoreWebView2Async(env);
 
@@ -871,6 +877,11 @@ public class SlateWindow : Form
     private static bool IsCycleMode(GH_ValueListMode mode) =>
         mode == GH_ValueListMode.Cycle || mode == GH_ValueListMode.Sequence;
 
+    // Cycle wraps at the ends; Sequence stops there (matches GH's own arrow
+    // widget — Sequence's arrows disable/no-op past the last item).
+    private static bool IsLoopMode(GH_ValueListMode mode) =>
+        mode == GH_ValueListMode.Cycle;
+
     // For CheckList, item order carries no meaning, so scanning ListItems top-to-bottom
     // is fine. Sequence's whole point is the CLICK order (its downstream value depends
     // on it), which ListItems can't give us — SelectedItems is GH's own order-preserving
@@ -894,7 +905,7 @@ public class SlateWindow : Form
 
         var options = valueList.ListItems.Select(i => i.Name);
         var (value, multi) = GetValueListSelection(valueList);
-        PostToJs(SlateEvent.ValueListAdded(tabId, id, valueList.NickName, options, value, multi, IsCycleMode(valueList.ListMode), groupId));
+        PostToJs(SlateEvent.ValueListAdded(tabId, id, valueList.NickName, options, value, multi, IsCycleMode(valueList.ListMode), IsLoopMode(valueList.ListMode), groupId));
     }
 
     public void AddPanel(string tabId, string? groupId, GH_Panel panel)
@@ -919,8 +930,8 @@ public class SlateWindow : Form
         string id = humanValueList.InstanceGuid.ToString();
         _humanValueLists[id] = humanValueList;
 
-        var (options, value, multi, cycle) = GetHumanListItems(humanValueList);
-        PostToJs(SlateEvent.HumanValueListAdded(tabId, id, humanValueList.NickName, options, value, multi, cycle, groupId));
+        var (options, value, multi, cycle, loop) = GetHumanListItems(humanValueList);
+        PostToJs(SlateEvent.HumanValueListAdded(tabId, id, humanValueList.NickName, options, value, multi, cycle, loop, groupId));
     }
 
     public void AddColourPicker(string tabId, string? groupId, GH_ColourSwatch picker)
@@ -1059,7 +1070,8 @@ public class SlateWindow : Form
                                 : JsonValue.Create((int)value);
                             s["name"]        = vl.NickName;
                             s["multiSelect"] = multi;
-                            s["cycle"]       = vl.ListMode == GH_ValueListMode.Cycle;
+                            s["cycle"]       = IsCycleMode(vl.ListMode);
+                            s["loop"]        = IsLoopMode(vl.ListMode);
                             s["options"]     = new JsonArray(vl.ListItems.Select(li => JsonValue.Create(li.Name)).ToArray());
                         }
                         else arr.RemoveAt(i);
@@ -1091,13 +1103,14 @@ public class SlateWindow : Form
                         if (docHumanValueLists.TryGetValue(id, out var hvl))
                         {
                             _humanValueLists[id] = hvl;
-                            var (options, value, multi, cycle) = GetHumanListItems(hvl);
+                            var (options, value, multi, cycle, loop) = GetHumanListItems(hvl);
                             s["value"] = multi
                                 ? new JsonArray(((List<int>)value).Select(v => JsonValue.Create(v)).ToArray())
                                 : JsonValue.Create((int)value);
                             s["name"]        = hvl.NickName;
                             s["multiSelect"] = multi;
                             s["cycle"]       = cycle;
+                            s["loop"]        = loop;
                             s["options"]     = new JsonArray(options.Select(o => JsonValue.Create(o)).ToArray());
                         }
                         else arr.RemoveAt(i);
@@ -1175,6 +1188,13 @@ public class SlateWindow : Form
                 ProcessNode(layoutNode);
             else
                 ProcessNode(state);
+
+            // Old (pre-sizeA) split nodes only have a fractional "ratio" — converting
+            // that to pixels needs the window size it was measured against. By this
+            // point EnsureVisible() has already applied the saved win_w/win_h (clamped)
+            // to the actual window, so the live size IS that reference size.
+            state["winW"] = Width;
+            state["winH"] = Height;
 
             state["type"] = "restore_state";
             PostToJs(state.ToJsonString());

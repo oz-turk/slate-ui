@@ -84,7 +84,11 @@
   function onCycle(delta) {
     if (!options.length) return
     const current = typeof slider.value === 'number' ? slider.value : -1
-    dispatch('change', (current + delta + options.length) % options.length)
+    const next = current + delta
+    // Cycle wraps at the ends; Sequence (loop=false) stops there instead.
+    const wrapped = slider.loop ? (next + options.length) % options.length : Math.max(0, Math.min(options.length - 1, next))
+    if (wrapped === current) return
+    dispatch('change', wrapped)
   }
 
   function onCycleWheel(e) {
@@ -134,11 +138,11 @@
 
     {#if !slider.multiSelect && slider.cycle}
       <div class="picker cycle" on:wheel|stopPropagation={onCycleWheel} title="Scroll, or use the arrows, to change the value">
-        <button class="cycle-arrow" on:click|stopPropagation={() => onCycle(-1)} tabindex="-1" title="Previous value">
+        <button class="cycle-arrow" disabled={!slider.loop && slider.value <= 0} on:click|stopPropagation={() => onCycle(-1)} tabindex="-1" title="Previous value">
           <svg width="6" height="10" viewBox="0 0 6 10" fill="currentColor"><path d="M6 0L0 5L6 10Z"/></svg>
         </button>
         <span class="cycle-value">{options[slider.value] ?? ''}</span>
-        <button class="cycle-arrow" on:click|stopPropagation={() => onCycle(1)} tabindex="-1" title="Next value">
+        <button class="cycle-arrow" disabled={!slider.loop && slider.value >= options.length - 1} on:click|stopPropagation={() => onCycle(1)} tabindex="-1" title="Next value">
           <svg width="6" height="10" viewBox="0 0 6 10" fill="currentColor"><path d="M0 0L6 5L0 10Z"/></svg>
         </button>
       </div>
@@ -296,6 +300,8 @@
     cursor: pointer;
   }
   .cycle-arrow:hover { color: var(--accent-light); }
+  .cycle-arrow:disabled { color: rgba(var(--text-rgb), 0.15); cursor: default; }
+  .cycle-arrow:disabled:hover { color: rgba(var(--text-rgb), 0.15); }
 
   /* default: no cap, fits every option so nothing needs scrolling — once the
      user drags the handle below, slider.height takes over as a fixed,
