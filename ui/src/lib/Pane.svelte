@@ -11,7 +11,7 @@
   import CornerHandle from './CornerHandle.svelte'
   import ContextMenu  from './ContextMenu.svelte'
   import { layout, updatePane, findLeaf, newTabId, splitPane, newSplitId, setSplitSize, collapsePane, findNeighborPane, moveCrossPaneItem, extractSlidersByIds } from '../stores/layout.js'
-  import { tabDrag, itemDrag, collapsePreview } from '../stores/dragState.js'
+  import { tabDrag, itemDrag } from '../stores/dragState.js'
   import { computeAlignedSnapTargets, snapRaw } from './splitSnap.js'
   import { mode, deleteRequest, captureRequest, clearSelectionTick, hoverHint, theme } from '../stores/uiState.js'
   import { postToCs, postStateSnapshot } from './ipc.js'
@@ -54,13 +54,6 @@
   // rendering solid black in light mode across several rebuilds, so this
   // sidesteps whatever cascade issue that was rather than keep guessing at it.
   $: edgeTint   = $theme === 'light' ? 'rgba(0, 0, 0, 0.08)'   : 'rgba(255, 255, 255, 0.04)'
-  $: dangerTint = $theme === 'light' ? 'rgba(194, 59, 59, 0.6)' : 'rgba(255, 59, 59, 0.6)'
-  // Collapse intent overlay used to be border-only — a 2px line is easy to
-  // lose against overflow:hidden + border-radius clipping at the pane edges
-  // (the one working analogue, .drop-overlay.zone-center, always pairs its
-  // border with a background fill). Adding the same fill here so there's a
-  // large painted area, not just a thin outline, to catch.
-  $: dangerFill = $theme === 'light' ? 'rgba(194, 59, 59, 0.16)' : 'rgba(255, 59, 59, 0.14)'
 
   // "x"/"c" hotkeys — App.svelte resolves what's under the mouse via the DOM
   // (data-pane-id / data-slider-id) and sets these; whichever Pane matches acts.
@@ -500,13 +493,11 @@
 
   function onCornerPreview(detail) {
     if (!detail) {
-      collapsePreview.set(null)
       hoverHint.set(null)
       return
     }
     if (detail.kind === 'collapse') {
       const neighborId = findNeighborPane($layout, paneId, detail.dir, detail.side)
-      collapsePreview.set(neighborId ?? null)
       hoverHint.set(neighborId ? 'Release to collapse the neighbouring pane' : null)
       return
     }
@@ -561,7 +552,6 @@
     if (!detail || detail.kind !== 'collapse') return
     const neighborId = findNeighborPane($layout, paneId, detail.dir, detail.side)
     if (neighborId) collapsePane(neighborId)
-    collapsePreview.set(null)
     postStateSnapshot()
   }
 
@@ -754,11 +744,6 @@
     {/if}
   </section>
 
-  <!-- collapse intent overlay (shown on the pane that WOULD be collapsed) -->
-  {#if $collapsePreview === paneId}
-    <div class="intent-overlay" style="border: 2px solid {dangerTint}; background: {dangerFill}"></div>
-  {/if}
-
   <!-- cross-pane item drag overlay (only when hovering) -->
   {#if itemDragHover}
     <div class="drop-overlay zone-center"></div>
@@ -820,16 +805,6 @@
     line-height: 1.7;
   }
   .empty strong { color: rgba(var(--text-rgb), 0.45); font-weight: 500; }
-
-  /* corner collapse intent overlay — border/background colour come from
-     dangerTint/dangerFill (JS, theme-driven) via inline style, not CSS vars,
-     see edgeTint's note */
-  .intent-overlay {
-    position: absolute;
-    inset: 0;
-    pointer-events: none;
-    z-index: 15;
-  }
 
   /* cross-pane drop overlay */
   .drop-overlay {
