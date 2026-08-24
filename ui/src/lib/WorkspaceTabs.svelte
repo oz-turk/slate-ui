@@ -1,6 +1,7 @@
 <script>
   import { workspaces, activeWorkspaceId, addWorkspace, removeWorkspace, renameWorkspace, setActiveWorkspace } from '../stores/layout.js'
   import { postStateSnapshot } from './ipc.js'
+  import { hoverHint } from '../stores/uiState.js'
 
   export let mode = 'preview'
 
@@ -47,6 +48,8 @@
         on:click={() => activate(w.id)}
         on:dblclick={() => startRename(w)}
         on:keydown={e => e.key === 'Enter' && activate(w.id)}
+        on:mouseenter={() => hoverHint.set(mode === 'edit' ? 'Double-click: rename  ·  Ctrl+1–9: switch workspace' : 'Ctrl+1–9: switch workspace')}
+        on:mouseleave={() => hoverHint.set(null)}
     >
       {#if editingId === w.id}
         <!-- svelte-ignore a11y-autofocus -->
@@ -62,16 +65,19 @@
   {/each}
 
   {#if mode === 'edit'}
-    <button class="add-ws" on:click={add} title="Add workspace">+</button>
+    <button class="add-ws" on:click={add} title="Add workspace"
+        on:mouseenter={() => hoverHint.set('New workspace')}
+        on:mouseleave={() => hoverHint.set(null)}>+</button>
   {/if}
 </div>
 
 <style>
   .workspace-tabs {
     display: flex;
-    align-items: stretch;
-    gap: 1px;
-    padding: 0 4px;
+    align-items: center;
+    height: 24px;
+    gap: 3px;
+    padding: 0 8px;
     overflow-x: auto;
     scrollbar-width: none;
     flex: 1;
@@ -83,28 +89,29 @@
     display: flex;
     align-items: center;
     gap: 4px;
-    padding: 0 10px;
-    height: 24px;
+    padding: 0 9px;
+    height: 18px;
     cursor: pointer;
-    border-bottom: 2px solid transparent;
+    border-radius: 3px;
+    background: var(--ws-tab-bg, rgba(0, 0, 0, 0.15));
     color: rgba(var(--text-rgb), 0.36);
     font-size: 11px;
     font-weight: 600;
     white-space: nowrap;
-    transition: color 0.15s, border-color 0.15s;
+    transition: color 0.15s, background 0.1s;
     flex-shrink: 0;
     user-select: none;
   }
-  .ws-tab:hover  { color: rgba(var(--text-rgb), 0.65); }
-  .ws-tab.active { color: var(--text); border-bottom-color: var(--accent); }
+  .ws-tab:hover  { color: rgba(var(--text-rgb), 0.65); background: var(--ws-tab-bg-hover, rgba(0, 0, 0, 0.25)); }
+  .ws-tab.active { color: var(--text); background: var(--ws-tab-bg-active, rgba(255, 255, 255, 0.14)); }
 
   .label { pointer-events: none; }
 
   .remove {
     display: flex; align-items: center; justify-content: center;
-    width: 14px; height: 14px;
+    width: 13px; height: 13px;
     border: none; background: transparent;
-    color: rgba(var(--text-rgb), 0.29); font-size: 13px; line-height: 1;
+    color: rgba(var(--text-rgb), 0.29); font-size: 12px; line-height: 1;
     cursor: pointer; border-radius: 3px;
     transition: background 0.1s, color 0.1s;
     padding: 0;
@@ -113,15 +120,15 @@
 
   .add-ws {
     display: flex; align-items: center; justify-content: center;
-    width: 20px; height: 24px;
+    width: 18px; height: 18px;
     border: none; background: transparent;
-    color: rgba(var(--text-rgb), 0.29); font-size: 14px;
+    border-radius: 3px;
+    color: rgba(var(--text-rgb), 0.29); font-size: 13px;
     cursor: pointer; flex-shrink: 0;
-    transition: color 0.1s;
+    transition: color 0.1s, background 0.1s;
     padding: 0;
-    align-self: center;
   }
-  .add-ws:hover { color: rgba(var(--text-rgb), 0.58); }
+  .add-ws:hover { color: rgba(var(--text-rgb), 0.58); background: rgba(var(--text-rgb), 0.08); }
 
   .rename-input {
     background: var(--panel-bg);

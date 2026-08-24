@@ -2,6 +2,7 @@
   import { createEventDispatcher } from 'svelte'
   import ContextMenu from './ContextMenu.svelte'
   import ColourPickerPopup from './ColourPickerPopup.svelte'
+  import { hoverHint } from '../stores/uiState.js'
   const dispatch = createEventDispatcher()
 
   export let tabs        = []
@@ -87,10 +88,12 @@
       class:drag-over={dropTabId === tab.id}
       class:being-dragged={dragTabId === tab.id}
       draggable={canDragTabs && mode === 'edit' && editingId !== tab.id}
-      style={tab.id === activeTabId && tab.color ? `border-bottom-color: ${tab.color}` : ''}
+      style={tab.id === activeTabId && tab.color ? `background: ${tab.color}2a` : ''}
       on:click={() => dispatch('select', tab.id)}
       on:dblclick={() => startRename(tab)}
       on:contextmenu={e => onTabContextMenu(e, tab)}
+      on:mouseenter={() => mode === 'edit' && hoverHint.set('Double-click: rename  ·  Drag: reorder or move to another pane  ·  Right-click: colour')}
+      on:mouseleave={() => hoverHint.set(null)}
       on:pointerdown={e => onTabPointerDown(e, tab)}
       on:dragstart={e => onTabDragStart(e, tab)}
       on:dragend={onTabDragEnd}
@@ -126,9 +129,13 @@
   {/each}
 
   {#if mode === 'edit'}
-    <button class="add-tab" on:click={() => dispatch('add')} title="Add tab">+</button>
+    <button class="add-tab" on:click={() => dispatch('add')} title="Add tab"
+        on:mouseenter={() => hoverHint.set('New tab')}
+        on:mouseleave={() => hoverHint.set(null)}>+</button>
     <div class="sep"></div>
-    <button class="capture-btn" on:click={() => dispatch('capture')} title="Capture selected sliders">
+    <button class="capture-btn" on:click={() => dispatch('capture')} title="Capture selected sliders"
+        on:mouseenter={() => hoverHint.set('Capture selected sliders into a new tab')}
+        on:mouseleave={() => hoverHint.set(null)}>
       + Capture
     </button>
   {/if}
@@ -147,9 +154,10 @@
 <style>
   .tabbar {
     display: flex;
-    align-items: stretch;
-    gap: 1px;
-    padding: 0 8px;
+    align-items: center;
+    height: 20px;
+    gap: 3px;
+    padding: 0 10px;
     overflow-x: auto;
     scrollbar-width: none;
   }
@@ -159,21 +167,23 @@
     display: flex;
     align-items: center;
     gap: 4px;
-    padding: 0 10px;
-    height: 24px;
+    padding: 0 8px;
+    height: 14px;
     cursor: pointer;
-    border-bottom: 2px solid transparent;
+    border-radius: 3px;
+    border: 1px solid transparent;
+    background: rgba(var(--text-rgb), 0.045);
     color: rgba(var(--text-rgb), 0.36);
-    font-size: 11px;
+    font-size: 10px;
     white-space: nowrap;
     transition: color 0.15s, border-color 0.15s, background 0.1s;
     flex-shrink: 0;
     user-select: none;
   }
-  .tab:hover              { color: rgba(var(--text-rgb), 0.65); }
-  .tab.active             { color: var(--text); border-bottom-color: var(--border-active); }
+  .tab:hover              { color: rgba(var(--text-rgb), 0.65); background: rgba(var(--text-rgb), 0.08); }
+  .tab.active              { color: var(--text); background: rgba(var(--text-rgb), 0.14); }
   .tab.drag-target        { color: rgba(var(--text-rgb), 0.43); }
-  .tab.drag-over          { background: rgba(var(--accent-rgb), 0.15); color: var(--accent-light); border-bottom-color: rgba(var(--accent-rgb), 0.53); }
+  .tab.drag-over          { background: rgba(var(--accent-rgb), 0.15); color: var(--accent-light); border-color: rgba(var(--accent-rgb), 0.53); }
   .tab.being-dragged      { opacity: 0.4; }
 
   .label { pointer-events: none; }
@@ -188,9 +198,9 @@
 
   .remove {
     display: flex; align-items: center; justify-content: center;
-    width: 14px; height: 14px;
+    width: 10px; height: 10px;
     border: none; background: transparent;
-    color: rgba(var(--text-rgb), 0.29); font-size: 13px; line-height: 1;
+    color: rgba(var(--text-rgb), 0.29); font-size: 10px; line-height: 1;
     cursor: pointer; border-radius: 3px;
     transition: background 0.1s, color 0.1s;
     padding: 0;
@@ -199,26 +209,27 @@
 
   .add-tab {
     display: flex; align-items: center; justify-content: center;
-    width: 20px; height: 24px;
+    width: 14px; height: 14px;
     border: none; background: transparent;
-    color: rgba(var(--text-rgb), 0.29); font-size: 14px;
+    border-radius: 3px;
+    color: rgba(var(--text-rgb), 0.29); font-size: 11px;
     cursor: pointer; flex-shrink: 0;
-    transition: color 0.1s;
+    transition: color 0.1s, background 0.1s;
     padding: 0;
   }
-  .add-tab:hover { color: rgba(var(--text-rgb), 0.58); }
+  .add-tab:hover { color: rgba(var(--text-rgb), 0.58); background: rgba(var(--text-rgb), 0.08); }
 
-  .sep { width: 1px; height: 14px; background: var(--grid); margin: 0 2px; flex-shrink: 0; }
+  .sep { width: 1px; height: 10px; background: var(--grid); margin: 0 2px; flex-shrink: 0; }
 
   .capture-btn {
-    height: 20px;
+    height: 14px;
     align-self: center;
-    padding: 0 7px;
+    padding: 0 6px;
     border: 1px solid rgba(var(--accent-rgb), 0.27);
     border-radius: 3px;
     background: transparent;
     color: var(--accent-light);
-    font-size: 10px;
+    font-size: 9px;
     font-family: inherit;
     cursor: pointer;
     transition: border-color 0.15s, color 0.15s;

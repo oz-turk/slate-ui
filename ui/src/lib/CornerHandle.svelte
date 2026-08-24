@@ -1,5 +1,6 @@
 <script>
   import { createEventDispatcher } from 'svelte'
+  import { hoverHint } from '../stores/uiState.js'
 
   export let corner   // 'tl' | 'tr' | 'bl' | 'br'
 
@@ -87,8 +88,10 @@
   on:pointermove={onPointerMove}
   on:pointerup={onPointerUp}
   on:pointercancel={onPointerCancel}
+  on:mouseenter={() => !active && hoverHint.set('Drag inward: split this pane  ·  drag outward: collapse a neighbour')}
+  on:mouseleave={() => !active && hoverHint.set(null)}
 >
-  <svg viewBox="0 0 6 6" fill="currentColor">
+  <svg viewBox="0 0 6 6" fill="currentColor" stroke="currentColor" stroke-width="1" stroke-linejoin="round" stroke-linecap="round">
     {#if corner === 'tl'}<polygon points="0,0 6,0 0,6"/>{/if}
     {#if corner === 'tr'}<polygon points="0,0 6,0 6,6"/>{/if}
     {#if corner === 'bl'}<polygon points="0,6 6,6 0,0"/>{/if}
@@ -106,14 +109,20 @@
     color: rgba(var(--text-rgb), 0.43);
     opacity: 0.3;
     transition: opacity 0.12s, color 0.12s;
-    display: flex;
-    align-items: center;
-    justify-content: center;
   }
   .corner:hover, .corner.active { opacity: 1; color: rgba(var(--text-rgb), 0.78); }
   .corner.tl { top: 0;    left: 0;  }
   .corner.tr { top: 0;    right: 0; }
   .corner.bl { bottom: 0; left: 0;  }
   .corner.br { bottom: 0; right: 0; }
-  svg { width: 8px; height: 8px; pointer-events: none; }
+
+  /* Anchored right at the true corner (not centred in the hit area) so it
+     doesn't sit on top of the floating tab pills — the 20x20 box above is
+     just the grab target, generous for the pointer, the glyph itself hugs
+     the actual pixel corner with a small margin. */
+  svg { position: absolute; width: 6px; height: 6px; pointer-events: none; }
+  .corner.tl svg { top: 3px;    left: 3px;  }
+  .corner.tr svg { top: 3px;    right: 3px; }
+  .corner.bl svg { bottom: 3px; left: 3px;  }
+  .corner.br svg { bottom: 3px; right: 3px; }
 </style>

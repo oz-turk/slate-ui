@@ -149,17 +149,19 @@
     {/if}
   </div>
 
-  <!-- svelte-ignore a11y-no-static-element-interactions -->
-  <div class="resize-handle" class:resizing
-      on:pointerdown={onResizeDown}
-      on:pointermove={onResizeMove}
-      on:pointerup={onResizeUp}
-      on:pointercancel={onResizeUp}
-      on:click|stopPropagation
-      title="Drag to resize — hold Ctrl to snap to slider-row increments"
-  >
-    <span class="grip"></span>
-  </div>
+  {#if mode === 'edit'}
+    <!-- svelte-ignore a11y-no-static-element-interactions -->
+    <div class="resize-handle" class:resizing
+        on:pointerdown={onResizeDown}
+        on:pointermove={onResizeMove}
+        on:pointerup={onResizeUp}
+        on:pointercancel={onResizeUp}
+        on:click|stopPropagation
+        title="Drag to resize — hold Ctrl to snap to slider-row increments"
+    >
+      <span class="grip"></span>
+    </div>
+  {/if}
 </div>
 
 <style>
