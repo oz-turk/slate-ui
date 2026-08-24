@@ -1,30 +1,11 @@
 <script>
-  import { createEventDispatcher, onMount } from 'svelte'
+  import { createEventDispatcher } from 'svelte'
+  import { clickOutside } from './actions.js'
   const dispatch = createEventDispatcher()
 
   export let x     = 0
   export let y     = 0
   export let items = []   // [{ label, action, danger? }] — or the string 'sep' for a divider
-
-  let menuEl
-
-  function onDocPointerDown(e) {
-    if (menuEl && !menuEl.contains(e.target)) dispatch('close')
-  }
-  function onKeydown(e) {
-    if (e.key === 'Escape') dispatch('close')
-  }
-
-  onMount(() => {
-    // capture phase so this fires before the click that opened us (context menus
-    // are opened by a native `contextmenu` event, not a click, so no self-close race)
-    window.addEventListener('pointerdown', onDocPointerDown, true)
-    window.addEventListener('keydown', onKeydown)
-    return () => {
-      window.removeEventListener('pointerdown', onDocPointerDown, true)
-      window.removeEventListener('keydown', onKeydown)
-    }
-  })
 
   function click(item) {
     item.action()
@@ -32,7 +13,7 @@
   }
 </script>
 
-<div class="menu" bind:this={menuEl} style="left: {x}px; top: {y}px">
+<div class="menu" use:clickOutside={{ onClose: () => dispatch('close') }} style="left: {x}px; top: {y}px">
   {#each items as item}
     {#if item === 'sep'}
       <div class="sep"></div>

@@ -1,6 +1,8 @@
 <script>
   import { createEventDispatcher } from 'svelte'
   import { hoverHint } from '../stores/uiState.js'
+  import { dragTranslateYFor, rowDragOver, rowDragLeave, rowDrop } from './rowDrag.js'
+  import { resizeHint, measureResizeBounds, computeResizeHeight } from './resizeHandle.js'
   const dispatch = createEventDispatcher()
 
   export let slider    = {}   // { id, name, value, options, multiSelect }
@@ -14,30 +16,22 @@
 
   const MODULE = 44   // one slider row's height — the app's base sizing unit
 
-  // ── row drag (reorder) — mirrors SliderRow's mechanism ────────────────────────
+  // ── row drag (reorder) — see rowDrag.js ────────────────────────────────────────
   let rowEl
   let rowDragging    = false
   let dragTranslateY = 0
 
-  // ── checklist resize — default is unset (fits every option, no scroll);
-  // once dragged, slider.height takes over as an explicit, scrollable height.
-  // Same custom handle as PanelRow: capped to the pane's visible area, Ctrl
-  // snaps to MODULE increments.
+  // ── checklist resize — see resizeHandle.js. default is unset (fits every
+  // option, no scroll); once dragged, slider.height takes over as an explicit,
+  // scrollable height. Same custom handle as PanelRow: capped to the pane's
+  // visible area, Ctrl snaps to MODULE increments.
   let resizing     = false
   let resizeStartY = 0
   let resizeStartH = 0
   let liveHeight   = 0
-
-  function resizeHint(h, snapped) {
-    return `${h}px${snapped ? ' (snapped)' : ''}  ·  Hold Ctrl to snap to slider-row size`
-  }
-
-  // header/margin/handle/padding/border around the resizable checklist body —
-  // not itself a multiple of MODULE, so snapping the body alone can never land
-  // the row's outer edge on the grid. Measured live (not hardcoded) so it
-  // keeps working if the surrounding layout ever changes.
   let resizeOverhead = 0
   let maxBodyHeight  = Infinity   // capped to the pane's visible area — can't drag past the window
+  let lastCtrlKey = false
 
   function onResizeDown(e) {
     e.preventDefault()
@@ -47,21 +41,13 @@
     resizeStartH  = slider.height ?? e.currentTarget.previousElementSibling?.offsetHeight ?? MODULE * 3
     liveHeight    = resizeStartH
     lastCtrlKey   = false
-    resizeOverhead = rowEl ? rowEl.offsetHeight - resizeStartH : 0
-    const contentEl = rowEl?.closest('.content')
-    maxBodyHeight = contentEl && rowEl
-      ? contentEl.getBoundingClientRect().bottom - rowEl.getBoundingClientRect().top - resizeOverhead
-      : Infinity
+    ;({ resizeOverhead, maxBodyHeight } = measureResizeBounds(rowEl, resizeStartH))
     hoverHint.set(resizeHint(liveHeight, false))
     dispatch('resizeStart', slider.id)
     e.currentTarget.setPointerCapture(e.pointerId)
   }
-  let lastCtrlKey = false
   function computeHeight(e, snapped = e.ctrlKey) {
-    let h = resizeStartH + (e.clientY - resizeStartY)
-    if (snapped) h = Math.round((h + resizeOverhead) / MODULE) * MODULE - resizeOverhead
-    h = Math.max(MODULE, Math.round(h))
-    h = Math.min(h, Math.max(MODULE, Math.round(maxBodyHeight)))
+    const h = computeResizeHeight({ clientY: e.clientY, resizeStartY, resizeStartH, resizeOverhead, maxBodyHeight, snapped, MODULE })
     return { h, snapped }
   }
   function onResizeMove(e) {
@@ -87,13 +73,8 @@
   }
 
   function onHandleDrag(e) {
-    if (e.clientX === 0 && e.clientY === 0) return
-    if (!rowEl) return
-    const rect = rowEl.getBoundingClientRect()
-    const cap  = 14
-    if      (isLast  && e.clientY > rect.bottom) dragTranslateY =  Math.min(e.clientY - rect.bottom, cap)
-    else if (isFirst && e.clientY < rect.top)    dragTranslateY = -Math.min(rect.top - e.clientY, cap)
-    else                                          dragTranslateY = 0
+    const v = dragTranslateYFor(e, rowEl, isFirst, isLast)
+    if (v !== null) dragTranslateY = v
   }
 
   function onSelect(e) {
@@ -115,20 +96,6 @@
     dispatch('change', i)
   }
 
-  function rowDragOver(e) {
-    e.dataTransfer.dropEffect = 'move'
-    const rect = e.currentTarget.getBoundingClientRect()
-    dispatch('rowDragOver', e.clientY < rect.top + rect.height / 2 ? 'before' : 'after')
-  }
-
-  function rowDragLeave(e) {
-    if (!e.currentTarget.contains(e.relatedTarget)) dispatch('rowDragLeave')
-  }
-
-  function rowDrop(e) {
-    const rect = e.currentTarget.getBoundingClientRect()
-    dispatch('rowDrop', e.clientY < rect.top + rect.height / 2 ? 'before' : 'after')
-  }
 </script>
 
 <!-- svelte-ignore a11y-no-static-element-interactions -->
@@ -139,9 +106,9 @@
     style={dragTranslateY ? `transform: translateY(${dragTranslateY}px)` : ''}
     on:click={e => mode === 'edit' && dispatch('select', e.shiftKey || e.ctrlKey)}
     on:dragenter|preventDefault={e => e.dataTransfer.dropEffect = 'move'}
-    on:dragover|preventDefault={rowDragOver}
-    on:dragleave={rowDragLeave}
-    on:drop|preventDefault={rowDrop}
+    on:dragover|preventDefault={e => rowDragOver(e, dispatch)}
+    on:dragleave={e => rowDragLeave(e, dispatch)}
+    on:drop|preventDefault={e => rowDrop(e, dispatch)}
 >
   <div class="header">
     {#if mode === 'edit'}

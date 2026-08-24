@@ -393,8 +393,9 @@ export function findNeighborPane(node, paneId, dir, side) {
 }
 
 // Pulls every slider whose id is in idSet out of a tab (top-level + any depth of
-// nested groups), preserving each list's relative order.
-function extractSlidersByIds(tab, idSet) {
+// nested groups), preserving each list's relative order. Exported so Pane.svelte's
+// own multi-select drag/move logic can reuse it instead of keeping a second copy.
+export function extractSlidersByIds(tab, idSet) {
   const extracted = []
   function stripSliders(sliders) {
     return sliders.filter(s => {

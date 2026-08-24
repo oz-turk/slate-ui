@@ -1,28 +1,8 @@
 <script>
-  import { onMount } from 'svelte'
   import { settingsOpen, theme } from '../stores/uiState.js'
   import { undoLimit } from '../stores/history.js'
   import { postStateSnapshot } from './ipc.js'
-
-  let panelEl
-
-  function onDocPointerDown(e) {
-    if (panelEl && !panelEl.contains(e.target) && !e.target.closest('[data-settings-toggle]')) {
-      settingsOpen.set(false)
-    }
-  }
-  function onKeydown(e) {
-    if (e.key === 'Escape') settingsOpen.set(false)
-  }
-
-  onMount(() => {
-    window.addEventListener('pointerdown', onDocPointerDown, true)
-    window.addEventListener('keydown', onKeydown)
-    return () => {
-      window.removeEventListener('pointerdown', onDocPointerDown, true)
-      window.removeEventListener('keydown', onKeydown)
-    }
-  })
+  import { clickOutside } from './actions.js'
 
   const shortcuts = [
     { keys: ['Tab'],          desc: 'Toggle Edit / Preview' },
@@ -50,7 +30,7 @@
   }
 </script>
 
-<div class="panel" bind:this={panelEl}>
+<div class="panel" use:clickOutside={{ onClose: () => settingsOpen.set(false), exclude: '[data-settings-toggle]' }}>
   <div class="section-title">Shortcuts</div>
   <div class="shortcuts">
     {#each shortcuts as s}

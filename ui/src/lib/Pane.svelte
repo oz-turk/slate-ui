@@ -10,7 +10,7 @@
   import ActionBar    from './ActionBar.svelte'
   import CornerHandle from './CornerHandle.svelte'
   import ContextMenu  from './ContextMenu.svelte'
-  import { layout, updatePane, findLeaf, newTabId, splitPane, newSplitId, setSplitSize, collapsePane, findNeighborPane, moveCrossPaneItem } from '../stores/layout.js'
+  import { layout, updatePane, findLeaf, newTabId, splitPane, newSplitId, setSplitSize, collapsePane, findNeighborPane, moveCrossPaneItem, extractSlidersByIds } from '../stores/layout.js'
   import { tabDrag, itemDrag, collapsePreview } from '../stores/dragState.js'
   import { mode, deleteRequest, captureRequest, clearSelectionTick } from '../stores/uiState.js'
   import { postToCs, postStateSnapshot } from './ipc.js'
@@ -118,25 +118,6 @@
     }
     return [walk(groups), found]
   }
-  // Pulls every slider whose id is in idSet out of a tab (top-level + any depth of
-  // nested groups), preserving each list's relative order. Used so a multi-selection
-  // drag can move/reorder together even when its members live in different places.
-  function extractSlidersByIds(tab, idSet) {
-    const extracted = []
-    function stripSliders(sliders) {
-      return sliders.filter(s => {
-        if (idSet.has(s.id)) { extracted.push(s); return false }
-        return true
-      })
-    }
-    function stripGroups(groups) {
-      return groups.map(g => ({ ...g, sliders: stripSliders(g.sliders), groups: stripGroups(g.groups ?? []) }))
-    }
-    const sliders = stripSliders(tab.sliders)
-    const groups  = stripGroups(tab.groups)
-    return [{ ...tab, sliders, groups }, extracted]
-  }
-
   // Inserts a block of sliders together, next to targetId, in whichever list
   // (top-level or targetGroupId's) it lives in — order within the block is kept.
   function insertSlidersAt(tab, targetGroupId, targetId, pos, items) {

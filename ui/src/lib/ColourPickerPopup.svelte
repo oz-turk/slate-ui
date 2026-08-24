@@ -1,13 +1,13 @@
 <script>
-  import { createEventDispatcher, onMount } from 'svelte'
+  import { createEventDispatcher } from 'svelte'
   import { hex8ToRgba, rgbaToHex8, rgbToHsl, hslToRgb } from './colorUtils.js'
+  import { clickOutside } from './actions.js'
   const dispatch = createEventDispatcher()
 
   export let x   = 0
   export let y   = 0
   export let hex = '#ffffffff'   // #RRGGBBAA
 
-  let panelEl
   let tab = 'hsla'   // 'hsla' | 'rgba' — HSLA opens first
 
   $: ({ r, g, b, a } = hex8ToRgba(hex))
@@ -60,21 +60,6 @@
     }
   }
 
-  function onDocPointerDown(e) {
-    if (panelEl && !panelEl.contains(e.target)) dispatch('close')
-  }
-  function onKeydown(e) {
-    if (e.key === 'Escape') dispatch('close')
-  }
-  onMount(() => {
-    window.addEventListener('pointerdown', onDocPointerDown, true)
-    window.addEventListener('keydown', onKeydown)
-    return () => {
-      window.removeEventListener('pointerdown', onDocPointerDown, true)
-      window.removeEventListener('keydown', onKeydown)
-    }
-  })
-
   // gradient backgrounds — each track's own visual IS the value indicator
   $: hueBg  = `linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00)`
   $: satBg  = `linear-gradient(to right, hsl(${h}, 0%, ${l}%), hsl(${h}, 100%, ${l}%))`
@@ -86,7 +71,7 @@
                  repeating-conic-gradient(#5a5a5a 0% 25%, #3a3a3a 0% 50%) 50% / 8px 8px`
 </script>
 
-<div class="popup" bind:this={panelEl} style="left: {x}px; top: {y}px">
+<div class="popup" use:clickOutside={{ onClose: () => dispatch('close') }} style="left: {x}px; top: {y}px">
   <div class="tabs">
     <button class="tab" class:active={tab === 'hsla'} on:click={() => tab = 'hsla'}>HSLA</button>
     <button class="tab" class:active={tab === 'rgba'} on:click={() => tab = 'rgba'}>RGBA</button>

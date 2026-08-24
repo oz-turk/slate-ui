@@ -1,5 +1,6 @@
 <script>
   import { createEventDispatcher } from 'svelte'
+  import { dragTranslateYFor, rowDragOver, rowDragLeave, rowDrop } from './rowDrag.js'
   const dispatch = createEventDispatcher()
 
   export let slider    = {}   // { id, name, value } — value is 0 (up) or 1 (pressed)
@@ -8,19 +9,14 @@
   export let isFirst   = false
   export let isLast    = false
 
-  // ── row drag (reorder) — mirrors SliderRow's mechanism ────────────────────────
+  // ── row drag (reorder) — see rowDrag.js ────────────────────────────────────────
   let rowEl
   let rowDragging    = false
   let dragTranslateY = 0
 
   function onHandleDrag(e) {
-    if (e.clientX === 0 && e.clientY === 0) return
-    if (!rowEl) return
-    const rect = rowEl.getBoundingClientRect()
-    const cap  = 14
-    if      (isLast  && e.clientY > rect.bottom) dragTranslateY =  Math.min(e.clientY - rect.bottom, cap)
-    else if (isFirst && e.clientY < rect.top)    dragTranslateY = -Math.min(rect.top - e.clientY, cap)
-    else                                          dragTranslateY = 0
+    const v = dragTranslateYFor(e, rowEl, isFirst, isLast)
+    if (v !== null) dragTranslateY = v
   }
 
   // ── press / release (momentary, not a toggle) ─────────────────────────────────
@@ -38,21 +34,6 @@
     pressed = false
     dispatch('change', 0)
   }
-
-  function rowDragOver(e) {
-    e.dataTransfer.dropEffect = 'move'
-    const rect = e.currentTarget.getBoundingClientRect()
-    dispatch('rowDragOver', e.clientY < rect.top + rect.height / 2 ? 'before' : 'after')
-  }
-
-  function rowDragLeave(e) {
-    if (!e.currentTarget.contains(e.relatedTarget)) dispatch('rowDragLeave')
-  }
-
-  function rowDrop(e) {
-    const rect = e.currentTarget.getBoundingClientRect()
-    dispatch('rowDrop', e.clientY < rect.top + rect.height / 2 ? 'before' : 'after')
-  }
 </script>
 
 <!-- svelte-ignore a11y-no-static-element-interactions -->
@@ -63,9 +44,9 @@
     style={dragTranslateY ? `transform: translateY(${dragTranslateY}px)` : ''}
     on:click={e => mode === 'edit' && dispatch('select', e.shiftKey || e.ctrlKey)}
     on:dragenter|preventDefault={e => e.dataTransfer.dropEffect = 'move'}
-    on:dragover|preventDefault={rowDragOver}
-    on:dragleave={rowDragLeave}
-    on:drop|preventDefault={rowDrop}
+    on:dragover|preventDefault={e => rowDragOver(e, dispatch)}
+    on:dragleave={e => rowDragLeave(e, dispatch)}
+    on:drop|preventDefault={e => rowDrop(e, dispatch)}
 >
   {#if mode === 'edit'}
     <!-- svelte-ignore a11y-no-static-element-interactions -->
