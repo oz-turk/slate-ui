@@ -8,6 +8,31 @@ const wid  = () => 'ws_'    + (++_wc)
 export const newTabId = () => 'tab_' + Date.now() + '_' + (++_tc)
 export const newSplitId = () => sid()
 
+// Restoring a saved file hands back ids that were minted by a PAST page
+// session's own counters (e.g. "ws_2", "pane_5") — this session's _pc/_sc/_wc
+// start back at 0, so the next locally-generated id can collide with one
+// that's already in the restored tree (classic case: a file saved with two
+// workspaces "ws_1"/"ws_2" is reopened, and clicking "+" mints "ws_1" again).
+// A duplicate id breaks the {#each ... (id)} keyed block it lands in — that
+// component stops updating, which reads as the whole panel going unresponsive
+// for anything touching workspaces (switching, adding, capturing) while
+// unrelated state (e.g. edit/preview mode) keeps working fine. Bumping each
+// counter past the highest restored number closes that gap.
+function bumpCounterPastId(id, prefix, current) {
+  if (typeof id !== 'string' || !id.startsWith(prefix)) return current
+  const n = parseInt(id.slice(prefix.length), 10)
+  return Number.isFinite(n) && n > current ? n : current
+}
+function reconcileCounters(node) {
+  if (!node) return
+  if (node.type === 'leaf') { _pc = bumpCounterPastId(node.paneId, 'pane_', _pc); return }
+  if (node.type === 'split') {
+    _sc = bumpCounterPastId(node.splitId, 'split_', _sc)
+    reconcileCounters(node.a)
+    reconcileCounters(node.b)
+  }
+}
+
 // Smallest "{prefix} N" (N >= 1) not already present in existingLabels — so
 // naming fills gaps left by deletions instead of climbing forever.
 function nextAvailableName(existingLabels, prefix) {
@@ -187,6 +212,7 @@ export function splitWithTab(targetPaneId, dir, side, fromPaneId, tabId) {
 // Legacy restore path: an old save had a single tree, not a workspace list —
 // collapse it into the current (or a fresh) single workspace.
 export function restoreLayout(newLayout) {
+  reconcileCounters(newLayout)
   const id = get(activeWorkspaceId) ?? wid()
   workspaces.set([{ id, label: 'Workspace 1', layout: newLayout }])
   activeWorkspaceId.set(id)
@@ -194,6 +220,10 @@ export function restoreLayout(newLayout) {
 
 // Full restore from the new multi-workspace state format.
 export function restoreWorkspaces(workspaceList, activeId) {
+  for (const w of workspaceList) {
+    _wc = bumpCounterPastId(w.id, 'ws_', _wc)
+    reconcileCounters(w.layout)
+  }
   workspaces.set(workspaceList)
   activeWorkspaceId.set(activeId ?? workspaceList[0]?.id ?? null)
 }
