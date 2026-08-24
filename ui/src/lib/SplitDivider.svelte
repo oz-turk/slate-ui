@@ -1,14 +1,13 @@
 <script>
   import { setSplitSize } from '../stores/layout.js'
-  import { hoverHint, activeDragGroup } from '../stores/uiState.js'
+  import { hoverHint, activeDragGroup, mode } from '../stores/uiState.js'
+  import { ownRaw, computeAlignedSnapTargets, snapRaw } from './splitSnap.js'
 
   export let dir      // 'h' = vertical bar (left|right), 'v' = horizontal bar (top|bottom)
   export let splitId
 
   const MIN_PANE_PX     = 60
   const MODULE          = 44   // one slider row's height — same grid PanelRow/ValueListRow snap to
-  const CENTER_SNAP_PX  = 10   // magnetic pull toward dead-center — no modifier needed, always on
-  const EDGE_SNAP_PX    = 8    // magnetic pull toward any other on-screen-aligned divider — same, always on
 
   let el
   let dragging = false
@@ -69,34 +68,18 @@
     return reversals >= 2 && dist >= SHAKE_MIN_PX
   }
 
-  function ownRaw(divEl, dir) {
-    const p = divEl.parentElement
-    if (!p) return 0
-    const pr = p.getBoundingClientRect()
-    const r  = divEl.getBoundingClientRect()
-    return dir === 'h' ? (r.left - pr.left) : (r.top - pr.top)
-  }
-
   // Unconditional (no modifier) proximity snap — every OTHER same-orientation
   // divider's current on-screen position, translated into MY raw coordinate
   // space (my own parent's origin), so dragging near one just clicks into
   // exact alignment with it. Independent of the Alt-group feature below:
-  // this only ever moves the divider actually being dragged.
+  // this only ever moves the divider actually being dragged. (Shared with
+  // Pane.svelte's corner-drag split-creation — see splitSnap.js.)
   function computeSnapTargets() {
     const parent = el.parentElement
     if (!parent) return []
     const myParentRect = parent.getBoundingClientRect()
     const myOrigin = dir === 'h' ? myParentRect.left : myParentRect.top
-    const targets = []
-    for (const other of document.querySelectorAll(`.divider.dir-${dir}`)) {
-      if (other === el) continue
-      const otherParent = other.parentElement
-      if (!otherParent) continue
-      const otherParentRect = otherParent.getBoundingClientRect()
-      const otherOrigin = dir === 'h' ? otherParentRect.left : otherParentRect.top
-      targets.push(otherOrigin + ownRaw(other, dir) - myOrigin)
-    }
-    return targets
+    return computeAlignedSnapTargets(dir, myOrigin, el)
   }
 
   function findAlignedDividers() {
@@ -122,6 +105,7 @@
   }
 
   function onPointerDown(e) {
+    if ($mode !== 'edit') return
     e.preventDefault()
     dragging = true
     lastCtrlKey = false
@@ -143,31 +127,18 @@
       ? (e.clientX - rect.left)
       : (e.clientY - rect.top)
 
-    // Hidden magnetic snap to dead-center (50/50) — no modifier needed, just a
-    // gentle pull when the pointer passes within a few px of the midpoint.
-    // Takes priority over the edge/row-grid snaps below when more than one's
-    // in play.
-    const center = dim / 2
-    const centered = Math.abs(raw - center) < CENTER_SNAP_PX
-
-    // Unconditional proximity snap to any other on-screen-aligned divider —
-    // same "always on, no modifier" spirit as the center snap, just against
-    // a moving target list instead of a fixed midpoint.
-    let edgeTarget = null
-    if (!centered) {
-      for (const t of snapTargets) {
-        if (Math.abs(raw - t) < EDGE_SNAP_PX) { edgeTarget = t; break }
-      }
-    }
+    // Center + aligned-edge snap — same unconditional magnetic pull the
+    // corner-drag split-creation flow uses (splitSnap.js), so a freshly
+    // created split and an existing divider snap identically.
+    const snap0 = snapRaw(raw, dim, snapTargets)
+    raw = snap0.raw
+    let label = snap0.label
 
     // Ctrl-snap to the row-height grid — horizontal dividers only (top/bottom
     // split), so stacked panes' rows land on the same grid and line up with
     // whatever's beside them, which pixel-exact dragging can't guarantee.
-    const snapped = !centered && edgeTarget === null && dir === 'v' && snapOverride
-
-    if (centered) raw = center
-    else if (edgeTarget !== null) raw = edgeTarget
-    else if (snapped) raw = Math.round(raw / MODULE) * MODULE
+    const gridSnapped = snap0.label === '' && dir === 'v' && snapOverride
+    if (gridSnapped) { raw = Math.round(raw / MODULE) * MODULE; label = ' (snapped)' }
 
     const size = Math.max(MIN_PANE_PX, Math.min(dim - MIN_PANE_PX, raw))
     setSplitSize(splitId, size)
@@ -185,7 +156,6 @@
       }
     }
 
-    const label = centered ? ' (centered)' : edgeTarget !== null ? ' (aligned)' : snapped ? ' (snapped)' : ''
     const groupHint = group.length ? `  ·  ${group.length + 1} aligned edges moving together`
                      : (detached && groupedDividers.length) ? '  ·  broken off'
                      : ''
@@ -226,6 +196,7 @@
 <div
   class="divider dir-{dir}"
   class:dragging
+  class:inert={$mode !== 'edit'}
   class:group-active={!dragging && $activeDragGroup.includes(splitId)}
   data-split-id={splitId}
   bind:this={el}
@@ -250,6 +221,8 @@
     transition: background 0.12s;
   }
   .divider:hover, .divider.dragging { background: var(--accent); }
+  .divider.inert { cursor: default; }
+  .divider.inert:hover { background: var(--bg); }
 
   /* Part of another divider's active group drag (not the one under the
      pointer) — same accent as .dragging so the whole aligned line reads as
@@ -257,14 +230,14 @@
   .divider.group-active { background: var(--accent); }
 
   .dir-h {
-    width: 4px;
+    width: 3px;
     cursor: ew-resize;
     align-self: stretch;
   }
   .dir-h::after { inset: 0 -4px; }
 
   .dir-v {
-    height: 4px;
+    height: 3px;
     cursor: ns-resize;
     align-self: stretch;
   }

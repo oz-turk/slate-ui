@@ -144,7 +144,7 @@
 <style>
   .row {
     display: grid;
-    grid-template-columns: 110px 44px 1fr 44px 68px;
+    grid-template-columns: var(--name-col-w, 110px) 44px 1fr 44px 68px;
     align-items: center;
     gap: 0;
     padding: 0 12px;
@@ -154,7 +154,7 @@
     position: relative;
   }
   .row:hover          { background: var(--bg); }
-  .row.edit           { grid-template-columns: 20px 110px 44px 1fr 44px 68px 24px; padding: 0 8px 0 6px; }
+  .row.edit           { grid-template-columns: 20px var(--name-col-w, 110px) 44px 1fr 44px 68px 24px; padding: 0 8px 0 6px; }
   .row.selected       { background: rgba(var(--accent-rgb), 0.15); }
   .row.selected:hover { background: rgba(var(--accent-rgb), 0.22); }
   .row.row-dragging   { opacity: 0.5; position: relative; z-index: 2; }
