@@ -5,9 +5,9 @@ namespace Slate.Bridge;
 
 // Shared brand mark: two rounded squares, offset diagonally (outline
 // upper-left... actually lower-left, fill upper-right), per the "Tur 3 / 1A"
-// design (Slate Logo.dc.html, Claude Design project 656ee7cb). Proportions
-// are normalized against the design's 64px reference frame so the same
-// helper draws crisply at GH-canvas size (24px) and titlebar-icon size (32px).
+// design (Slate Logo.dc.html). Proportions are normalized against the
+// design's 64px reference frame so the same helper draws crisply at
+// GH-canvas size (24px) and titlebar-icon size (32px).
 internal static class SlateLogo
 {
     // Fractions of the target square size, taken from the 64px reference:
