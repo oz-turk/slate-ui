@@ -181,7 +181,12 @@
     user-select: none;
   }
   .tab:hover              { color: rgba(var(--text-rgb), 0.65); background: rgba(var(--text-rgb), 0.08); }
-  .tab.active              { color: var(--text); background: rgba(var(--text-rgb), 0.14); }
+  /* Active uses the accent hue (not another shade of the same grey wash
+     hover/inactive already use) — same "this is the selected one" language
+     as .row.selected elsewhere in the app. Grey-on-grey here was too subtle
+     to reliably read at a glance, especially with several panes' tab bars
+     on screen at once, each easy to mistake as "no active tab visible". */
+  .tab.active              { color: var(--text); background: rgba(var(--accent-rgb), 0.18); border-color: rgba(var(--accent-rgb), 0.35); }
   .tab.drag-target        { color: rgba(var(--text-rgb), 0.43); }
   .tab.drag-over          { background: rgba(var(--accent-rgb), 0.15); color: var(--accent-light); border-color: rgba(var(--accent-rgb), 0.53); }
   .tab.being-dragged      { opacity: 0.4; }
