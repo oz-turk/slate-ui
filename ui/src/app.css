@@ -16,13 +16,37 @@
   --danger:         #ff3b3b;
   --danger-rgb:     255, 59, 59;
 
+  /* Component-separator hairline (pane border) — barely-there, just enough
+     to tell adjacent surfaces apart. Lightens in dark mode, darkens in light
+     mode — a plain white/black tint would go invisible against light mode's
+     already-near-white surfaces. */
+  --edge-tint: rgba(255, 255, 255, 0.04);
+
+  /* Workspace tab pill backgrounds — same "lighten in dark, darken in light"
+     reasoning for inactive/hover (always reads as a shaded box), but active
+     flips to a *stronger* darken in light mode instead of a lighten, since
+     lightening an already near-white surface is invisible. */
+  --ws-tab-bg:        rgba(0, 0, 0, 0.18);
+  --ws-tab-bg-hover:  rgba(0, 0, 0, 0.28);
+  --ws-tab-bg-active: rgba(255, 255, 255, 0.14);
+
   color-scheme: dark;
 }
 
 /* Light mode — paper-like, close to Grasshopper's own canvas tone: warm
    near-white surfaces, near-black text, a single muted accent hue. Kept
-   deliberately low-colour, same spirit as the dark theme. */
-main[data-theme="light"] {
+   deliberately low-colour, same spirit as the dark theme.
+
+   Scoped to :root (synced from the theme store onto <html> in App.svelte),
+   not main[data-theme] — custom properties only inherit downward, and
+   <main> is a *child* of <body>/<html>, not an ancestor. With the override
+   living on <main>, every rule that reads --bg/--edge-tint/etc. from an
+   element that ISN'T inside <main> (body's own background, any gap/margin/
+   rounded corner that shows main's un-set background before painted content
+   covers it) fell back to :root's permanently-dark values regardless of
+   theme — the "stuck black" that looked like it was bleeding through from
+   Windows/WebView2 itself. */
+:root[data-theme="light"] {
   --bg:             #e4e1d8;
   --bg-rgb:         228, 225, 216;
   --panel-bg:       #f7f5f0;
@@ -39,6 +63,12 @@ main[data-theme="light"] {
   --text-rgb:       42, 39, 36;
   --danger:         #c23b3b;
   --danger-rgb:     194, 59, 59;
+
+  --edge-tint: rgba(0, 0, 0, 0.08);
+
+  --ws-tab-bg:        rgba(0, 0, 0, 0.05);
+  --ws-tab-bg-hover:  rgba(0, 0, 0, 0.09);
+  --ws-tab-bg-active: rgba(0, 0, 0, 0.14);
 
   color-scheme: light;
 }

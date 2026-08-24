@@ -12,7 +12,8 @@
   import ContextMenu  from './ContextMenu.svelte'
   import { layout, updatePane, findLeaf, newTabId, splitPane, newSplitId, setSplitSize, collapsePane, findNeighborPane, moveCrossPaneItem, extractSlidersByIds } from '../stores/layout.js'
   import { tabDrag, itemDrag, collapsePreview } from '../stores/dragState.js'
-  import { mode, deleteRequest, captureRequest, clearSelectionTick } from '../stores/uiState.js'
+  import { computeAlignedSnapTargets, snapRaw } from './splitSnap.js'
+  import { mode, deleteRequest, captureRequest, clearSelectionTick, hoverHint, theme } from '../stores/uiState.js'
   import { postToCs, postStateSnapshot } from './ipc.js'
   import { flip } from 'svelte/animate'
   import { cubicOut } from 'svelte/easing'
@@ -30,6 +31,36 @@
   $: tabs        = pane?.tabs        ?? []
   $: activeTabId = pane?.activeTabId ?? null
   $: activeTab   = tabs.find(t => t.id === activeTabId) ?? tabs[0]
+
+  // SliderRow's name column is a fixed grid width (needs to line up across
+  // every row so the tracks align) — sized here per-tab from that tab's own
+  // longest slider name (top-level + nested in groups), rather than one
+  // constant for every tab, so "Slider1" doesn't leave a wide dead gap while
+  // a longer name elsewhere still fits. Rough char-count estimate, not a
+  // measured width — biased wide (not tight) since a little extra slack costs
+  // nothing but an under-estimate clips into the ellipsis.
+  function isSliderRowType(s) { return !ROW_COMPONENTS[s.type] }
+  function maxSliderNameLen(sliders, groups) {
+    let max = 0
+    for (const s of sliders ?? []) if (isSliderRowType(s)) max = Math.max(max, (s.name ?? '').length)
+    for (const g of groups ?? []) max = Math.max(max, maxSliderNameLen(g.sliders, g.groups))
+    return max
+  }
+  $: nameColWidth = Math.min(180, Math.max(70, maxSliderNameLen(activeTab?.sliders, activeTab?.groups) * 7 + 20))
+
+  // Driven straight from the theme store instead of the --edge-tint CSS
+  // custom property — that var resolves fine for every *other* consumer
+  // (--ws-tab-bg etc, same override block) but this specific border kept
+  // rendering solid black in light mode across several rebuilds, so this
+  // sidesteps whatever cascade issue that was rather than keep guessing at it.
+  $: edgeTint   = $theme === 'light' ? 'rgba(0, 0, 0, 0.08)'   : 'rgba(255, 255, 255, 0.04)'
+  $: dangerTint = $theme === 'light' ? 'rgba(194, 59, 59, 0.6)' : 'rgba(255, 59, 59, 0.6)'
+  // Collapse intent overlay used to be border-only — a 2px line is easy to
+  // lose against overflow:hidden + border-radius clipping at the pane edges
+  // (the one working analogue, .drop-overlay.zone-center, always pairs its
+  // border with a background fill). Adding the same fill here so there's a
+  // large painted area, not just a thin outline, to catch.
+  $: dangerFill = $theme === 'light' ? 'rgba(194, 59, 59, 0.16)' : 'rgba(255, 59, 59, 0.14)'
 
   // "x"/"c" hotkeys — App.svelte resolves what's under the mouse via the DOM
   // (data-pane-id / data-slider-id) and sets these; whichever Pane matches acts.
@@ -470,11 +501,13 @@
   function onCornerPreview(detail) {
     if (!detail) {
       collapsePreview.set(null)
+      hoverHint.set(null)
       return
     }
     if (detail.kind === 'collapse') {
       const neighborId = findNeighborPane($layout, paneId, detail.dir, detail.side)
       collapsePreview.set(neighborId ?? null)
+      hoverHint.set(neighborId ? 'Release to collapse the neighbouring pane' : null)
       return
     }
 
@@ -484,24 +517,39 @@
 
     const rect = paneEl.getBoundingClientRect()
     const dim  = detail.dir === 'h' ? rect.width : rect.height
+    const myOrigin = detail.dir === 'h' ? rect.left : rect.top
+    const newId = newSplitId()
+
+    // Same unconditional center + aligned-edge snap SplitDivider's own drag
+    // uses (splitSnap.js) — applied from the very first frame so a freshly
+    // created split snaps immediately instead of only once you grab its
+    // divider afterward. The new divider doesn't exist yet on the very first
+    // call (before splitPane() below), so it just finds nothing to exclude.
+    let lastSnapLabel = ''
     const ratioAt = (clientX, clientY) => {
-      let r = clampRatio(detail.dir === 'h' ? (clientX - rect.left) / dim : (clientY - rect.top) / dim)
-      // Hidden magnetic snap to dead-center (50/50) — same pull as
-      // SplitDivider's resize snap.
-      if (Math.abs(r - 0.5) * dim < CENTER_SNAP_PX) r = 0.5
-      return r
+      const raw0 = detail.dir === 'h' ? (clientX - rect.left) : (clientY - rect.top)
+      const excludeEl = document.querySelector(`.divider.dir-${detail.dir}[data-split-id="${newId}"]`)
+      const targets = computeAlignedSnapTargets(detail.dir, myOrigin, excludeEl)
+      const { raw, label } = snapRaw(raw0, dim, targets)
+      lastSnapLabel = label
+      return clampRatio(raw / dim)
     }
 
-    const newId = newSplitId()
     splitPane(paneId, detail.dir, detail.side, ratioAt(detail.clientX, detail.clientY) * dim, newId)
+    hoverHint.set(`Split ${detail.dir === 'h' ? 'horizontally' : 'vertically'} — drag to resize`)
 
-    function onWindowMove(e) { setSplitSize(newId, ratioAt(e.clientX, e.clientY) * dim) }
+    function onWindowMove(e) {
+      const size = ratioAt(e.clientX, e.clientY) * dim
+      setSplitSize(newId, size)
+      hoverHint.set(`${Math.round(size)}px${lastSnapLabel}`)
+    }
     function onWindowUp(e) {
       onWindowMove(e)   // final position from the release coords themselves
       window.removeEventListener('pointermove', onWindowMove)
       window.removeEventListener('pointerup', onWindowUp)
       window.removeEventListener('pointercancel', onWindowUp)
       splitInFlight = false
+      hoverHint.set(null)
       postStateSnapshot()
     }
     window.addEventListener('pointermove', onWindowMove)
@@ -518,7 +566,6 @@
   }
 
   function clampRatio(r) { return Math.max(0.1, Math.min(0.9, r)) }
-  const CENTER_SNAP_PX = 10   // magnetic pull toward dead-center — same value as SplitDivider's
 
   // ── cross-pane tab drag ───────────────────────────────────────────────────────
   import { moveTab, splitWithTab } from '../stores/layout.js'
@@ -591,16 +638,19 @@
   class="pane"
   data-pane-id={paneId}
   bind:this={paneEl}
+  style="border: 1px solid {edgeTint}"
   class:drop-target={isDropTarget || itemDragHover}
   on:dragover={onPaneDragOver}
   on:dragleave={onPaneDragLeave}
   on:drop={onPaneDrop}
   on:contextmenu={onPaneContextMenu}
 >
-  <CornerHandle corner="tl" on:preview={e => onCornerPreview(e.detail)} on:commit={e => onCornerCommit(e.detail)} />
-  <CornerHandle corner="tr" on:preview={e => onCornerPreview(e.detail)} on:commit={e => onCornerCommit(e.detail)} />
-  <CornerHandle corner="bl" on:preview={e => onCornerPreview(e.detail)} on:commit={e => onCornerCommit(e.detail)} />
-  <CornerHandle corner="br" on:preview={e => onCornerPreview(e.detail)} on:commit={e => onCornerCommit(e.detail)} />
+  {#if $mode === 'edit'}
+    <CornerHandle corner="tl" on:preview={e => onCornerPreview(e.detail)} on:commit={e => onCornerCommit(e.detail)} />
+    <CornerHandle corner="tr" on:preview={e => onCornerPreview(e.detail)} on:commit={e => onCornerCommit(e.detail)} />
+    <CornerHandle corner="bl" on:preview={e => onCornerPreview(e.detail)} on:commit={e => onCornerCommit(e.detail)} />
+    <CornerHandle corner="br" on:preview={e => onCornerPreview(e.detail)} on:commit={e => onCornerCommit(e.detail)} />
+  {/if}
 
   <header>
     <TabBar
@@ -632,8 +682,11 @@
   </header>
 
   <section class="content"
+    style="--name-col-w: {nameColWidth}px"
     on:dragenter|preventDefault={e => activeDrag && (e.dataTransfer.dropEffect = 'move')}
     on:dragover|preventDefault={e  => activeDrag && (e.dataTransfer.dropEffect = 'move')}
+    on:mouseenter={() => $mode === 'edit' && hoverHint.set('Right-click: split or close this pane')}
+    on:mouseleave={() => hoverHint.set(null)}
   >
     {#if !activeTab || (activeTab.sliders.length === 0 && activeTab.groups.length === 0)}
       <div class="empty">
@@ -703,7 +756,7 @@
 
   <!-- collapse intent overlay (shown on the pane that WOULD be collapsed) -->
   {#if $collapsePreview === paneId}
-    <div class="intent-overlay intent-collapse"></div>
+    <div class="intent-overlay" style="border: 2px solid {dangerTint}; background: {dangerFill}"></div>
   {/if}
 
   <!-- cross-pane item drag overlay (only when hovering) -->
@@ -737,15 +790,17 @@
     flex-direction: column;
     width: 100%;
     height: 100%;
-    overflow: hidden;
     position: relative;
+    overflow: hidden;
+    border-radius: 4px;
     background: var(--bg);
+    /* border colour set inline from edgeTint (JS/$theme-driven, not a CSS
+       var — see edgeTint's comment above) */
   }
 
   header {
     flex-shrink: 0;
-    background: var(--panel-bg);
-    border-bottom: 1px solid var(--grid);
+    background: var(--bg);
   }
 
   .content {
@@ -766,15 +821,15 @@
   }
   .empty strong { color: rgba(var(--text-rgb), 0.45); font-weight: 500; }
 
-  /* corner collapse intent overlay */
+  /* corner collapse intent overlay — border/background colour come from
+     dangerTint/dangerFill (JS, theme-driven) via inline style, not CSS vars,
+     see edgeTint's note */
   .intent-overlay {
     position: absolute;
     inset: 0;
     pointer-events: none;
     z-index: 15;
-    border: 2px solid;
   }
-  .intent-collapse { background: rgba(var(--danger-rgb), 0.1); border-color: rgba(var(--danger-rgb), 0.35); }
 
   /* cross-pane drop overlay */
   .drop-overlay {

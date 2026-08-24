@@ -10,9 +10,22 @@
     layout, workspaces, activeWorkspaceId, allLeaves, restoreLayout, restoreWorkspaces,
     updatePane, syncControl, clearAllWorkspaces, resetToDefault, makeLeaf, setActiveWorkspace
   } from './stores/layout.js'
-  import { mode, pinned, theme, deleteRequest, captureRequest, settingsOpen, clearSelectionTick } from './stores/uiState.js'
+  import { mode, pinned, theme, deleteRequest, captureRequest, settingsOpen, clearSelectionTick, hoverHint } from './stores/uiState.js'
   import { undo, suppressDuring } from './stores/history.js'
   import { postToCs, postStateSnapshot } from './lib/ipc.js'
+
+  // Driven from the theme store directly rather than var(--panel-bg) — that
+  // var kept resolving to something dark in light mode for this specific
+  // consumer across several rebuilds (root cause never pinned down; the same
+  // JS-driven approach for Pane.svelte's edge-tint border was confirmed
+  // working via a lime/magenta diagnostic build, so applying it here too).
+  $: toolbarBg = $theme === 'light' ? '#f7f5f0' : '#303030'
+
+  // app.css's light-mode override lives on :root[data-theme="light"] (not
+  // main[data-theme] — see app.css's comment: custom properties don't
+  // inherit upward from <main> to <body>/<html>), so <html> itself needs
+  // the attribute too, not just the <main data-theme> below.
+  $: document.documentElement.dataset.theme = $theme
 
   // ── C# ↔ JS ───────────────────────────────────────────────────────────────────
   onMount(() => {
@@ -138,7 +151,22 @@
     postStateSnapshot()
   }
 
+  // WebView2's own Ctrl+scroll zoom — C# posts the new factor as it changes;
+  // shown as a transient status-bar hint (same slot hover hints use) since
+  // there's no hover/leave pair to key off of, just cleared a beat after the
+  // last event so a burst of wheel ticks doesn't flicker it.
+  let zoomHideTimer = null
+  function showZoomHint(factor) {
+    hoverHint.set(`Zoom: ${Math.round(factor * 100)}%`)
+    clearTimeout(zoomHideTimer)
+    zoomHideTimer = setTimeout(() => hoverHint.set(null), 900)
+  }
+
   function handleMessage(msg) {
+    if (msg.type === 'zoom_changed') {
+      showZoomHint(msg.factor)
+    }
+
     if (msg.type === 'slider_added') {
       addCapturedControl({ id: msg.id, type: 'slider', name: msg.name, min: msg.min, max: msg.max, value: msg.value }, msg)
     }
@@ -260,15 +288,15 @@
 </script>
 
 <main class:edit={$mode === 'edit'} data-theme={$theme}>
-  <header class="global-toolbar">
+  <header class="global-toolbar" style="background: {toolbarBg}">
     <WorkspaceTabs mode={$mode} />
     <EditToolbar
       bind:mode={$mode}
       bind:pinned={$pinned}
       on:pin={e => postToCs({ type: 'pin', value: e.detail })}
     />
-    {#if $settingsOpen}<SettingsPanel />{/if}
   </header>
+  {#if $settingsOpen}<SettingsPanel />{/if}
 
   <div class="layout-root">
     <PaneLayout node={$layout} />
@@ -293,21 +321,24 @@
     display: flex;
     flex-direction: column;
     height: 100vh;
+    position: relative;
   }
   main.edit { outline: 1px solid rgba(var(--accent-rgb), 0.2); }
 
   .global-toolbar {
-    position: relative;
     flex-shrink: 0;
     display: flex;
     align-items: stretch;
-    background: var(--panel-bg);
-    border-bottom: 1px solid var(--bg);
+    /* background set inline from toolbarBg (JS/$theme-driven, see above) */
+    border-radius: 0 0 4px 4px;
+    overflow: hidden;
+    margin-bottom: 3px;
   }
 
   .layout-root {
     flex: 1;
     overflow: hidden;
     display: flex;
+    padding: 0 3px 3px 3px;
   }
 </style>

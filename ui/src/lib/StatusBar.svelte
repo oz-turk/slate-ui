@@ -1,7 +1,7 @@
 <script>
   import { mode, hoverHint } from '../stores/uiState.js'
 
-  export const VERSION = '0.1.0'
+  export const VERSION = '0.1.4'
 </script>
 
 <div class="status-bar">
@@ -46,6 +46,14 @@
         <span class="kbd">c</span>
         Capture
       </span>
+      <span class="hint-item">
+        <span class="kbd">Esc</span>
+        Clear selection
+      </span>
+      <span class="hint-item">
+        <span class="kbd">Ctrl</span> + <span class="kbd">Z</span>
+        Undo
+      </span>
     {:else}
       <span class="hint-item">
         <span class="kbd">Tab</span>
@@ -73,8 +81,10 @@
     display: flex;
     align-items: center;
     gap: 16px;
-    overflow: hidden;
+    overflow-x: auto;
+    scrollbar-width: none;
   }
+  .hint::-webkit-scrollbar { display: none; }
 
   .hint-item {
     display: flex;
