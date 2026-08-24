@@ -97,22 +97,6 @@ function doSplit(node, paneId, dir, side, sizeA, label, presetId) {
   return { ...node, a: doSplit(node.a, paneId, dir, side, sizeA, label, presetId), b: doSplit(node.b, paneId, dir, side, sizeA, label, presetId) }
 }
 
-// Like doSplit, but instead of splitting just the leaf under the pointer,
-// wraps the WHOLE tree — every other pane gets pushed aside to make room,
-// regardless of where in the tree the dragged pane lives. Tried scoping this
-// to "just the row/column the pane belongs to" via nearest-matching-ancestor
-// climbing, but that heuristic only reads as correct on a clean, regular
-// grid — once the tree gets lopsided from a run of uneven splits, "nearest
-// matching ancestor" stops lining up with what a person actually sees as
-// the pane's row/column, and the push silently comes up short. Unconditional
-// whole-tree wrapping has no such judgment call to get wrong.
-function doSplitSpanning(node, dir, side, sizeA, label, presetId) {
-  const tabId = newTabId()
-  const fresh = makeLeaf([{ id: tabId, label, sliders: [], groups: [] }], tabId)
-  const [a, b] = side === 'before' ? [fresh, node] : [node, fresh]
-  return makeSplit(dir, a, b, sizeA, presetId)
-}
-
 function doCollapse(node, paneId) {
   if (node.type === 'leaf') return node
   if (node.a.type === 'leaf' && node.a.paneId === paneId) return node.b
@@ -176,18 +160,6 @@ export function splitPane(paneId, dir, side = 'after', sizeA = 260, presetId) {
     const labels = allLeaves(l).flatMap(leaf => leaf.tabs.map(t => t.label))
     const label  = nextAvailableName(labels, 'Tab')
     return doSplit(l, paneId, dir, side, sizeA, label, presetId)
-  })
-}
-
-// Alt-modified corner drag: pushes the whole window aside instead of just
-// the one pane — see doSplitSpanning. paneId is unused (the push is
-// whole-tree regardless of which pane was dragged from) but kept in the
-// signature so callers can treat this and splitPane() interchangeably.
-export function splitPaneSpanning(paneId, dir, side = 'after', sizeA = 260, presetId) {
-  updateActiveLayout(l => {
-    const labels = allLeaves(l).flatMap(leaf => leaf.tabs.map(t => t.label))
-    const label  = nextAvailableName(labels, 'Tab')
-    return doSplitSpanning(l, dir, side, sizeA, label, presetId)
   })
 }
 

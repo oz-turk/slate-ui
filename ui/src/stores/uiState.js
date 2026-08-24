@@ -24,11 +24,6 @@ export const settingsOpen = writable(false)
 // per-pane request, since every Pane (not just one under the mouse) should react.
 export const clearSelectionTick = writable(0)
 
-// True while Alt is held — lets corner-handles highlight themselves as "this
-// drag will act on more than just one pane" before the user even starts
-// dragging. Set/cleared in App.svelte.
-export const altHeld = writable(false)
-
 // SplitIds currently moving together as an aligned-edge group drag — each
 // divider is a separate component instance (they can belong to completely
 // unrelated split subtrees), so this is how the one under the pointer tells
