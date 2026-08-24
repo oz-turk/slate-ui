@@ -81,7 +81,8 @@ public class SlateWindow : Form
     // Colours mirror app.css's --bg/--text for each theme, dark or light.
     void ApplyTitleBarTheme(bool dark)
     {
-        var caption = ColorRef(dark ? Color.FromArgb(26, 26, 26)   : Color.FromArgb(228, 225, 216));
+        var captionColor = dark ? Color.FromArgb(26, 26, 26)   : Color.FromArgb(228, 225, 216);
+        var caption = ColorRef(captionColor);
         var text    = ColorRef(dark ? Color.FromArgb(239, 239, 239) : Color.FromArgb(42, 39, 36));
         var enabled = dark ? 1 : 0;
         DwmSetWindowAttribute(Handle, DWMWA_USE_IMMERSIVE_DARK_MODE, ref enabled, sizeof(int));
@@ -89,6 +90,12 @@ public class SlateWindow : Form
         DwmSetWindowAttribute(Handle, DWMWA_BORDER_COLOR, ref caption, sizeof(int));
         DwmSetWindowAttribute(Handle, DWMWA_TEXT_COLOR, ref text, sizeof(int));
         ApplyWindowIcon(Handle, dark);
+
+        // Form.BackColor was hardcoded near-black regardless of theme — it's
+        // what shows through for a frame before WebView2 has painted (or in
+        // any gap around it), so a light-mode session could catch a dark
+        // flash there. Mirror it to the same tone as the caption instead.
+        BackColor = captionColor;
     }
 
     string _lastAppliedTheme = "dark";
@@ -650,13 +657,30 @@ public class SlateWindow : Form
         // would silently wipe the WebView2 profile (and anything Slate stores in it,
         // like localStorage) out from under a running Rhino session.
         string userDataFolder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Slate", "WebView2");
-        var env = await CoreWebView2Environment.CreateAsync(null, userDataFolder);
+
+        // The embedded UI is served over https://slate.local/... via
+        // SetVirtualHostNameToFolderMapping below, and Vite emits fixed
+        // filenames (assets/slate.js, assets/slate.css — no content hash, see
+        // vite.config.js) so the URL never changes between builds. Chromium's
+        // disk cache in the persistent userDataFolder above will happily keep
+        // serving an old build under that same URL across Rhino restarts —
+        // capping the disk cache effectively disables it, so every reload
+        // actually picks up what GetOrExtractWebRoot() just wrote to disk.
+        var envOptions = new CoreWebView2EnvironmentOptions { AdditionalBrowserArguments = "--disk-cache-size=1" };
+        var env = await CoreWebView2Environment.CreateAsync(null, userDataFolder, envOptions);
         await _webView.EnsureCoreWebView2Async(env);
 
         _webView.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
         _webView.CoreWebView2.Settings.AreDevToolsEnabled            = true;
 
         _webView.CoreWebView2.WebMessageReceived += OnMessageFromJs;
+
+        // Ctrl+scroll zoom is WebView2's own default (Chromium) behaviour — not
+        // something we wired up — but the UI has no way to show the current
+        // percentage without this. Fires as the user scrolls, and once more on
+        // release, so the status-bar hint can track it live.
+        _webView.ZoomFactorChanged += (_, _) =>
+            PostToJs(SlateEvent.ZoomChanged(_webView.ZoomFactor));
 
         _webView.CoreWebView2.SetVirtualHostNameToFolderMapping(
             "slate.local", GetOrExtractWebRoot(), CoreWebView2HostResourceAccessKind.Allow);

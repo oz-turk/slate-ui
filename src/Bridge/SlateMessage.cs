@@ -33,6 +33,9 @@ public static class SlateEvent
     public static string HumanValueListAdded(string tabId, string id, string name, IEnumerable<string> options, object value, bool multiSelect, bool cycle, bool loop, string? groupId = null) =>
         JsonSerializer.Serialize(new { type = "humanValueList_added", tabId, id, name, options, value, multiSelect, cycle, loop, groupId });
 
+    public static string ZoomChanged(double factor) =>
+        JsonSerializer.Serialize(new { type = "zoom_changed", factor });
+
     public static string Cleared() =>
         JsonSerializer.Serialize(new { type = "cleared" });
 
