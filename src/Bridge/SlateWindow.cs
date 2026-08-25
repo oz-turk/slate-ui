@@ -1,3 +1,4 @@
+using Grasshopper.GUI.Base;
 using Grasshopper.Kernel;
 using Grasshopper.Kernel.Special;
 using Microsoft.Web.WebView2.WinForms;
@@ -959,6 +960,12 @@ public class SlateWindow : Form
 
     // ── public API ────────────────────────────────────────────────────────────
 
+    // GH_SliderBase.DecimalPlaces is only meaningful in Float mode — GH doesn't
+    // reset it when a slider is switched to Integer/Even/Odd, so it can carry a
+    // stale nonzero value (e.g. left over from before the mode was changed).
+    static int EffectiveDecimalPlaces(GH_SliderBase slider) =>
+        slider.Type == GH_SliderAccuracy.Float ? slider.DecimalPlaces : 0;
+
     public void AddSlider(string tabId, GH_NumberSlider slider) =>
         AddSlider(tabId, null, slider);
 
@@ -974,7 +981,7 @@ public class SlateWindow : Form
             (double)slider.Slider.Minimum,
             (double)slider.Slider.Maximum,
             (double)slider.CurrentValue,
-            slider.Slider.DecimalPlaces,
+            EffectiveDecimalPlaces(slider.Slider),
             groupId));
     }
 
@@ -1290,7 +1297,7 @@ public class SlateWindow : Form
                         s["value"]          = (double)gh.CurrentValue;
                         s["min"]            = (double)gh.Slider.Minimum;
                         s["max"]            = (double)gh.Slider.Maximum;
-                        s["decimalPlaces"]  = gh.Slider.DecimalPlaces;
+                        s["decimalPlaces"]  = EffectiveDecimalPlaces(gh.Slider);
                         s["name"]           = gh.NickName;
                     }
                     else arr.RemoveAt(i);
