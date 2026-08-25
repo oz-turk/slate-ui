@@ -167,6 +167,40 @@ function doSplitWithTab(node, targetPaneId, dir, side, fromPaneId, tabId) {
   return splitAndInsert(extracted)
 }
 
+const MIN_PANE_SIZE = 40
+
+// Trims `amount` off whatever pane(s) sit at the top/left edge along `dir`,
+// leaving every other pane's own pixel size exactly as it was — 'a' is
+// always the top/left, fixed-px side of a split (see makeSplit), so walking
+// down through matching-dir splits' 'a' side (and both sides of any
+// perpendicular split, since those don't move along `dir` at all) reaches
+// exactly the pane(s) that actually need to shrink.
+function shrinkTopLeftEdge(node, dir, amount) {
+  if (node.type === 'leaf') return node
+  if (node.dir === dir) {
+    return { ...node, sizeA: Math.max(MIN_PANE_SIZE, node.sizeA - amount), a: shrinkTopLeftEdge(node.a, dir, amount) }
+  }
+  return { ...node, a: shrinkTopLeftEdge(node.a, dir, amount), b: shrinkTopLeftEdge(node.b, dir, amount) }
+}
+
+// Wraps the whole tree in a new root split so the fresh pane spans the full
+// window edge regardless of how the existing tree is carved up — but unlike
+// a plain wrap, only the pane(s) actually touching that edge shrink to make
+// room; everything else keeps its exact pixel size. For the 'after' (bottom/
+// right) edge this falls out for free: the old tree becomes the wrap's fixed
+// 'a' side, and flex:1 already funnels all the space change to whichever
+// pane sits furthest along `dir` inside it. For 'before' (top/left) the
+// fresh pane itself is the fixed 'a' side, so the old tree's own top/left
+// chain needs trimming explicitly (shrinkTopLeftEdge) by the same amount.
+function doSplitSpanning(node, dir, side, sizeA, label, presetId) {
+  const tabId = newTabId()
+  const fresh = makeLeaf([{ id: tabId, label, sliders: [], groups: [] }], tabId)
+  if (side === 'before') {
+    return makeSplit(dir, fresh, shrinkTopLeftEdge(node, dir, sizeA), sizeA, presetId)
+  }
+  return makeSplit(dir, node, fresh, sizeA, presetId)
+}
+
 // ── exported mutations (all apply to the active workspace) ───────────────────
 export function updatePane(paneId, fn) {
   updateActiveLayout(l => mapLeaf(l, paneId, fn))
@@ -185,6 +219,14 @@ export function splitPane(paneId, dir, side = 'after', sizeA = 260, presetId) {
     const labels = allLeaves(l).flatMap(leaf => leaf.tabs.map(t => t.label))
     const label  = nextAvailableName(labels, 'Tab')
     return doSplit(l, paneId, dir, side, sizeA, label, presetId)
+  })
+}
+
+export function splitPaneSpanning(dir, side = 'after', sizeA = 260, presetId) {
+  updateActiveLayout(l => {
+    const labels = allLeaves(l).flatMap(leaf => leaf.tabs.map(t => t.label))
+    const label  = nextAvailableName(labels, 'Tab')
+    return doSplitSpanning(l, dir, side, sizeA, label, presetId)
   })
 }
 

@@ -10,7 +10,7 @@
   import ActionBar    from './ActionBar.svelte'
   import CornerHandle from './CornerHandle.svelte'
   import ContextMenu  from './ContextMenu.svelte'
-  import { layout, updatePane, findLeaf, newTabId, splitPane, newSplitId, setSplitSize, collapsePane, findNeighborPane, moveCrossPaneItem, extractSlidersByIds } from '../stores/layout.js'
+  import { layout, updatePane, findLeaf, newTabId, splitPane, splitPaneSpanning, newSplitId, setSplitSize, collapsePane, findNeighborPane, moveCrossPaneItem, extractSlidersByIds } from '../stores/layout.js'
   import { tabDrag, itemDrag } from '../stores/dragState.js'
   import { computeAlignedSnapTargets, snapRaw } from './splitSnap.js'
   import { mode, deleteRequest, captureRequest, clearSelectionTick, hoverHint, theme } from '../stores/uiState.js'
@@ -506,7 +506,11 @@
     if (splitInFlight) return
     splitInFlight = true
 
-    const rect = paneEl.getBoundingClientRect()
+    // Alt held: the new pane spans the whole window edge rather than just
+    // carving up this one pane, so the drag ratio has to be measured against
+    // the whole window, not this pane's own (possibly small, off-center) rect.
+    const spanning = detail.spanning
+    const rect = spanning ? document.querySelector('.layout-root').getBoundingClientRect() : paneEl.getBoundingClientRect()
     const dim  = detail.dir === 'h' ? rect.width : rect.height
     const myOrigin = detail.dir === 'h' ? rect.left : rect.top
     const newId = newSplitId()
@@ -526,19 +530,33 @@
       return clampRatio(raw / dim)
     }
 
-    splitPane(paneId, detail.dir, detail.side, ratioAt(detail.clientX, detail.clientY) * dim, newId)
-    hoverHint.set(`Split ${detail.dir === 'h' ? 'horizontally' : 'vertically'} — drag to resize`)
+    if (spanning) {
+      splitPaneSpanning(detail.dir, detail.side, ratioAt(detail.clientX, detail.clientY) * dim, newId)
+    } else {
+      splitPane(paneId, detail.dir, detail.side, ratioAt(detail.clientX, detail.clientY) * dim, newId)
+    }
+    hoverHint.set(`Split ${detail.dir === 'h' ? 'horizontally' : 'vertically'}${spanning ? ' (whole window)' : ''} — drag to resize`)
 
+    // If pointerup/pointercancel never reaches window (host app steals focus
+    // mid-drag — e.g. Rhino's own window grabbing focus during a live GH
+    // solve — or the OS/WebView2 otherwise swallows the release), these
+    // listeners used to leak permanently: every future mouse move anywhere
+    // in the app would keep calling setSplitSize() on THIS split, silently
+    // resizing an unrelated pane. 'blur' is the same safety net the old
+    // (removed) altHeld tracking used for an analogous reason — commit at
+    // the last known position and clean up rather than leave the drag
+    // dangling forever.
     function onWindowMove(e) {
       const size = ratioAt(e.clientX, e.clientY) * dim
       setSplitSize(newId, size)
       hoverHint.set(`${Math.round(size)}px${lastSnapLabel}`)
     }
     function onWindowUp(e) {
-      onWindowMove(e)   // final position from the release coords themselves
+      if (e) onWindowMove(e)   // final position from the release coords themselves ('blur' has none)
       window.removeEventListener('pointermove', onWindowMove)
       window.removeEventListener('pointerup', onWindowUp)
       window.removeEventListener('pointercancel', onWindowUp)
+      window.removeEventListener('blur', onWindowUp)
       splitInFlight = false
       hoverHint.set(null)
       postStateSnapshot()
@@ -546,6 +564,7 @@
     window.addEventListener('pointermove', onWindowMove)
     window.addEventListener('pointerup', onWindowUp)
     window.addEventListener('pointercancel', onWindowUp)
+    window.addEventListener('blur', onWindowUp)
   }
 
   function onCornerCommit(detail) {

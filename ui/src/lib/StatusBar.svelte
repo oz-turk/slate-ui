@@ -1,7 +1,7 @@
 <script>
   import { mode, hoverHint } from '../stores/uiState.js'
 
-  export const VERSION = '0.1.8'
+  export const VERSION = '0.1.9'
 </script>
 
 <div class="status-bar">

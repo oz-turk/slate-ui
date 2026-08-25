@@ -10,7 +10,7 @@
     layout, workspaces, activeWorkspaceId, allLeaves, restoreLayout, restoreWorkspaces,
     updatePane, syncControl, clearAllWorkspaces, resetToDefault, makeLeaf, setActiveWorkspace
   } from './stores/layout.js'
-  import { mode, pinned, theme, deleteRequest, captureRequest, settingsOpen, clearSelectionTick, hoverHint } from './stores/uiState.js'
+  import { mode, pinned, theme, deleteRequest, captureRequest, settingsOpen, clearSelectionTick, hoverHint, altHeld } from './stores/uiState.js'
   import { undo, suppressDuring } from './stores/history.js'
   import { postToCs, postStateSnapshot } from './lib/ipc.js'
 
@@ -51,6 +51,37 @@
     return () => window.removeEventListener('pointermove', onPointerMove)
   })
 
+  // altHeld drives the faint highlight on corner-handles (see
+  // CornerHandle.svelte) so the user sees what an Alt+corner drag would
+  // grab before they start dragging — only the 4 corners light up, not the
+  // whole edge, so it's clear a drag has to start right at one of them.
+  // blur is needed too — Alt+Tabbing away from the window doesn't fire a
+  // keyup here.
+  onMount(() => {
+    function onKeydown(e) { if (e.key === 'Alt') altHeld.set(true) }
+    function onKeyup(e)   { if (e.key === 'Alt') altHeld.set(false) }
+    function onBlur()     { altHeld.set(false) }
+    // Alt is a Windows "system key" (WM_SYSKEYUP) — mid corner-drag its
+    // release can get swallowed before reaching this window, leaving
+    // altHeld stuck true (corners stay hidden until a later Alt press/
+    // release cycle happens to land cleanly — the "every other time"
+    // symptom). Any pointer move carries the live modifier state, so
+    // resync from it as a self-healing fallback instead of trusting
+    // keyup alone. Gated on an actual change so it doesn't force a
+    // getBoundingClientRect() in every CornerHandle on every mousemove.
+    function onPointerMove(e) { if (get(altHeld) !== e.altKey) altHeld.set(e.altKey) }
+    window.addEventListener('keydown', onKeydown)
+    window.addEventListener('keyup', onKeyup)
+    window.addEventListener('blur', onBlur)
+    window.addEventListener('pointermove', onPointerMove)
+    return () => {
+      window.removeEventListener('keydown', onKeydown)
+      window.removeEventListener('keyup', onKeyup)
+      window.removeEventListener('blur', onBlur)
+      window.removeEventListener('pointermove', onPointerMove)
+    }
+  })
+
   onMount(() => {
     function onKeydown(e) {
       if (isTextEditable(document.activeElement)) return
@@ -70,7 +101,7 @@
       if ((e.ctrlKey || e.metaKey) && e.key >= '1' && e.key <= '9') {
         const idx = parseInt(e.key, 10) - 1
         const ws = get(workspaces)[idx]
-        if (ws) { e.preventDefault(); setActiveWorkspace(ws.id) }
+        if (ws) { e.preventDefault(); setActiveWorkspace(ws.id); postStateSnapshot() }
         return
       }
 

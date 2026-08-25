@@ -2,6 +2,7 @@
   import { setSplitSize } from '../stores/layout.js'
   import { hoverHint, activeDragGroup, mode } from '../stores/uiState.js'
   import { ownRaw, computeAlignedSnapTargets, snapRaw } from './splitSnap.js'
+  import { postStateSnapshot } from './ipc.js'
 
   export let dir      // 'h' = vertical bar (left|right), 'v' = horizontal bar (top|bottom)
   export let splitId
@@ -189,6 +190,7 @@
     detached = false
     activeDragGroup.set([])
     hoverHint.set(null)
+    postStateSnapshot()
   }
 </script>
 

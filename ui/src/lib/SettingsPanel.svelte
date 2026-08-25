@@ -18,6 +18,7 @@
     { keys: ['Ctrl', 'Z'],    desc: 'Undo' },
     { keys: ['Ctrl', 'Scroll'], desc: 'Zoom the UI (WebView2 default)' },
     { keys: ['Ctrl', 'drag'], desc: 'Snap resize to slider-row size' },
+    { keys: ['Alt', 'corner drag'], desc: 'Split pushes the whole window, not just one pane' },
     { keys: ['Edge drag'],          desc: 'Aligned edges move together automatically' },
     { keys: ['Alt', 'edge drag'],   desc: 'Break this edge off the group (or just shake it)' },
   ]
