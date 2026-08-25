@@ -36,6 +36,12 @@ public static class SlateEvent
     public static string ZoomChanged(double factor) =>
         JsonSerializer.Serialize(new { type = "zoom_changed", factor });
 
+    // Ground-truth Alt state, polled via GetAsyncKeyState — see the poll
+    // timer in SlateWindow.cs for why the DOM's own keydown/keyup can't be
+    // trusted for this on its own.
+    public static string AltStateChanged(bool held) =>
+        JsonSerializer.Serialize(new { type = "alt_state", held });
+
     public static string Cleared() =>
         JsonSerializer.Serialize(new { type = "cleared" });
 

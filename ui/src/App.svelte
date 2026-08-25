@@ -198,6 +198,14 @@
       showZoomHint(msg.factor)
     }
 
+    // Ground truth from the C# host's GetAsyncKeyState poll (see
+    // SlateWindow.cs) — supersedes the DOM keydown/keyup/pointermove
+    // tracking below whenever it arrives, since it isn't subject to
+    // Chromium's own Alt/system-key handling swallowing the event.
+    if (msg.type === 'alt_state') {
+      altHeld.set(msg.held)
+    }
+
     if (msg.type === 'slider_added') {
       addCapturedControl({ id: msg.id, type: 'slider', name: msg.name, min: msg.min, max: msg.max, value: msg.value, decimalPlaces: msg.decimalPlaces }, msg)
     }

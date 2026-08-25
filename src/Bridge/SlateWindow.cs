@@ -34,6 +34,24 @@ public class SlateWindow : Form
     const int ICON_SMALL  = 0;
     const int ICON_BIG    = 1;
 
+    // ── Alt key state (corner-drag spanning hint) ───────────────────────────────
+    // Windows treats Alt as a "system key" (WM_SYSKEYUP) — its release can get
+    // swallowed before ever reaching WebView2's own DOM, especially mid corner-
+    // drag, leaving the JS side's keydown/keyup tracking stuck thinking Alt is
+    // still held (see CornerHandle.svelte / App.svelte's altHeld store, which
+    // already has a pointermove-based self-heal for this — that helps but can't
+    // fully cover it, since it only fires on Chromium's own event, delivered
+    // through the same shaky path). GetAsyncKeyState reads the OS's live
+    // physical key state directly, independent of focus routing or whatever
+    // Chromium's internal Alt/menu-mnemonic handling decides to forward, so
+    // polling it here and pushing the result to JS sidesteps the problem
+    // entirely instead of chasing it symptom by symptom.
+    [DllImport("user32.dll")] static extern short GetAsyncKeyState(int vKey);
+    const int VK_MENU = 0x12;
+
+    private readonly System.Windows.Forms.Timer _altPollTimer = new() { Interval = 30 };
+    private bool _altHeld;
+
     static Icon? _iconLight, _iconDark;
 
     static void ApplyWindowIcon(IntPtr hWnd, bool dark)
@@ -634,6 +652,23 @@ public class SlateWindow : Form
             try   { await InitWebViewAsync(); }
             catch (Exception ex) { ShowError(ex.Message); }
         };
+
+        // Started here (not gated on WebView2 being ready) since PostToJs
+        // already no-ops safely until CoreWebView2 exists.
+        _altPollTimer.Tick += (_, _) =>
+        {
+            bool held = (GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
+            if (held == _altHeld) return;
+            _altHeld = held;
+            PostToJs(SlateEvent.AltStateChanged(held));
+        };
+        _altPollTimer.Start();
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing) _altPollTimer.Dispose();
+        base.Dispose(disposing);
     }
 
     private void ShowError(string msg)
