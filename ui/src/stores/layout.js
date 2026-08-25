@@ -326,6 +326,25 @@ export function updateAllTabs(fn) {
   updateAllWorkspaces(node => mapAllTabs(node, fn))
 }
 
+// Applies a live OS window-border resize delta to every workspace's root
+// extent (not just the active one — a physical window resize changes every
+// workspace's available space, unlike a manual divider drag which is scoped
+// to the visible layout via updateActiveLayout). Reuses shrinkTopLeftEdge
+// (written for the spanning-split feature) unchanged: deltaX/deltaY are the
+// window's Location delta since the last tick, which is only nonzero on the
+// side whose top/left edge actually moved — the opposite (bottom/right) edge
+// case needs no tree mutation at all, flex:1 on the 'b' side already absorbs
+// it. Per-axis guards avoid rebuilding every workspace's tree on a no-op tick.
+export function applyWindowEdgeResize(deltaX, deltaY) {
+  if (!deltaX && !deltaY) return
+  updateAllWorkspaces(node => {
+    let n = node
+    if (deltaX) n = shrinkTopLeftEdge(n, 'h', deltaX)
+    if (deltaY) n = shrinkTopLeftEdge(n, 'v', deltaY)
+    return n
+  })
+}
+
 // Clears sliders/groups from every tab, across ALL workspaces — mirrors the
 // C# side's ClearAll(), which drops every tracked GH object regardless of
 // which workspace it happened to be captured into.

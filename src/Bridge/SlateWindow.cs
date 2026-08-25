@@ -52,6 +52,20 @@ public class SlateWindow : Form
     private readonly System.Windows.Forms.Timer _altPollTimer = new() { Interval = 30 };
     private bool _altHeld;
 
+    // ── 'c'/'x' hotkey state (capture / delete) ──────────────────────────────────
+    // Same underlying problem as Alt above, different trigger: Rhino's own
+    // command-line textbox can silently steal keyboard focus from the WebView2
+    // over a long session (a general Rhino/Eto focus-routing issue, not
+    // specific to this plugin — typing into a GH canvas rename box has the same
+    // symptom), so the DOM's own keydown for 'c'/'x' can go quiet with no
+    // visible sign anything's wrong. Polled here the same way: GetAsyncKeyState
+    // reads live physical key state independent of focus, gated on the mouse
+    // actually being over Slate's window (mirrors the hover-based semantics the
+    // hotkeys already have on the JS side) and edge-detected so a held key
+    // doesn't repeat-fire every 30ms.
+    const int VK_C = 0x43, VK_X = 0x58;
+    private bool _cHeld, _xHeld;
+
     static Icon? _iconLight, _iconDark;
 
     static void ApplyWindowIcon(IntPtr hWnd, bool dark)
@@ -114,6 +128,16 @@ public class SlateWindow : Form
         // any gap around it), so a light-mode session could catch a dark
         // flash there. Mirror it to the same tone as the caption instead.
         BackColor = captionColor;
+
+        // WebView2's OWN default background (shown by Chromium's compositor
+        // for any not-yet-painted frame — distinct from Form.BackColor above,
+        // which only covers gaps outside the control) was never set, so it
+        // defaulted to white. Most visible during a live left/top-edge window
+        // drag: unlike right/bottom, that simultaneously moves AND resizes the
+        // window, which gives the compositor more to redo per tick and more
+        // chances to show an unpainted frame — this doesn't stop that, but
+        // makes the flash match the theme instead of flashing white.
+        _webView.DefaultBackgroundColor = captionColor;
     }
 
     string _lastAppliedTheme = "dark";
@@ -658,9 +682,19 @@ public class SlateWindow : Form
         _altPollTimer.Tick += (_, _) =>
         {
             bool held = (GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
-            if (held == _altHeld) return;
-            _altHeld = held;
-            PostToJs(SlateEvent.AltStateChanged(held));
+            if (held != _altHeld)
+            {
+                _altHeld = held;
+                PostToJs(SlateEvent.AltStateChanged(held));
+            }
+
+            bool mouseOverWindow = Visible && Bounds.Contains(Cursor.Position);
+            bool cDown = (GetAsyncKeyState(VK_C) & 0x8000) != 0;
+            bool xDown = (GetAsyncKeyState(VK_X) & 0x8000) != 0;
+            if (cDown && !_cHeld && mouseOverWindow) PostToJs(SlateEvent.CaptureHotkey());
+            if (xDown && !_xHeld && mouseOverWindow) PostToJs(SlateEvent.DeleteHotkey());
+            _cHeld = cDown;
+            _xHeld = xDown;
         };
         _altPollTimer.Start();
     }

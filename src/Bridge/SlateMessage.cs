@@ -42,6 +42,14 @@ public static class SlateEvent
     public static string AltStateChanged(bool held) =>
         JsonSerializer.Serialize(new { type = "alt_state", held });
 
+    // Ground-truth 'c'/'x' hotkey trigger, polled via GetAsyncKeyState — same
+    // reasoning as AltStateChanged, see the poll timer in SlateWindow.cs.
+    public static string CaptureHotkey() =>
+        JsonSerializer.Serialize(new { type = "capture_hotkey" });
+
+    public static string DeleteHotkey() =>
+        JsonSerializer.Serialize(new { type = "delete_hotkey" });
+
     public static string Cleared() =>
         JsonSerializer.Serialize(new { type = "cleared" });
 

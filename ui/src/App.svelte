@@ -9,7 +9,7 @@
   import {
     layout, workspaces, activeWorkspaceId, allLeaves, restoreLayout, restoreWorkspaces,
     updatePane, syncControl, clearAllWorkspaces, resetToDefault, makeLeaf, setActiveWorkspace,
-    posAppend
+    posAppend, applyWindowEdgeResize
   } from './stores/layout.js'
   import { mode, pinned, theme, deleteRequest, captureRequest, settingsOpen, clearSelectionTick, hoverHint, altHeld } from './stores/uiState.js'
   import { undo, suppressDuring } from './stores/history.js'
@@ -36,6 +36,40 @@
     postToCs({ type: 'ui_ready' })
   })
 
+  // ── window-edge resize ───────────────────────────────────────────────────────
+  // Which OS window edge is being dragged is detected entirely client-side:
+  // a left/top-edge drag moves the window (screenX/screenY shifts alongside
+  // the size change), a right/bottom-edge drag only changes size. Diffing
+  // against the previous tick's screenX/screenY gives exactly the delta
+  // applyWindowEdgeResize (→ shrinkTopLeftEdge) expects. This runs
+  // synchronously in the same reflow pass the browser already does for the
+  // resize, so there's no cross-process round trip and no flicker — unlike
+  // an earlier C#-driven version of this feature that posted the delta over
+  // WebView2's IPC, which was a tick behind the native reflow and visibly
+  // flashed the wrong pane size on every tick before correcting.
+  let prevScreenX = window.screenX
+  let prevScreenY = window.screenY
+  let resizeSettleTimer = null
+
+  function onWindowResize() {
+    const deltaX = window.screenX - prevScreenX
+    const deltaY = window.screenY - prevScreenY
+    prevScreenX = window.screenX
+    prevScreenY = window.screenY
+    applyWindowEdgeResize(deltaX, deltaY)
+
+    // No native "drag ended" event to hook (unlike C#'s ResizeEnd), so commit
+    // to C#/.gh persistence after a short quiet period instead — mirrors
+    // history.js's own settle debounce for undo grouping.
+    clearTimeout(resizeSettleTimer)
+    resizeSettleTimer = setTimeout(postStateSnapshot, 400)
+  }
+
+  onMount(() => {
+    window.addEventListener('resize', onWindowResize)
+    return () => window.removeEventListener('resize', onWindowResize)
+  })
+
   // ── Global keyboard shortcuts ────────────────────────────────────────────────
   // Ignored while typing in a text field (renaming a tab/group, editing a value)
   // so keys like x/c/Tab still behave normally there instead of being hijacked.
@@ -51,6 +85,38 @@
     window.addEventListener('pointermove', onPointerMove)
     return () => window.removeEventListener('pointermove', onPointerMove)
   })
+
+  // x/c resolution logic, factored out so it can fire from two sources: the
+  // normal DOM keydown below, and the C# host's capture_hotkey/delete_hotkey
+  // messages (see handleMessage) — a fallback for when Rhino's own command
+  // line has silently stolen keyboard focus from the WebView2, which stops
+  // the DOM keydown from ever firing (a general Rhino/Eto focus-routing issue
+  // seen elsewhere in Rhino too, not specific to this plugin). Both triggering
+  // the same already-selected GH objects is harmless — capture/delete are
+  // idempotent per id (see addCapturedControl's allSliderIds() guard and
+  // removeSlider's plain array filter).
+  function triggerDelete() {
+    // Guards against the poll-triggered path too, not just the DOM keydown
+    // below — typing "x" into one of Slate's own rename boxes shouldn't
+    // delete whatever's under the mouse just because the poll doesn't know
+    // a text field has focus.
+    if (get(mode) !== 'edit' || isTextEditable(document.activeElement)) return
+    const el = document.elementFromPoint(mouseX, mouseY)
+    const sliderEl = el?.closest('[data-slider-id]')
+    const paneEl   = el?.closest('[data-pane-id]')
+    if (sliderEl && paneEl) deleteRequest.set({ paneId: paneEl.dataset.paneId, sliderId: sliderEl.dataset.sliderId })
+  }
+  function triggerCapture() {
+    if (get(mode) !== 'edit' || isTextEditable(document.activeElement)) return
+    const el = document.elementFromPoint(mouseX, mouseY)
+    const paneEl  = el?.closest('[data-pane-id]')
+    // closest() walks up from whatever's directly under the mouse — a
+    // slider row inside a group still resolves to that group's own .group
+    // div, and a nested group resolves to the innermost one, same as the
+    // group's own "+ Capture" button already does per-group.
+    const groupEl = el?.closest('[data-group-id]')
+    if (paneEl) captureRequest.set({ paneId: paneEl.dataset.paneId, groupId: groupEl?.dataset.groupId ?? null })
+  }
 
   // altHeld drives the faint highlight on corner-handles (see
   // CornerHandle.svelte) so the user sees what an Alt+corner drag would
@@ -113,25 +179,8 @@
         return
       }
 
-      if (e.key === 'x') {
-        const el = document.elementFromPoint(mouseX, mouseY)
-        const sliderEl = el?.closest('[data-slider-id]')
-        const paneEl   = el?.closest('[data-pane-id]')
-        if (sliderEl && paneEl) deleteRequest.set({ paneId: paneEl.dataset.paneId, sliderId: sliderEl.dataset.sliderId })
-        return
-      }
-
-      if (e.key === 'c') {
-        const el = document.elementFromPoint(mouseX, mouseY)
-        const paneEl  = el?.closest('[data-pane-id]')
-        // closest() walks up from whatever's directly under the mouse — a
-        // slider row inside a group still resolves to that group's own
-        // .group div, and a nested group resolves to the innermost one, same
-        // as the group's own "+ Capture" button already does per-group.
-        const groupEl = el?.closest('[data-group-id]')
-        if (paneEl) captureRequest.set({ paneId: paneEl.dataset.paneId, groupId: groupEl?.dataset.groupId ?? null })
-        return
-      }
+      if (e.key === 'x') { triggerDelete(); return }
+      if (e.key === 'c') { triggerCapture(); return }
     }
     window.addEventListener('keydown', onKeydown)
     return () => window.removeEventListener('keydown', onKeydown)
@@ -211,6 +260,11 @@
     if (msg.type === 'alt_state') {
       altHeld.set(msg.held)
     }
+
+    // Same GetAsyncKeyState poll, watching 'c'/'x' instead of Alt — see
+    // triggerCapture/triggerDelete above and the poll timer in SlateWindow.cs.
+    if (msg.type === 'capture_hotkey') triggerCapture()
+    if (msg.type === 'delete_hotkey')  triggerDelete()
 
     if (msg.type === 'slider_added') {
       addCapturedControl({ id: msg.id, type: 'slider', name: msg.name, min: msg.min, max: msg.max, value: msg.value, decimalPlaces: msg.decimalPlaces }, msg)
