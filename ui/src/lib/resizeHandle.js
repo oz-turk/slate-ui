@@ -10,10 +10,14 @@ export function resizeHint(h, snapped) {
   return `${h}px${snapped ? ' (snapped)' : ''}  ·  Hold Ctrl to snap to slider-row size`
 }
 
-// header/margin/handle/padding/border around the resizable body is not
-// itself a multiple of MODULE, so snapping the body alone can never land the
-// row's outer edge on the grid — both measured live (not hardcoded) so they
-// keep working if the surrounding layout ever changes.
+// header/margin/padding/border around the resizable body is not itself a
+// multiple of MODULE, so snapping the body alone can never land the row's
+// outer edge on the grid — measured live (not hardcoded) so it keeps working
+// if the surrounding layout ever changes. The resize handle itself is
+// absolutely positioned into the row's existing bottom padding (see
+// PanelRow/ValueListRow .resize-handle CSS) so it never adds to rowEl's own
+// layout height — offsetHeight is already the same in edit and preview,
+// nothing to compensate for here.
 export function measureResizeBounds(rowEl, startHeight) {
   const resizeOverhead = rowEl ? rowEl.offsetHeight - startHeight : 0
   const contentEl = rowEl?.closest('.content')

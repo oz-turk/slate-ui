@@ -1,4 +1,5 @@
 <script>
+  import { afterUpdate } from 'svelte'
   import { createEventDispatcher } from 'svelte'
   import { hoverHint } from '../stores/uiState.js'
   import { dragTranslateYFor, rowDragOver, rowDragLeave, rowDrop } from './rowDrag.js'
@@ -32,6 +33,42 @@
   let resizeOverhead = 0
   let maxBodyHeight  = Infinity   // capped to the pane's visible area — can't drag past the window
   let lastCtrlKey = false
+
+  // ── un-resized default height: fit every option with no scroll, snapped up
+  // to whole MODULEs so an N-item checklist still lands on the row grid —
+  // e.g. a 5-item list otherwise ends up whatever height flex gives it.
+  // Options render single-line (ellipsis, no wrap), so one item's own height
+  // is a fixed constant independent of the container's own sizing — safe to
+  // measure it directly with no risk of it feeding back into itself.
+  //
+  // Snapping the checklist's own height alone isn't enough — same issue the
+  // manual resize handle already solves via resizeOverhead (see
+  // resizeHandle.js): the header/margin/padding/border around it is ~59px,
+  // not itself a multiple of MODULE, so a checklist that's an exact multiple
+  // of MODULE still leaves the ROW's outer edge off-grid. Overhead is
+  // measured live off rowEl (like measureResizeBounds does), not hardcoded,
+  // so it keeps working if the surrounding layout ever changes.
+  let checklistEl
+  let itemHeight = 0
+  let overhead   = 0
+  afterUpdate(() => {
+    const h = checklistEl?.querySelector('.check-item')?.offsetHeight ?? 0
+    if (h && h !== itemHeight) itemHeight = h
+    if (rowEl && checklistEl) {
+      const ov = rowEl.offsetHeight - checklistEl.offsetHeight
+      if (ov !== overhead) overhead = ov
+    }
+  })
+  const CHECKLIST_PAD = 8   // .checklist padding: 4px top + 4px bottom
+  const ITEM_GAP      = 1   // .checklist gap: 1px between items
+  $: naturalChecklistHeight = itemHeight
+    ? CHECKLIST_PAD + options.length * itemHeight + Math.max(0, options.length - 1) * ITEM_GAP
+    : 0
+  // Math.max clamps the TOTAL (overhead + checklist) to at least one MODULE,
+  // not the checklist alone — see the matching comment in PanelRow.svelte.
+  $: fitChecklistHeight = naturalChecklistHeight
+    ? Math.max(MODULE, Math.ceil((overhead + naturalChecklistHeight) / MODULE) * MODULE) - overhead
+    : MODULE
 
   function onResizeDown(e) {
     e.preventDefault()
@@ -161,7 +198,9 @@
 
   {#if slider.multiSelect}
     <!-- svelte-ignore a11y-no-static-element-interactions -->
-    <div class="checklist" class:capped={slider.height != null} style={slider.height != null ? `height: ${slider.height}px` : ''} on:click|stopPropagation>
+    <div class="checklist" class:capped={slider.height != null} bind:this={checklistEl}
+        style={slider.height != null ? `height: ${slider.height}px` : `min-height: ${fitChecklistHeight}px`}
+        on:click|stopPropagation>
       {#each options as opt, i (i)}
         <label class="check-item">
           <input type="checkbox" checked={selectedSet.has(i)} on:change={() => onToggle(i)} />
@@ -360,13 +399,20 @@
   }
   .del:hover { background: var(--grid); color: rgba(var(--text-rgb), 0.58); }
 
+  /* absolutely positioned into the row's existing bottom padding (10px, always
+     reserved whether or not the handle is rendered) rather than added as a
+     normal-flow sibling — otherwise the row grows by 9px the moment edit mode
+     turns the handle on, and everything below it visibly jumps */
   .resize-handle {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
     height: 9px;
     display: flex;
     align-items: center;
     justify-content: center;
     cursor: ns-resize;
-    flex-shrink: 0;
   }
   .grip {
     width: 28px;

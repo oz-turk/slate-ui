@@ -223,7 +223,7 @@
     }
 
     if (msg.type === 'panel_added') {
-      addCapturedControl({ id: msg.id, type: 'panel', name: msg.name, value: msg.value, readOnly: msg.readOnly, height: 88 }, msg)
+      addCapturedControl({ id: msg.id, type: 'panel', name: msg.name, value: msg.value, readOnly: msg.readOnly }, msg)
     }
 
     if (msg.type === 'itemPicker_added') {

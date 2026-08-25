@@ -1,4 +1,5 @@
 <script>
+  import { onMount, tick } from 'svelte'
   import { createEventDispatcher } from 'svelte'
   import { hoverHint } from '../stores/uiState.js'
   import { dragTranslateYFor, rowDragOver, rowDragLeave, rowDrop } from './rowDrag.js'
@@ -12,10 +13,43 @@
   export let isLast    = false
 
   const MODULE = 44   // one slider row's height — the app's base sizing unit
-  $: bodyHeight = slider.height ?? MODULE * 2
 
   // ── row drag (reorder) — see rowDrag.js ────────────────────────────────────────
   let rowEl
+
+  // ── un-resized default height: fit the text, snapped up to whole MODULEs —
+  // a short panel (e.g. "test1") shouldn't default to a fixed two-module
+  // block. textEl.scrollHeight reflects the text's true content height
+  // independent of whatever height we render the box at, so this isn't
+  // circular. Only used until the user explicitly drags a height (slider.height).
+  //
+  // Snapping naturalHeight alone isn't enough — same issue the manual resize
+  // handle already solves via resizeOverhead (see resizeHandle.js): the
+  // header/margin/padding/border around the body is ~59px, not itself a
+  // multiple of MODULE, so a body that's an exact multiple of MODULE still
+  // leaves the ROW's outer edge off-grid. Overhead is measured live off
+  // rowEl (like measureResizeBounds does), not hardcoded, so it keeps
+  // working if the surrounding layout ever changes.
+  let textEl
+  let naturalHeight = 0
+  let overhead = 0
+  async function remeasure() {
+    await tick()
+    if (textEl) naturalHeight = textEl.scrollHeight
+    if (rowEl) overhead = rowEl.offsetHeight - bodyHeight
+  }
+  onMount(remeasure)
+  $: (slider.value, slider.id, remeasure())
+  // Math.max clamps the TOTAL (overhead + body) to at least one MODULE, not
+  // the body alone — overhead here is already bigger than one MODULE, so the
+  // floor never actually bites, but clamping the body instead would produce
+  // a body/overhead sum that isn't itself a MODULE multiple, undoing the
+  // whole point of this snap for the smallest sizes.
+  $: fitHeight = naturalHeight
+    ? Math.max(MODULE, Math.ceil((overhead + naturalHeight) / MODULE) * MODULE) - overhead
+    : MODULE
+
+  $: bodyHeight = slider.height ?? fitHeight
   let rowDragging    = false
   let dragTranslateY = 0
 
@@ -133,11 +167,12 @@
 
   <div class="text-wrap" style="height: {bodyHeight}px">
     {#if slider.readOnly}
-      <div class="text-display">{slider.value || '—'}</div>
+      <div class="text-display" bind:this={textEl}>{slider.value || '—'}</div>
     {:else}
       <!-- svelte-ignore a11y-no-static-element-interactions -->
       <textarea
         class="text-input"
+        bind:this={textEl}
         value={slider.value}
         placeholder="Type text… (Ctrl+Enter to apply)"
         spellcheck="false"
@@ -269,13 +304,20 @@
   }
   .text-input:focus { border-left-color: var(--accent); }
 
+  /* absolutely positioned into the row's existing bottom padding (10px, always
+     reserved whether or not the handle is rendered) rather than added as a
+     normal-flow sibling — otherwise the row grows by 9px the moment edit mode
+     turns the handle on, and everything below it visibly jumps */
   .resize-handle {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
     height: 9px;
     display: flex;
     align-items: center;
     justify-content: center;
     cursor: ns-resize;
-    flex-shrink: 0;
   }
   .grip {
     width: 28px;
