@@ -1,12 +1,42 @@
 <script>
-  import { mode, hoverHint } from '../stores/uiState.js'
+  import { mode, hoverHint, altHeld, ctrlHeld } from '../stores/uiState.js'
 
-  export const VERSION = '0.1.16'
+  export const VERSION = '0.1.17'
 </script>
 
 <div class="status-bar">
   <div class="hint">
-    {#if $hoverHint}
+    {#if $altHeld}
+      <span class="hint-item">
+        <span class="kbd">Alt</span> + <span class="kbd">Drag divider</span>
+        Break off from group
+      </span>
+      {#if $mode === 'edit'}
+        <span class="hint-item">
+          <span class="kbd">Alt</span> + <span class="kbd">Drag corner</span>
+          Split spanning window
+        </span>
+      {/if}
+    {:else if $ctrlHeld}
+      {#if $mode === 'edit'}
+        <span class="hint-item">
+          <span class="kbd">Ctrl</span> + click
+          Multi-select
+        </span>
+        <span class="hint-item">
+          <span class="kbd">Ctrl</span> + <span class="kbd">Shift</span> + click
+          Range select
+        </span>
+      {/if}
+      <span class="hint-item">
+        <span class="kbd">Ctrl</span> + <span class="kbd">Z</span>
+        Undo
+      </span>
+      <span class="hint-item">
+        <span class="kbd">Ctrl</span> + 1-9
+        Switch workspace
+      </span>
+    {:else if $hoverHint}
       <span class="hint-item">{$hoverHint}</span>
     {:else if $mode === 'edit'}
       <span class="hint-item">

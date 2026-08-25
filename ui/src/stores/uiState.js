@@ -41,6 +41,11 @@ export const clearSelectionTick = writable(0)
 // dragging. Set/cleared in App.svelte.
 export const altHeld = writable(false)
 
+// True while Ctrl (or Cmd) is held — StatusBar swaps its default hint list
+// for the Ctrl-specific shortcuts (multi/range-select, undo, workspace
+// switch) while it's down. Set/cleared in App.svelte alongside altHeld.
+export const ctrlHeld = writable(false)
+
 // SplitIds currently moving together as an aligned-edge group drag — each
 // divider is a separate component instance (they can belong to completely
 // unrelated split subtrees), so this is how the one under the pointer tells

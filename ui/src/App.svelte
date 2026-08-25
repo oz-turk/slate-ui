@@ -11,7 +11,7 @@
     updatePane, syncControl, clearAllWorkspaces, resetToDefault, makeLeaf, setActiveWorkspace,
     posAppend, applyWindowEdgeResize, orderedItems, reorderTabTopLevel
   } from './stores/layout.js'
-  import { mode, pinned, theme, deleteRequest, captureRequest, settingsOpen, clearSelectionTick, hoverHint, altHeld } from './stores/uiState.js'
+  import { mode, pinned, theme, deleteRequest, captureRequest, settingsOpen, clearSelectionTick, hoverHint, altHeld, ctrlHeld } from './stores/uiState.js'
   import { undo, suppressDuring } from './stores/history.js'
   import { postToCs, postStateSnapshot } from './lib/ipc.js'
 
@@ -122,12 +122,21 @@
   // CornerHandle.svelte) so the user sees what an Alt+corner drag would
   // grab before they start dragging — only the 4 corners light up, not the
   // whole edge, so it's clear a drag has to start right at one of them.
+  // ctrlHeld just feeds StatusBar's modifier-specific hint list (no visual
+  // highlight elsewhere) — tracked in the same block since it needs the
+  // same resync/blur handling.
   // blur is needed too — Alt+Tabbing away from the window doesn't fire a
   // keyup here.
   onMount(() => {
-    function onKeydown(e) { if (e.key === 'Alt') altHeld.set(true) }
-    function onKeyup(e)   { if (e.key === 'Alt') altHeld.set(false) }
-    function onBlur()     { altHeld.set(false) }
+    function onKeydown(e) {
+      if (e.key === 'Alt') altHeld.set(true)
+      else if (e.key === 'Control' || e.key === 'Meta') ctrlHeld.set(true)
+    }
+    function onKeyup(e) {
+      if (e.key === 'Alt') altHeld.set(false)
+      else if (e.key === 'Control' || e.key === 'Meta') ctrlHeld.set(false)
+    }
+    function onBlur() { altHeld.set(false); ctrlHeld.set(false) }
     // Alt is a Windows "system key" (WM_SYSKEYUP) — mid corner-drag its
     // release can get swallowed before reaching this window, leaving
     // altHeld stuck true (corners stay hidden until a later Alt press/
@@ -136,7 +145,13 @@
     // resync from it as a self-healing fallback instead of trusting
     // keyup alone. Gated on an actual change so it doesn't force a
     // getBoundingClientRect() in every CornerHandle on every mousemove.
-    function onPointerMove(e) { if (get(altHeld) !== e.altKey) altHeld.set(e.altKey) }
+    // Ctrl doesn't have that system-key quirk, but resyncing it here too
+    // is free and keeps it equally self-healing.
+    function onPointerMove(e) {
+      if (get(altHeld) !== e.altKey) altHeld.set(e.altKey)
+      const ctrl = e.ctrlKey || e.metaKey
+      if (get(ctrlHeld) !== ctrl) ctrlHeld.set(ctrl)
+    }
     window.addEventListener('keydown', onKeydown)
     window.addEventListener('keyup', onKeyup)
     window.addEventListener('blur', onBlur)
