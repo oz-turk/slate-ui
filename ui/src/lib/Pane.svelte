@@ -10,7 +10,7 @@
   import ActionBar    from './ActionBar.svelte'
   import CornerHandle from './CornerHandle.svelte'
   import ContextMenu  from './ContextMenu.svelte'
-  import { layout, updatePane, findLeaf, newTabId, splitPane, splitPaneSpanning, newSplitId, setSplitSize, collapsePane, findNeighborPane, moveCrossPaneItem, extractSlidersByIds, orderedItems, posBetween, posAppend, withAppendedPositions, reorderTabTopLevel } from '../stores/layout.js'
+  import { layout, updatePane, findLeaf, newTabId, splitPane, splitPaneSpanning, newSplitId, setSplitSize, collapsePane, findNeighborPane, moveCrossPaneItem, extractSlidersByIds, orderedItems, flattenSliderIds, posBetween, posAppend, withAppendedPositions, reorderTabTopLevel } from '../stores/layout.js'
   import { tabDrag, itemDrag } from '../stores/dragState.js'
   import { computeAlignedSnapTargets, snapRaw } from './splitSnap.js'
   import { mode, deleteRequest, captureRequest, clearSelectionTick, hoverHint, theme } from '../stores/uiState.js'
@@ -81,6 +81,10 @@
 
   // ── local UI state ────────────────────────────────────────────────────────────
   let selectedIds   = new Set()
+  // Anchor for ctrl+shift range-select — the last slider explicitly clicked
+  // (plain or toggled). Reset alongside selectedIds in clearSelection so a
+  // stale anchor from a different tab can never leak a cross-tab range.
+  let lastClickedId = null
   let activeDrag    = null
   let dropTarget    = null
   let lastReorderKey = null  // dedupe key so hovering the same slider-row spot doesn't re-splice every event
@@ -100,8 +104,8 @@
       x: Math.min(e.clientX, window.innerWidth  - menuW - 8),
       y: Math.min(e.clientY, window.innerHeight - menuH - 8),
       items: [
-        { label: 'Split Horizontally', action: () => { splitPane(paneId, 'h', 'after'); postStateSnapshot() } },
-        { label: 'Split Vertically',   action: () => { splitPane(paneId, 'v', 'after'); postStateSnapshot() } },
+        { label: 'Split Vertically',   action: () => { splitPane(paneId, 'h', 'after'); postStateSnapshot() } },
+        { label: 'Split Horizontally', action: () => { splitPane(paneId, 'v', 'after'); postStateSnapshot() } },
         'sep',
         { label: 'Sort: Canvas Position', action: () => sortActiveTab('position') },
         { label: 'Sort: Type',            action: () => sortActiveTab('type') },
@@ -513,14 +517,34 @@
   }
 
   // ── selection ─────────────────────────────────────────────────────────────────
-  function onSliderSelect(sliderId, multi) {
+  // shift/ctrl toggle a single row in/out of the selection (existing
+  // behaviour). ctrl+shift instead selects the whole run between the anchor
+  // (lastClickedId) and this row — resolved via flattenSliderIds, so it
+  // follows visual order through nested groups. The anchor only ever comes
+  // from the active tab's own flatten, so a range can't reach across tabs.
+  function onSliderSelect(sliderId, shift, ctrl) {
     if ($mode !== 'edit') return
+    if (shift && ctrl && lastClickedId && lastClickedId !== sliderId) {
+      const order = flattenSliderIds(activeTab)
+      const iFrom = order.indexOf(lastClickedId)
+      const iTo   = order.indexOf(sliderId)
+      if (iFrom !== -1 && iTo !== -1) {
+        const [lo, hi] = iFrom < iTo ? [iFrom, iTo] : [iTo, iFrom]
+        const next = new Set(selectedIds)
+        for (let i = lo; i <= hi; i++) next.add(order[i])
+        selectedIds = next
+        lastClickedId = sliderId
+        return
+      }
+    }
+    const multi = shift || ctrl
     const next = new Set(selectedIds)
     if (multi) { if (next.has(sliderId)) next.delete(sliderId); else next.add(sliderId) }
-    else        { selectedIds = next.has(sliderId) && next.size === 1 ? new Set() : new Set([sliderId]); return }
+    else        { selectedIds = next.has(sliderId) && next.size === 1 ? new Set() : new Set([sliderId]); lastClickedId = sliderId; return }
     selectedIds = next
+    lastClickedId = sliderId
   }
-  function clearSelection() { selectedIds = new Set() }
+  function clearSelection() { selectedIds = new Set(); lastClickedId = null }
 
   // ── ActionBar ─────────────────────────────────────────────────────────────────
   function moveSelectedTo(targetTabId) {
@@ -659,7 +683,7 @@
     } else {
       splitPane(paneId, detail.dir, detail.side, ratioAt(detail.clientX, detail.clientY) * dim, newId)
     }
-    hoverHint.set(`Split ${detail.dir === 'h' ? 'horizontally' : 'vertically'}${spanning ? ' (whole window)' : ''} — drag to resize`)
+    hoverHint.set(`Split ${detail.dir === 'h' ? 'vertically' : 'horizontally'}${spanning ? ' (whole window)' : ''} — drag to resize`)
 
     // If pointerup/pointercancel never reaches window (host app steals focus
     // mid-drag — e.g. Rhino's own window grabbing focus during a live GH
@@ -846,7 +870,7 @@
               on:resizeCommit={e => onPanelResize(slider.id, e.detail, true)}
               on:resizeStart={e  => resizingSliderId = e.detail}
               on:resizeEnd={()   => resizingSliderId = null}
-              on:select={e      => onSliderSelect(slider.id, e.detail)}
+              on:select={e      => onSliderSelect(slider.id, e.detail.shift, e.detail.ctrl)}
               on:remove={() => removeSlider(activeTab.id, slider.id)}
               on:dragStart={() => startDrag('slider', slider.id, activeTab.id, null)}
               on:rowDragOver={e => setDropTarget('slider-row', slider.id, e.detail, null)}
@@ -871,7 +895,7 @@
               on:sliderResizeCommit={e  => onPanelResize(e.detail.id, e.detail.height, true)}
               on:sliderResizeStart={e   => resizingSliderId = e.detail}
               on:sliderResizeEnd={()    => resizingSliderId = null}
-              on:sliderSelect={e        => onSliderSelect(e.detail.id, e.detail.multi)}
+              on:sliderSelect={e        => onSliderSelect(e.detail.id, e.detail.shift, e.detail.ctrl)}
               on:sliderRemove={e        => removeSlider(activeTab.id, e.detail.sliderId)}
               on:headerDragStart={e => startDrag('group', e.detail, activeTab.id, null)}
               on:headerDragOver={e => setDropTarget('group-header', e.detail.id, e.detail.pos, e.detail.groupId)}

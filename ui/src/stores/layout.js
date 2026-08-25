@@ -472,6 +472,22 @@ export function orderedItems(container) {
   return items
 }
 
+// Depth-first, top-to-bottom slider-id order for a tab — the same order
+// GroupSection recurses sliders/groups into when rendering. Pane.svelte's
+// ctrl+shift range-select uses this to resolve "everything between the
+// anchor and the clicked row" regardless of how deeply either is nested.
+export function flattenSliderIds(tab) {
+  const ids = []
+  function walk(container) {
+    for (const item of orderedItems(container)) {
+      if (item.kind === 'slider') ids.push(item.id)
+      else walk(item.data)
+    }
+  }
+  walk(tab)
+  return ids
+}
+
 // Fractional position strictly between two neighbors — either can be null
 // ("no neighbor on that side"). Inserting between two existing items this way
 // never requires renumbering anything else in the container.

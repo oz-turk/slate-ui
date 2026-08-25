@@ -7,7 +7,8 @@
   const shortcuts = [
     { keys: ['Tab'],          desc: 'Toggle Edit / Preview' },
     { keys: ['Click'],        desc: 'Select a control (edit mode)' },
-    { keys: ['Shift', 'Click'], desc: 'Add to selection' },
+    { keys: ['Shift/Ctrl', 'Click'], desc: 'Add to selection' },
+    { keys: ['Ctrl', 'Shift', 'Click'], desc: 'Select range from last click' },
     { keys: ['Esc'],          desc: 'Clear selection' },
     { keys: ['Drag'],         desc: 'Reorder / move controls' },
     { keys: ['x'],            desc: 'Delete control under mouse' },
@@ -18,7 +19,7 @@
     { keys: ['Ctrl', 'Z'],    desc: 'Undo' },
     { keys: ['Ctrl', 'Scroll'], desc: 'Zoom the UI (WebView2 default)' },
     { keys: ['Ctrl', 'drag'], desc: 'Snap resize to slider-row size' },
-    { keys: ['Alt', 'corner drag'], desc: 'Split pushes the whole window, not just one pane' },
+    { keys: ['Alt', 'window corner drag'], desc: 'Add a pane at the edge without disturbing the rest of the layout' },
     { keys: ['Edge drag'],          desc: 'Aligned edges move together automatically' },
     { keys: ['Alt', 'edge drag'],   desc: 'Break this edge off the group (or just shake it)' },
   ]

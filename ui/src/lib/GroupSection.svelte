@@ -95,7 +95,7 @@
       class:drop-nest={dropNest}
       style="padding-left: {6 + depth * 14}px"
       on:click={() => dispatch('toggle', group.id)}
-      on:mouseenter={() => hoverHint.set('Groups keep sliders together — drag items onto the header to add them, drag the group itself to reorder (top/bottom edge) or nest it (middle)')}
+      on:mouseenter={() => hoverHint.set('Double-click: rename  ·  Drag items onto the header to add them, drag the group itself to reorder (top/bottom edge) or nest it (middle)')}
       on:mouseleave={() => hoverHint.set(null)}
       on:dragover|preventDefault={headerDragOver}
       on:dragleave={headerDragLeave}
@@ -157,7 +157,7 @@
               on:resizeCommit={e => dispatch('sliderResizeCommit', { id: slider.id, height: e.detail })}
               on:resizeStart={e  => dispatch('sliderResizeStart', e.detail)}
               on:resizeEnd={()   => dispatch('sliderResizeEnd')}
-              on:select={e      => dispatch('sliderSelect',      { id: slider.id, multi: e.detail })}
+              on:select={e      => dispatch('sliderSelect',      { id: slider.id, shift: e.detail.shift, ctrl: e.detail.ctrl })}
               on:remove={()      => dispatch('sliderRemove',     { groupId: group.id, sliderId: slider.id })}
               on:dragStart={()  => dispatch('sliderDragStart',   { sliderId: slider.id, groupId: group.id })}
               on:dragEnd={()    => dispatch('sliderDragEnd')}
@@ -212,8 +212,17 @@
 
 <style>
   .group {
-    border-bottom: 1px solid var(--grid);
     position: relative;
+  }
+  .group::after {
+    content: '';
+    position: absolute;
+    left: 12px;
+    right: 12px;
+    bottom: 0;
+    height: 1px;
+    background: var(--edge-tint);
+    pointer-events: none;
   }
 
   .group-header.drop-nest {

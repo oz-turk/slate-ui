@@ -88,7 +88,7 @@
     class:row-dragging={rowDragging}
     bind:this={rowEl}
     style={dragTranslateY ? `transform: translateY(${dragTranslateY}px)` : ''}
-    on:click={e => mode === 'edit' && dispatch('select', e.shiftKey || e.ctrlKey)}
+    on:click={e => mode === 'edit' && dispatch('select', { shift: e.shiftKey, ctrl: e.ctrlKey })}
     on:dragenter|preventDefault={e => e.dataTransfer.dropEffect = 'move'}
     on:dragover|preventDefault={e => rowDragOver(e, dispatch)}
     on:dragleave={e => rowDragLeave(e, dispatch)}
@@ -158,9 +158,18 @@
     gap: 0;
     padding: 0 12px;
     height: 44px;
-    border-bottom: 1px solid var(--grid);
     transition: background 0.1s, transform 0.08s ease-out;
     position: relative;
+  }
+  .row::after {
+    content: '';
+    position: absolute;
+    left: 12px;
+    right: 12px;
+    bottom: 0;
+    height: 1px;
+    background: var(--edge-tint);
+    pointer-events: none;
   }
   .row:hover          { background: var(--bg); }
   .row.edit           { grid-template-columns: 20px var(--name-col-w, 110px) 44px 1fr 44px 68px 24px; padding: 0 8px 0 6px; }
