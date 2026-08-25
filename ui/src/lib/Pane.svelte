@@ -97,6 +97,28 @@
   let resizingSliderId = null  // row currently being resized — flip is skipped for it (see row-slot)
   let contextMenu = null  // { x, y, items } | null — right-click menu on the pane itself
 
+  // The "Right-click: split or close" hint is only useful while hovering
+  // empty pane background — over a row/group it just sits there hiding
+  // whatever that control might want to say, even though right-click still
+  // works there too. mouseover/mouseout (bubbling) instead of mouseenter/
+  // mouseleave so re-entering the background between rows re-shows it.
+  function onContentMouseOver(e) {
+    if ($mode !== 'edit') return
+    hoverHint.set(e.target.closest('[data-slider-id], [data-group-id]') ? null : 'Right-click: split or close this pane')
+  }
+  function onContentMouseOut(e) {
+    if (!e.currentTarget.contains(e.relatedTarget)) hoverHint.set(null)
+  }
+
+  // Menu-triggered split (unlike drag-split, there's no cursor position to
+  // derive a ratio from) — sizeA is set to half of the pane's current pixel
+  // size so the fresh pane lands dead centre instead of the fixed default.
+  function splitEven(dir) {
+    const rect = paneEl.getBoundingClientRect()
+    splitPane(paneId, dir, 'after', (dir === 'h' ? rect.width : rect.height) / 2)
+    postStateSnapshot()
+  }
+
   function onPaneContextMenu(e) {
     e.preventDefault()
     const menuW = 170, menuH = 210
@@ -104,8 +126,8 @@
       x: Math.min(e.clientX, window.innerWidth  - menuW - 8),
       y: Math.min(e.clientY, window.innerHeight - menuH - 8),
       items: [
-        { label: 'Split Vertically',   action: () => { splitPane(paneId, 'h', 'after'); postStateSnapshot() } },
-        { label: 'Split Horizontally', action: () => { splitPane(paneId, 'v', 'after'); postStateSnapshot() } },
+        { label: 'Split Vertically',   action: () => splitEven('h') },
+        { label: 'Split Horizontally', action: () => splitEven('v') },
         'sep',
         { label: 'Sort: Canvas Position', action: () => sortActiveTab('position') },
         { label: 'Sort: Type',            action: () => sortActiveTab('type') },
@@ -838,12 +860,13 @@
     {/if}
   </header>
 
+  <!-- svelte-ignore a11y-mouse-events-have-key-events -->
   <section class="content"
     style="--name-col-w: {nameColWidth}px"
     on:dragenter|preventDefault={e => activeDrag && (e.dataTransfer.dropEffect = 'move')}
     on:dragover|preventDefault={e  => activeDrag && (e.dataTransfer.dropEffect = 'move')}
-    on:mouseenter={() => $mode === 'edit' && hoverHint.set('Right-click: split or close this pane')}
-    on:mouseleave={() => hoverHint.set(null)}
+    on:mouseover={onContentMouseOver}
+    on:mouseout={onContentMouseOut}
   >
     {#if !activeTab || (activeTab.sliders.length === 0 && activeTab.groups.length === 0)}
       <div class="empty">
