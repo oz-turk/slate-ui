@@ -8,7 +8,8 @@
   import SettingsPanel  from './lib/SettingsPanel.svelte'
   import {
     layout, workspaces, activeWorkspaceId, allLeaves, restoreLayout, restoreWorkspaces,
-    updatePane, syncControl, clearAllWorkspaces, resetToDefault, makeLeaf, setActiveWorkspace
+    updatePane, syncControl, clearAllWorkspaces, resetToDefault, makeLeaf, setActiveWorkspace,
+    posAppend
   } from './stores/layout.js'
   import { mode, pinned, theme, deleteRequest, captureRequest, settingsOpen, clearSelectionTick, hoverHint, altHeld } from './stores/uiState.js'
   import { undo, suppressDuring } from './stores/history.js'
@@ -122,8 +123,13 @@
 
       if (e.key === 'c') {
         const el = document.elementFromPoint(mouseX, mouseY)
-        const paneEl = el?.closest('[data-pane-id]')
-        if (paneEl) captureRequest.set(paneEl.dataset.paneId)
+        const paneEl  = el?.closest('[data-pane-id]')
+        // closest() walks up from whatever's directly under the mouse — a
+        // slider row inside a group still resolves to that group's own
+        // .group div, and a nested group resolves to the innermost one, same
+        // as the group's own "+ Capture" button already does per-group.
+        const groupEl = el?.closest('[data-group-id]')
+        if (paneEl) captureRequest.set({ paneId: paneEl.dataset.paneId, groupId: groupEl?.dataset.groupId ?? null })
         return
       }
     }
@@ -153,7 +159,7 @@
   function addSliderToGroupInTree(groups, groupId, slider) {
     return groups.map(g =>
       g.id === groupId
-        ? { ...g, sliders: [...g.sliders, slider] }
+        ? { ...g, sliders: [...g.sliders, { ...slider, pos: posAppend(g) }] }
         : { ...g, groups: addSliderToGroupInTree(g.groups ?? [], groupId, slider) }
     )
   }
@@ -177,7 +183,7 @@
     updatePane(targetPaneId, p => ({
       tabs: p.tabs.map(t => t.id !== targetTabId ? t : groupId
         ? { ...t, groups: addSliderToGroupInTree(t.groups, groupId, control) }
-        : { ...t, sliders: [...t.sliders, control] })
+        : { ...t, sliders: [...t.sliders, { ...control, pos: posAppend(t) }] })
     }))
     postStateSnapshot()
   }

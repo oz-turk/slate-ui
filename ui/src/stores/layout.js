@@ -255,6 +255,7 @@ export function splitWithTab(targetPaneId, dir, side, fromPaneId, tabId) {
 // collapse it into the current (or a fresh) single workspace.
 export function restoreLayout(newLayout) {
   reconcileCounters(newLayout)
+  newLayout = migrateTabPositions(newLayout)
   const id = get(activeWorkspaceId) ?? wid()
   workspaces.set([{ id, label: 'Workspace 1', layout: newLayout }])
   activeWorkspaceId.set(id)
@@ -266,6 +267,7 @@ export function restoreWorkspaces(workspaceList, activeId) {
     _wc = bumpCounterPastId(w.id, 'ws_', _wc)
     reconcileCounters(w.layout)
   }
+  workspaceList = workspaceList.map(w => ({ ...w, layout: migrateTabPositions(w.layout) }))
   workspaces.set(workspaceList)
   activeWorkspaceId.set(activeId ?? workspaceList[0]?.id ?? null)
 }
@@ -434,6 +436,67 @@ export function findNeighborPane(node, paneId, dir, side) {
   return walk(node, [])
 }
 
+// ── unified slider/group ordering ─────────────────────────────────────────────
+// Sliders and groups live in two separate arrays (sliders[]/groups[]) — kept
+// that way because the C# side (SlateWindow.cs's RestoreState) reads exactly
+// those two keys off the saved JSON to reattach live GH_NumberSlider refs, so
+// the wire shape can't change. Visual order instead comes from a `pos` field
+// on each item; these helpers are the single place that combines the two
+// arrays into one ordered view, used by both rendering (Pane.svelte,
+// GroupSection.svelte) and every insert/reorder function below.
+export function orderedItems(container) {
+  const items = [
+    ...container.sliders.map(s => ({ kind: 'slider', id: s.id, pos: s.pos ?? 0, data: s })),
+    ...(container.groups ?? []).map(g => ({ kind: 'group', id: g.id, pos: g.pos ?? 0, data: g })),
+  ]
+  items.sort((a, b) => a.pos - b.pos)
+  return items
+}
+
+// Fractional position strictly between two neighbors — either can be null
+// ("no neighbor on that side"). Inserting between two existing items this way
+// never requires renumbering anything else in the container.
+export function posBetween(before, after) {
+  if (before == null && after == null) return 0
+  if (before == null) return after - 1
+  if (after == null)  return before + 1
+  return (before + after) / 2
+}
+
+// Position for appending after everything currently in a container.
+export function posAppend(container) {
+  const items = orderedItems(container)
+  return items.length ? items[items.length - 1].pos + 1 : 0
+}
+
+// Assigns each of `items` a fresh, sequentially-increasing pos starting right
+// after whatever's already in `container` — used by every "just tack this
+// onto the end" mutation (cross-pane/cross-tab/cross-group moves, capture,
+// group-removal promoting its children back to the parent).
+export function withAppendedPositions(container, items) {
+  let p = posAppend(container)
+  return items.map(it => ({ ...it, pos: p++ }))
+}
+
+// Old saves have no `pos` field — assigns one from today's fixed visual order
+// (all sliders, then all groups, recursively into each nested group) so a
+// restored file looks exactly like it did before `pos` existed. A no-op for
+// any item that already has one (lets a partially-migrated tree pass through
+// unchanged too).
+function migratePositions(container) {
+  let i = 0
+  const sliders = container.sliders.map(s => s.pos != null ? s : { ...s, pos: i++ })
+  const groups = (container.groups ?? []).map(g => {
+    const g2 = g.pos != null ? g : { ...g, pos: i++ }
+    return { ...g2, ...migratePositions(g2) }
+  })
+  return { sliders, groups }
+}
+function migrateTabPositions(node) {
+  if (node.type === 'leaf') return { ...node, tabs: node.tabs.map(t => ({ ...t, ...migratePositions(t) })) }
+  return { ...node, a: migrateTabPositions(node.a), b: migrateTabPositions(node.b) }
+}
+
 // Pulls every slider whose id is in idSet out of a tab (top-level + any depth of
 // nested groups), preserving each list's relative order. Exported so Pane.svelte's
 // own multi-select drag/move logic can reuse it instead of keeping a second copy.
@@ -479,8 +542,9 @@ export function moveCrossPaneItem(fromPaneId, fromTabId, itemIds, itemType, toPa
       if (n.paneId !== toPaneId) return n
       return { ...n, tabs: n.tabs.map(t => {
         if (t.id !== toTabId) return t
-        if (itemType === 'slider') return { ...t, sliders: [...t.sliders, ...items] }
-        return { ...t, groups: [...t.groups, ...items] }
+        const placed = withAppendedPositions(t, items)
+        if (itemType === 'slider') return { ...t, sliders: [...t.sliders, ...placed] }
+        return { ...t, groups: [...t.groups, ...placed] }
       })}
     }
     const extracted = extract(l)

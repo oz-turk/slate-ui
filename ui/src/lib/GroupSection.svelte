@@ -9,6 +9,7 @@
   import PanelRow from './PanelRow.svelte'
   import ColourPickerRow from './ColourPickerRow.svelte'
   import { hoverHint } from '../stores/uiState.js'
+  import { orderedItems } from '../stores/layout.js'
   const dispatch = createEventDispatcher()
 
   // slider.type → row component (falls back to SliderRow when unset/unknown)
@@ -18,11 +19,20 @@
   export let mode         = 'preview'
   export let selectedIds  = new Set()
   export let dropHighlight = false
-  export let dropBefore    = false
+  export let dropNest      = false
+  export let dropBeforeMe  = false
+  export let dropAfterMe   = false
   export let dropTarget    = null
   export let activeDrag    = null
   export let depth         = 0
   export let resizingSliderId = null  // row currently being resized — flip is skipped for it
+  // The id of whichever container (a parent group, or null for top-level)
+  // this group instance itself lives in — rides along on headerDragOver/Drop
+  // so Pane.svelte always knows exactly where to insert a dragged group,
+  // same as sliderRowDragOver already carries groupId for slider rows.
+  export let containerId   = null
+
+  $: items = orderedItems(group)
 
   let editingLabel = false
   let labelValue   = ''
@@ -42,22 +52,50 @@
     if (e.key === 'Enter')  { commitRename(); e.preventDefault() }
     if (e.key === 'Escape') { editingLabel = false }
   }
-
-  function headerDragOver(e) { dispatch('headerDragOver') }
-  function headerDragLeave(e) {
-    if (!e.currentTarget.contains(e.relatedTarget)) dispatch('headerDragLeave')
+  function focusAndSelect(node) {
+    node.focus()
+    node.select()
   }
-  function headerDrop(e) { dispatch('headerDrop') }
+
+  // Header is split into three drop zones so a dragged group can be reordered
+  // as a sibling (top/bottom edge, like slider rows) as well as nested inside
+  // (middle band) — top-level VS Code/Notion-style tree convention.
+  function headerZone(e) {
+    const rect = e.currentTarget.getBoundingClientRect()
+    const frac = (e.clientY - rect.top) / rect.height
+    return frac < 0.25 ? 'before' : frac > 0.75 ? 'after' : 'nest'
+  }
+  // Every dispatch below carries group.id (and containerId, the container
+  // THIS group lives in) explicitly rather than relying on the listener's
+  // own closure — these events bubble up unchanged through a chain of bare
+  // `on:headerDragOver` forwards on nested <svelte:self>, so by the time
+  // Pane.svelte's listener sees one, it has no way to tell which depth (or
+  // which parent container) it originated at unless the payload says so
+  // (same reason sliderId+groupId ride along in sliderRowDragOver's payload —
+  // this lets a dragged group target a slider row's container directly
+  // instead of needing to search the whole tree for it).
+  function headerDragOver(e) { dispatch('headerDragOver', { id: group.id, pos: headerZone(e), groupId: containerId }) }
+  function headerDragLeave(e) {
+    if (!e.currentTarget.contains(e.relatedTarget)) dispatch('headerDragLeave', group.id)
+  }
+  function headerDrop(e) { dispatch('headerDrop', { id: group.id, pos: headerZone(e), groupId: containerId }) }
+
+  // Same "fade the thing being dragged" treatment SliderRow gives its own
+  // .row via row-dragging — applied to the outer .group div so it dims the
+  // header AND everything inside (child sliders, nested subgroups) as one
+  // unit, for free, via plain CSS opacity inheritance.
+  let groupDragging = false
 </script>
 
 <!-- svelte-ignore a11y-no-static-element-interactions -->
-<div class="group" class:drop-before={dropBefore} style="--depth:{depth}">
+<div class="group" class:drop-before-me={dropBeforeMe} class:drop-after-me={dropAfterMe} class:group-dragging={groupDragging} data-group-id={group.id} style="--depth:{depth}">
   <!-- svelte-ignore a11y-click-events-have-key-events -->
   <div class="group-header"
       class:drop-highlight={dropHighlight}
+      class:drop-nest={dropNest}
       style="padding-left: {6 + depth * 14}px"
       on:click={() => dispatch('toggle', group.id)}
-      on:mouseenter={() => hoverHint.set('Groups keep sliders together — drag items onto the header to add them, drag the group itself to move or nest it')}
+      on:mouseenter={() => hoverHint.set('Groups keep sliders together — drag items onto the header to add them, drag the group itself to reorder (top/bottom edge) or nest it (middle)')}
       on:mouseleave={() => hoverHint.set(null)}
       on:dragover|preventDefault={headerDragOver}
       on:dragleave={headerDragLeave}
@@ -68,8 +106,8 @@
       <div class="handle"
           draggable="true"
           on:click|stopPropagation
-          on:dragstart={e => { e.dataTransfer.effectAllowed = 'move'; dispatch('headerDragStart') }}
-          on:dragend={() => dispatch('groupDragEnd')}
+          on:dragstart={e => { e.dataTransfer.effectAllowed = 'move'; groupDragging = true; dispatch('headerDragStart', group.id) }}
+          on:dragend={() => { groupDragging = false; dispatch('groupDragEnd') }}
       >
         <svg width="8" height="12" viewBox="0 0 8 12" fill="currentColor">
           <circle cx="2" cy="2"  r="1.2"/><circle cx="6" cy="2"  r="1.2"/>
@@ -82,8 +120,7 @@
     <span class="chevron" class:open={!group.collapsed}>›</span>
 
     {#if editingLabel}
-      <!-- svelte-ignore a11y-autofocus -->
-      <input class="label-input" bind:value={labelValue} autofocus
+      <input class="label-input" bind:value={labelValue} use:focusAndSelect
         on:blur={commitRename} on:keydown={onKeydown} on:click|stopPropagation />
     {:else}
       <!-- svelte-ignore a11y-no-static-element-interactions -->
@@ -104,65 +141,70 @@
         <div class="empty-group">Empty group</div>
       {/if}
 
-      {#each group.sliders as slider, i (slider.id)}
-        <div class="row-slot" animate:flip={{ duration: slider.id === resizingSliderId ? 0 : 150, easing: cubicOut }}>
-          <svelte:component
-            this={ROW_COMPONENTS[slider.type] ?? SliderRow}
-            {slider} {mode}
-            selected={selectedIds.has(slider.id)}
-            isFirst={i === 0}
-            isLast={i === group.sliders.length - 1}
-            on:change={e      => dispatch('sliderChange',      { id: slider.id, type: slider.type, value: e.detail, multiSelect: slider.multiSelect })}
-            on:commit={e      => dispatch('sliderCommit',      { id: slider.id, type: slider.type, value: e.detail })}
-            on:resize={e       => dispatch('sliderResize',       { id: slider.id, height: e.detail })}
-            on:resizeCommit={e => dispatch('sliderResizeCommit', { id: slider.id, height: e.detail })}
-            on:resizeStart={e  => dispatch('sliderResizeStart', e.detail)}
-            on:resizeEnd={()   => dispatch('sliderResizeEnd')}
-            on:select={e      => dispatch('sliderSelect',      { id: slider.id, multi: e.detail })}
-            on:remove={()      => dispatch('sliderRemove',     { groupId: group.id, sliderId: slider.id })}
-            on:dragStart={()  => dispatch('sliderDragStart',   { sliderId: slider.id, groupId: group.id })}
-            on:dragEnd={()    => dispatch('sliderDragEnd')}
-            on:rowDragOver={e => dispatch('sliderRowDragOver', { sliderId: slider.id, pos: e.detail, groupId: group.id })}
-            on:rowDragLeave={()=> dispatch('sliderRowDragLeave',{ sliderId: slider.id })}
-            on:rowDrop={e     => dispatch('sliderRowDrop',     { sliderId: slider.id, pos: e.detail })}
-          />
+      {#each items as item, i (item.id)}
+        <div class="row-slot" animate:flip={{ duration: item.kind === 'slider' && item.data.id === resizingSliderId ? 0 : 150, easing: cubicOut }}>
+          {#if item.kind === 'slider'}
+            {@const slider = item.data}
+            <svelte:component
+              this={ROW_COMPONENTS[slider.type] ?? SliderRow}
+              {slider} {mode}
+              selected={selectedIds.has(slider.id)}
+              isFirst={i === 0}
+              isLast={i === items.length - 1}
+              on:change={e      => dispatch('sliderChange',      { id: slider.id, type: slider.type, value: e.detail, multiSelect: slider.multiSelect })}
+              on:commit={e      => dispatch('sliderCommit',      { id: slider.id, type: slider.type, value: e.detail })}
+              on:resize={e       => dispatch('sliderResize',       { id: slider.id, height: e.detail })}
+              on:resizeCommit={e => dispatch('sliderResizeCommit', { id: slider.id, height: e.detail })}
+              on:resizeStart={e  => dispatch('sliderResizeStart', e.detail)}
+              on:resizeEnd={()   => dispatch('sliderResizeEnd')}
+              on:select={e      => dispatch('sliderSelect',      { id: slider.id, multi: e.detail })}
+              on:remove={()      => dispatch('sliderRemove',     { groupId: group.id, sliderId: slider.id })}
+              on:dragStart={()  => dispatch('sliderDragStart',   { sliderId: slider.id, groupId: group.id })}
+              on:dragEnd={()    => dispatch('sliderDragEnd')}
+              on:rowDragOver={e => dispatch('sliderRowDragOver', { sliderId: slider.id, pos: e.detail, groupId: group.id })}
+              on:rowDragLeave={()=> dispatch('sliderRowDragLeave',{ sliderId: slider.id })}
+              on:rowDrop={e     => dispatch('sliderRowDrop',     { sliderId: slider.id, pos: e.detail })}
+            />
+          {:else}
+            {@const subGroup = item.data}
+            <svelte:self
+              group={subGroup}
+              {mode}
+              {selectedIds}
+              {dropTarget}
+              {resizingSliderId}
+              {activeDrag}
+              depth={depth + 1}
+              containerId={group.id}
+              dropHighlight={dropTarget?.type === 'group-header' && dropTarget.id === subGroup.id && activeDrag?.type === 'slider'}
+              dropNest={dropTarget?.type === 'group-header' && dropTarget.id === subGroup.id && dropTarget.pos === 'nest' && activeDrag?.type === 'group'}
+              dropBeforeMe={dropTarget?.type === 'group-header' && dropTarget.id === subGroup.id && dropTarget.pos === 'before' && activeDrag?.type === 'group'}
+              dropAfterMe={dropTarget?.type === 'group-header' && dropTarget.id === subGroup.id && dropTarget.pos === 'after' && activeDrag?.type === 'group'}
+              on:toggle
+              on:rename
+              on:remove
+              on:sliderChange
+              on:sliderCommit
+              on:sliderResize
+              on:sliderResizeCommit
+              on:sliderResizeStart
+              on:sliderResizeEnd
+              on:sliderSelect
+              on:sliderRemove
+              on:headerDragStart
+              on:headerDragOver
+              on:headerDragLeave
+              on:headerDrop
+              on:groupDragEnd
+              on:sliderDragStart
+              on:sliderDragEnd
+              on:sliderRowDragOver
+              on:sliderRowDragLeave
+              on:sliderRowDrop
+              on:capture
+            />
+          {/if}
         </div>
-      {/each}
-
-      {#each group.groups ?? [] as subGroup (subGroup.id)}
-        <svelte:self
-          group={subGroup}
-          {mode}
-          {selectedIds}
-          {dropTarget}
-          {resizingSliderId}
-          {activeDrag}
-          depth={depth + 1}
-          dropHighlight={dropTarget?.type === 'group-header' && dropTarget.id === subGroup.id && activeDrag?.type === 'slider'}
-          dropBefore={dropTarget?.type === 'group-header' && dropTarget.id === subGroup.id && activeDrag?.type === 'group'}
-          on:toggle
-          on:rename
-          on:remove
-          on:sliderChange
-          on:sliderCommit
-          on:sliderResize
-          on:sliderResizeCommit
-          on:sliderResizeStart
-          on:sliderResizeEnd
-          on:sliderSelect
-          on:sliderRemove
-          on:headerDragStart
-          on:headerDragOver
-          on:headerDragLeave
-          on:headerDrop
-          on:groupDragEnd
-          on:sliderDragStart
-          on:sliderDragEnd
-          on:sliderRowDragOver
-          on:sliderRowDragLeave
-          on:sliderRowDrop
-          on:capture
-        />
       {/each}
     </div>
   {/if}
@@ -174,10 +216,30 @@
     position: relative;
   }
 
-  .group.drop-before .group-header {
+  .group-header.drop-nest {
     background: rgba(var(--accent-rgb), 0.12) !important;
     outline: 1px solid rgba(var(--accent-rgb), 0.33);
   }
+
+  /* Top/bottom edge of the header = reorder as a sibling, not nest — shown as
+     an insertion line (same idea as sliders visibly shifting on live reorder,
+     but a group block is tall enough that the shift alone isn't always obvious). */
+  .group.drop-before-me::before,
+  .group.drop-after-me::after {
+    content: '';
+    position: absolute;
+    left: 0; right: 0;
+    height: 2px;
+    background: var(--accent);
+    z-index: 1;
+  }
+  .group.drop-before-me::before { top: -1px; }
+  .group.drop-after-me::after   { bottom: -1px; }
+
+  /* Mirrors SliderRow's .row.row-dragging — dims the group being dragged
+     (header + everything inside it) so it reads clearly as "this is what's
+     moving" against the live-reordering siblings around it. */
+  .group.group-dragging { opacity: 0.5; z-index: 2; }
 
   .group-header {
     display: flex;

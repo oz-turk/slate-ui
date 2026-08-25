@@ -27,7 +27,7 @@ export const hoverHint = writable(null)
 // row/pane component. App.svelte sets these; the matching Pane instance
 // (found by paneId) reacts and clears it.
 export const deleteRequest  = writable(null)  // { paneId, sliderId } | null
-export const captureRequest = writable(null)  // paneId | null
+export const captureRequest = writable(null)  // { paneId, groupId } | null — groupId null means "capture to the tab, not a specific group"
 
 // Toggled by the gear icon in EditToolbar.
 export const settingsOpen = writable(false)
