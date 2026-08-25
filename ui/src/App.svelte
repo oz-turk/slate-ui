@@ -65,9 +65,27 @@
     resizeSettleTimer = setTimeout(postStateSnapshot, 400)
   }
 
+  // Dragging the window by its title bar (a pure move, no size change) never
+  // fires a `resize` event, so prevScreenX/Y would otherwise go stale after
+  // any such move. The next real edge-resize tick would then diff against
+  // that stale pre-move position and compute a phantom delta, shrinking a
+  // pane on the opposite edge from the one actually being dragged. Polling
+  // at a low frequency keeps prevScreenX/Y caught up during idle periods;
+  // it's skipped while resizeSettleTimer is set (mid-gesture or still
+  // within its settle window) so it never fights the real resize math.
+  let moveResyncTimer = null
+
   onMount(() => {
     window.addEventListener('resize', onWindowResize)
-    return () => window.removeEventListener('resize', onWindowResize)
+    moveResyncTimer = setInterval(() => {
+      if (resizeSettleTimer) return
+      prevScreenX = window.screenX
+      prevScreenY = window.screenY
+    }, 250)
+    return () => {
+      window.removeEventListener('resize', onWindowResize)
+      clearInterval(moveResyncTimer)
+    }
   })
 
   // ── Global keyboard shortcuts ────────────────────────────────────────────────
