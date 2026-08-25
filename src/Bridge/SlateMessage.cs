@@ -33,6 +33,12 @@ public static class SlateEvent
     public static string HumanValueListAdded(string tabId, string id, string name, IEnumerable<string> options, object value, bool multiSelect, bool cycle, bool loop, string? groupId = null) =>
         JsonSerializer.Serialize(new { type = "humanValueList_added", tabId, id, name, options, value, multiSelect, cycle, loop, groupId });
 
+    // Reply to Pane's "sort_positions_request" (right-click Sort: Canvas
+    // Position) — live GH pivot per requested id, as [x, y]. Computed fresh
+    // for this one round trip; never stored on the C# or JS side.
+    public static string SortPositionsResult(string tabId, IDictionary<string, float[]> positions) =>
+        JsonSerializer.Serialize(new { type = "sort_positions_result", tabId, positions });
+
     public static string ZoomChanged(double factor) =>
         JsonSerializer.Serialize(new { type = "zoom_changed", factor });
 

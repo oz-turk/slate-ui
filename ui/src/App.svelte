@@ -9,7 +9,7 @@
   import {
     layout, workspaces, activeWorkspaceId, allLeaves, restoreLayout, restoreWorkspaces,
     updatePane, syncControl, clearAllWorkspaces, resetToDefault, makeLeaf, setActiveWorkspace,
-    posAppend, applyWindowEdgeResize
+    posAppend, applyWindowEdgeResize, orderedItems, reorderTabTopLevel
   } from './stores/layout.js'
   import { mode, pinned, theme, deleteRequest, captureRequest, settingsOpen, clearSelectionTick, hoverHint, altHeld } from './stores/uiState.js'
   import { undo, suppressDuring } from './stores/history.js'
@@ -237,6 +237,31 @@
     postStateSnapshot()
   }
 
+  // ── sort_positions_result support ────────────────────────────────────────────
+  function collectSliderIdsDeep(sliders, groups) {
+    const ids = (sliders ?? []).map(s => s.id)
+    for (const g of groups ?? []) ids.push(...collectSliderIdsDeep(g.sliders, g.groups))
+    return ids
+  }
+  // [y, x] sort key — a slider uses its own live pivot; a group uses the
+  // topmost (then leftmost) pivot among its slider descendants, at any
+  // nesting depth, so a group sorts to wherever its "highest" child sits.
+  // Missing/unresolved positions (id no longer live in the GH doc, or an
+  // empty group) sort last.
+  function sortPositionKey(item, positions) {
+    if (item.kind === 'slider') {
+      const p = positions[item.id]
+      return p ? [p[1], p[0]] : [Infinity, Infinity]
+    }
+    let best = [Infinity, Infinity]
+    for (const id of collectSliderIdsDeep(item.data.sliders, item.data.groups)) {
+      const p = positions[id]
+      if (!p) continue
+      if (p[1] < best[0] || (p[1] === best[0] && p[0] < best[1])) best = [p[1], p[0]]
+    }
+    return best
+  }
+
   // WebView2's own Ctrl+scroll zoom — C# posts the new factor as it changes;
   // shown as a transient status-bar hint (same slot hover hints use) since
   // there's no hover/leave pair to key off of, just cleared a beat after the
@@ -338,6 +363,29 @@
     if (msg.type === 'reset') {
       resetToDefault()
       postStateSnapshot()
+    }
+
+    // Reply to Pane.svelte's 'sort_positions_request' (its right-click Sort:
+    // Canvas Position) — msg.positions is { sliderId: [x, y] }, the live GH
+    // pivot for each slider id it asked about. Fetched fresh and used once
+    // here to compute a new top-level order for that tab; the coordinates
+    // themselves are never stored, only the resulting `pos` (see
+    // reorderTabTopLevel) — same field every other reorder already persists.
+    if (msg.type === 'sort_positions_result') {
+      const leaf = allLeaves(get(layout)).find(l => l.tabs.some(t => t.id === msg.tabId))
+      const tab = leaf?.tabs.find(t => t.id === msg.tabId)
+      if (leaf && tab) {
+        const sortedIds = [...orderedItems(tab)]
+          .sort((a, b) => {
+            const ka = sortPositionKey(a, msg.positions), kb = sortPositionKey(b, msg.positions)
+            return ka[0] - kb[0] || ka[1] - kb[1]
+          })
+          .map(it => it.id)
+        updatePane(leaf.paneId, p => ({
+          tabs: p.tabs.map(t => t.id === tab.id ? reorderTabTopLevel(t, sortedIds) : t)
+        }))
+        postStateSnapshot()
+      }
     }
 
     if (msg.type === 'restore_state') {

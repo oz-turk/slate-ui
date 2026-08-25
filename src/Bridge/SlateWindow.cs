@@ -193,6 +193,25 @@ public class SlateWindow : Form
     // and runs fine on a machine without Pancake installed.
     private readonly Dictionary<string, IGH_Param> _pancakeTrueOnlyButtons = new();
 
+    // Live GH canvas position for an already-captured id — checks every
+    // per-type registry above (same set RestoreState re-attaches from). Used
+    // only for the ephemeral "sort_positions_request" round trip; never
+    // cached or persisted.
+    private bool TryGetLivePivot(string id, out System.Drawing.PointF pivot)
+    {
+        if (_sliders.TryGetValue(id, out var sl))          { pivot = sl.Attributes.Pivot;  return true; }
+        if (_toggles.TryGetValue(id, out var tg))           { pivot = tg.Attributes.Pivot;  return true; }
+        if (_buttons.TryGetValue(id, out var bt))           { pivot = bt.Attributes.Pivot;  return true; }
+        if (_valueLists.TryGetValue(id, out var vl))        { pivot = vl.Attributes.Pivot;  return true; }
+        if (_panels.TryGetValue(id, out var pn))            { pivot = pn.Attributes.Pivot;  return true; }
+        if (_itemPickers.TryGetValue(id, out var ip))       { pivot = ip.Attributes.Pivot;  return true; }
+        if (_humanValueLists.TryGetValue(id, out var hv))   { pivot = hv.Attributes.Pivot;  return true; }
+        if (_colourPickers.TryGetValue(id, out var cp))     { pivot = cp.Attributes.Pivot;  return true; }
+        if (_pancakeTrueOnlyButtons.TryGetValue(id, out var pb)) { pivot = pb.Attributes.Pivot; return true; }
+        pivot = default;
+        return false;
+    }
+
     // 8-digit hex (#RRGGBBAA) so alpha round-trips through the wire alongside RGB.
     private static string ColorToHex(Color c) => $"#{c.R:X2}{c.G:X2}{c.B:X2}{c.A:X2}";
     private static Color HexToColor(string hex)
@@ -825,6 +844,28 @@ public class SlateWindow : Form
                     string? groupId = root.TryGetProperty("groupId", out var g) ? g.GetString() : null;
                     CaptureSelected(tabId, groupId);
                     break;
+
+                // Pane's right-click "Sort: Canvas Position" — JS never stores GH
+                // pivots itself (would bloat every saved .gh's ui_state), so it
+                // asks for them live here, once, for exactly the ids it needs.
+                case "sort_positions_request":
+                {
+                    string sortTabId = root.TryGetProperty("tabId", out var stid) ? stid.GetString() ?? "" : "";
+                    var sortIds = new List<string>();
+                    if (root.TryGetProperty("ids", out var idsEl))
+                        foreach (var idEl in idsEl.EnumerateArray())
+                            sortIds.Add(idEl.GetString() ?? "");
+
+                    Invoke(() =>
+                    {
+                        var positions = new Dictionary<string, float[]>();
+                        foreach (var sortId in sortIds)
+                            if (TryGetLivePivot(sortId, out var pivot))
+                                positions[sortId] = new[] { pivot.X, pivot.Y };
+                        PostToJs(SlateEvent.SortPositionsResult(sortTabId, positions));
+                    });
+                    break;
+                }
 
                 case "ui_ready":
                     // Page (re)loaded — restore state if available

@@ -120,44 +120,41 @@ public class SlatePanel : GH_Component
             if (capture)
             {
                 var doc = OnPingDocument();
+                // Canvas order — top-to-bottom (Pivot.Y) then left-to-right (Pivot.X) —
+                // rather than doc.Objects' internal (creation) order, and rather than
+                // grouping by type first: mixed-type selections capture interleaved
+                // exactly as they sit on the canvas.
                 var selected = doc?.Objects
                     .Where(o => o.Attributes?.Selected == true)
+                    .OrderBy(o => o.Attributes.Pivot.Y)
+                    .ThenBy(o => o.Attributes.Pivot.X)
                     .ToList() ?? new List<IGH_DocumentObject>();
 
-                var sliders    = selected.OfType<GH_NumberSlider>().ToList();
-                var toggles    = selected.OfType<GH_BooleanToggle>().ToList();
-                var buttons    = selected.OfType<GH_ButtonObject>().ToList();
-                var valueLists = selected.OfType<GH_ValueList>().ToList();
-                var panels     = selected.OfType<GH_Panel>().ToList();
-                var itemPickers = selected.OfType<GH_ItemPicker>().ToList();
-                var humanLists  = selected.Where(SlateWindow.IsHumanValueList).OfType<IGH_Param>().ToList();
-                var colourPickers = selected.OfType<GH_ColourSwatch>().ToList();
-                var pancakeButtons = selected.Where(SlateWindow.IsPancakeTrueOnlyButton).OfType<IGH_Param>().ToList();
+                int sliderCount = 0, toggleCount = 0, buttonCount = 0, valueListCount = 0, panelCount = 0,
+                    itemPickerCount = 0, humanListCount = 0, colourPickerCount = 0, pancakeButtonCount = 0;
 
-                if (sliders.Count == 0 && toggles.Count == 0 && buttons.Count == 0 && valueLists.Count == 0 && panels.Count == 0 && itemPickers.Count == 0 && humanLists.Count == 0 && colourPickers.Count == 0 && pancakeButtons.Count == 0)
+                if (selected.Count == 0)
                     log += "Nothing selected.";
                 else
                 {
                     var win = SlateWindow.GetOrCreate();
-                    foreach (var s in sliders)
-                        win.AddSlider(tab, s);
-                    foreach (var t in toggles)
-                        win.AddToggle(tab, null, t);
-                    foreach (var b in buttons)
-                        win.AddButton(tab, null, b);
-                    foreach (var v in valueLists)
-                        win.AddValueList(tab, null, v);
-                    foreach (var p in panels)
-                        win.AddPanel(tab, null, p);
-                    foreach (var ip in itemPickers)
-                        win.AddItemPicker(tab, null, ip);
-                    foreach (var h in humanLists)
-                        win.AddHumanValueList(tab, null, h);
-                    foreach (var c in colourPickers)
-                        win.AddColourPicker(tab, null, c);
-                    foreach (var pb in pancakeButtons)
-                        win.AddPancakeTrueOnlyButton(tab, null, pb);
-                    log += $"Captured {sliders.Count} slider(s), {toggles.Count} toggle(s), {buttons.Count} button(s), {valueLists.Count} value list(s), {panels.Count} panel(s), {itemPickers.Count} item picker(s), {humanLists.Count} item selector(s), {colourPickers.Count} colour picker(s), {pancakeButtons.Count} true-only button(s) → \"{tab}\".";
+                    foreach (var o in selected)
+                    {
+                        if (o is GH_NumberSlider s)            { win.AddSlider(tab, s); sliderCount++; }
+                        else if (o is GH_BooleanToggle t)       { win.AddToggle(tab, null, t); toggleCount++; }
+                        else if (o is GH_ButtonObject b)        { win.AddButton(tab, null, b); buttonCount++; }
+                        else if (o is GH_ValueList v)           { win.AddValueList(tab, null, v); valueListCount++; }
+                        else if (o is GH_Panel p)               { win.AddPanel(tab, null, p); panelCount++; }
+                        else if (o is GH_ItemPicker ip)         { win.AddItemPicker(tab, null, ip); itemPickerCount++; }
+                        else if (SlateWindow.IsHumanValueList(o) && o is IGH_Param h)          { win.AddHumanValueList(tab, null, h); humanListCount++; }
+                        else if (o is GH_ColourSwatch c)        { win.AddColourPicker(tab, null, c); colourPickerCount++; }
+                        else if (SlateWindow.IsPancakeTrueOnlyButton(o) && o is IGH_Param pb)  { win.AddPancakeTrueOnlyButton(tab, null, pb); pancakeButtonCount++; }
+                    }
+
+                    if (sliderCount == 0 && toggleCount == 0 && buttonCount == 0 && valueListCount == 0 && panelCount == 0 && itemPickerCount == 0 && humanListCount == 0 && colourPickerCount == 0 && pancakeButtonCount == 0)
+                        log += "Nothing selected.";
+                    else
+                        log += $"Captured {sliderCount} slider(s), {toggleCount} toggle(s), {buttonCount} button(s), {valueListCount} value list(s), {panelCount} panel(s), {itemPickerCount} item picker(s), {humanListCount} item selector(s), {colourPickerCount} colour picker(s), {pancakeButtonCount} true-only button(s) → \"{tab}\".";
                 }
             }
 

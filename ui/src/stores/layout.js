@@ -497,6 +497,21 @@ export function withAppendedPositions(container, items) {
   return items.map(it => ({ ...it, pos: p++ }))
 }
 
+// Re-numbers a tab's top-level sliders+groups to match `orderedIds` (every
+// id currently in the tab, in the desired new order) — used by the pane's
+// manual Sort menu (by type, by name, by canvas position). Only rewrites
+// `pos`; doesn't touch which container each item lives in or anything inside
+// a group. Ids not found in orderedIds keep their existing pos (defensive —
+// shouldn't happen since callers build orderedIds from the tab itself).
+export function reorderTabTopLevel(tab, orderedIds) {
+  const rank = new Map(orderedIds.map((id, i) => [id, i]))
+  return {
+    ...tab,
+    sliders: tab.sliders.map(s => rank.has(s.id) ? { ...s, pos: rank.get(s.id) } : s),
+    groups:  tab.groups.map(g  => rank.has(g.id) ? { ...g,  pos: rank.get(g.id) } : g),
+  }
+}
+
 // Old saves have no `pos` field — assigns one from today's fixed visual order
 // (all sliders, then all groups, recursively into each nested group) so a
 // restored file looks exactly like it did before `pos` existed. A no-op for

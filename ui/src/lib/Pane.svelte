@@ -10,7 +10,7 @@
   import ActionBar    from './ActionBar.svelte'
   import CornerHandle from './CornerHandle.svelte'
   import ContextMenu  from './ContextMenu.svelte'
-  import { layout, updatePane, findLeaf, newTabId, splitPane, splitPaneSpanning, newSplitId, setSplitSize, collapsePane, findNeighborPane, moveCrossPaneItem, extractSlidersByIds, orderedItems, posBetween, posAppend, withAppendedPositions } from '../stores/layout.js'
+  import { layout, updatePane, findLeaf, newTabId, splitPane, splitPaneSpanning, newSplitId, setSplitSize, collapsePane, findNeighborPane, moveCrossPaneItem, extractSlidersByIds, orderedItems, posBetween, posAppend, withAppendedPositions, reorderTabTopLevel } from '../stores/layout.js'
   import { tabDrag, itemDrag } from '../stores/dragState.js'
   import { computeAlignedSnapTargets, snapRaw } from './splitSnap.js'
   import { mode, deleteRequest, captureRequest, clearSelectionTick, hoverHint, theme } from '../stores/uiState.js'
@@ -25,6 +25,11 @@
   // difference (candidate list from a wired input vs manually authored) lives
   // entirely on the C# side.
   const ROW_COMPONENTS = { toggle: ToggleRow, button: ButtonRow, valueList: ValueListRow, panel: PanelRow, itemPicker: ValueListRow, humanValueList: ValueListRow, colourPicker: ColourPickerRow, pancakeButton: ButtonRow }
+
+  // Fixed type order for the pane's manual "Sort: Type" menu item — same
+  // priority SlatePanel.cs's capture loop checks types in, just reused here
+  // as an explicit ranking rather than a type-check chain.
+  const TYPE_ORDER = ['slider', 'toggle', 'button', 'valueList', 'panel', 'itemPicker', 'humanValueList', 'colourPicker', 'pancakeButton']
 
   // ── derive pane state reactively (not derived() — paneId must stay live) ─────
   $: pane        = findLeaf($layout, paneId)
@@ -90,7 +95,7 @@
 
   function onPaneContextMenu(e) {
     e.preventDefault()
-    const menuW = 170, menuH = 130
+    const menuW = 170, menuH = 210
     contextMenu = {
       x: Math.min(e.clientX, window.innerWidth  - menuW - 8),
       y: Math.min(e.clientY, window.innerHeight - menuH - 8),
@@ -98,9 +103,46 @@
         { label: 'Split Horizontally', action: () => { splitPane(paneId, 'h', 'after'); postStateSnapshot() } },
         { label: 'Split Vertically',   action: () => { splitPane(paneId, 'v', 'after'); postStateSnapshot() } },
         'sep',
+        { label: 'Sort: Canvas Position', action: () => sortActiveTab('position') },
+        { label: 'Sort: Type',            action: () => sortActiveTab('type') },
+        { label: 'Sort: Name (A-Z)',      action: () => sortActiveTab('name') },
+        'sep',
         { label: 'Close Pane', danger: true, action: () => { collapsePane(paneId); postStateSnapshot() } },
       ]
     }
+  }
+
+  // ── manual sort (pane right-click) ────────────────────────────────────────────
+  // Reorders the active tab's top-level sliders+groups only — a group moves as
+  // one block, its own contents untouched.
+  function collectSliderIds(sliders, groups) {
+    const ids = (sliders ?? []).map(s => s.id)
+    for (const g of groups ?? []) ids.push(...collectSliderIds(g.sliders, g.groups))
+    return ids
+  }
+  function sortKeyName(item) {
+    return String((item.kind === 'group' ? item.data.label : item.data.name) ?? '').toLowerCase()
+  }
+  function sortKeyType(item) {
+    if (item.kind === 'group') return TYPE_ORDER.length
+    const idx = TYPE_ORDER.indexOf(item.data.type)
+    return idx < 0 ? TYPE_ORDER.length : idx
+  }
+  function sortActiveTab(criterion) {
+    if (!activeTab) return
+    if (criterion === 'position') {
+      // No canvas position is stored client-side (would bloat every saved
+      // .gh file) — ask C# for the live GH pivot of each slider id instead;
+      // App.svelte's 'sort_positions_result' handler finishes the reorder.
+      const ids = collectSliderIds(activeTab.sliders, activeTab.groups)
+      if (ids.length) postToCs({ type: 'sort_positions_request', tabId: activeTab.id, ids })
+      return
+    }
+    const keyFn = criterion === 'name' ? sortKeyName : sortKeyType
+    const sortedIds = [...activeItems]
+      .sort((a, b) => { const ka = keyFn(a), kb = keyFn(b); return ka < kb ? -1 : ka > kb ? 1 : 0 })
+      .map(it => it.id)
+    mutateTabs(tabs => tabs.map(t => t.id === activeTab.id ? reorderTabTopLevel(t, sortedIds) : t))
   }
 
   // ── pane mutation helpers ─────────────────────────────────────────────────────
