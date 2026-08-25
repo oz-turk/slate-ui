@@ -124,7 +124,7 @@
         on:blur={commitRename} on:keydown={onKeydown} on:click|stopPropagation />
     {:else}
       <!-- svelte-ignore a11y-no-static-element-interactions -->
-      <span class="label" on:dblclick|stopPropagation={startRename}>{group.label ?? 'Group'}</span>
+      <span class="label" on:click|stopPropagation on:dblclick|stopPropagation={startRename}>{group.label ?? 'Group'}</span>
     {/if}
 
     {#if mode === 'edit'}
