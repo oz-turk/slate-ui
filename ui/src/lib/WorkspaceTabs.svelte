@@ -24,6 +24,10 @@
     if (e.key === 'Enter')  { commitRename(); e.preventDefault() }
     if (e.key === 'Escape') { editingId = null }
   }
+  function focusAndSelect(node) {
+    node.focus()
+    node.select()
+  }
 
   function activate(id) {
     setActiveWorkspace(id)
@@ -52,8 +56,7 @@
         on:mouseleave={() => hoverHint.set(null)}
     >
       {#if editingId === w.id}
-        <!-- svelte-ignore a11y-autofocus -->
-        <input class="rename-input" bind:value={editValue} autofocus
+        <input class="rename-input" bind:value={editValue} use:focusAndSelect
           on:blur={commitRename} on:keydown={onKeydown} on:click|stopPropagation />
       {:else}
         <span class="label">{w.label}</span>

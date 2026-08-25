@@ -56,6 +56,10 @@
     if (e.key === 'Enter')  { commitRename(); e.preventDefault() }
     if (e.key === 'Escape') { editingId = null }
   }
+  function focusAndSelect(node) {
+    node.focus()
+    node.select()
+  }
 
   // ── cross-pane tab drag ───────────────────────────────────────────────────────
   let dragTabId = null
@@ -105,11 +109,10 @@
       on:keydown={e => e.key === 'Enter' && dispatch('select', tab.id)}
     >
       {#if editingId === tab.id}
-        <!-- svelte-ignore a11y-autofocus -->
         <input
           class="rename-input"
           bind:value={editValue}
-          autofocus
+          use:focusAndSelect
           on:blur={commitRename}
           on:keydown={onKeydown}
           on:click|stopPropagation

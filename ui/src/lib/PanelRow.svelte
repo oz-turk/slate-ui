@@ -140,6 +140,7 @@
         class="text-input"
         value={slider.value}
         placeholder="Type text… (Ctrl+Enter to apply)"
+        spellcheck="false"
         on:click|stopPropagation
         on:pointerdown|stopPropagation
         on:keydown|stopPropagation={onTextKeydown}
