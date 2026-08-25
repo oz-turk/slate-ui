@@ -577,7 +577,7 @@ public class SlateWindow : Form
 
         if (PendingWindowSize is Size size)
         {
-            const int minW = 420, minH = 300, maxW = 3000, maxH = 2000;
+            const int minW = 320, minH = 480, maxW = 3000, maxH = 2000;
             w.Size = new Size(
                 Math.Max(minW, Math.Min(maxW, size.Width)),
                 Math.Max(minH, Math.Min(maxH, size.Height)));
@@ -613,14 +613,17 @@ public class SlateWindow : Form
 
     // ── construction ─────────────────────────────────────────────────────────
 
+    internal static readonly Size  DefaultWindowSize     = new Size(380, 760);
+    internal static readonly Point DefaultWindowLocation = new Point(60, 60);
+
     private SlateWindow()
     {
         Text            = "Slate";
         FormBorderStyle = FormBorderStyle.Sizable;
-        Size            = new Size(680, 520);
-        MinimumSize     = new Size(420, 300);
+        Size            = DefaultWindowSize;
+        MinimumSize     = new Size(320, 480);
         StartPosition   = FormStartPosition.Manual;
-        Location        = new Point(60, 60);
+        Location        = DefaultWindowLocation;
         BackColor       = Color.FromArgb(18, 18, 18);
 
         _webView.Dock = DockStyle.Fill;
@@ -988,6 +991,17 @@ public class SlateWindow : Form
     {
         ClearDicts();
         PostToJs(SlateEvent.Reset());
+    }
+
+    // Everything ResetAll() does, plus the window goes back to its
+    // as-if-never-opened size — unlike ResetAll(), which leaves the window
+    // where the user put it. Location is left untouched (WinForms keeps the
+    // top-left corner fixed and grows/shrinks Size from there), so the
+    // window resets in place instead of jumping to a fixed corner every time.
+    public void HardResetAll()
+    {
+        ResetAll();
+        Size = DefaultWindowSize;
     }
 
     // Drops references to captured GH objects without telling JS anything

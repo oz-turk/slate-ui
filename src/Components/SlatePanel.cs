@@ -26,7 +26,7 @@ public class SlatePanel : GH_Component
         pManager.AddTextParameter   ("Tab",     "T", "Tab path (use / for nesting)",               GH_ParamAccess.item, "Main");
         pManager.AddBooleanParameter("Capture", "C", "Capture selected sliders into the tab",      GH_ParamAccess.item, false);
         pManager.AddBooleanParameter("Clear",   "X", "Clear all sliders from the panel",           GH_ParamAccess.item, false);
-        pManager.AddBooleanParameter("Reset",   "R", "Full reset: also clears tabs/panes/workspaces back to one blank tab", GH_ParamAccess.item, false);
+        pManager.AddBooleanParameter("Reset",   "R", "Full reset: clears tabs/panes/workspaces back to one blank tab and snaps the window back to its default size/position", GH_ParamAccess.item, false);
     }
 
     protected override void RegisterOutputParams(GH_OutputParamManager pManager)
@@ -108,7 +108,7 @@ public class SlatePanel : GH_Component
         {
             if (reset)
             {
-                SlateWindow.GetOrCreate().ResetAll();
+                SlateWindow.GetOrCreate().HardResetAll();
                 log += "Reset. ";
             }
             else if (clear)
