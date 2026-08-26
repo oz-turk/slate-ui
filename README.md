@@ -4,7 +4,34 @@ A modern parametric control panel for Grasshopper — an alternative to Human UI
 
 > **Status:** early, actively developed. Expect rough edges. Feedback and bug reports welcome.
 
-<!-- TODO: screenshot / GIF of the panel in action -->
+## Demo
+
+<table>
+<tr>
+<td width="50%"><img src="media/01-resize.gif" width="100%"><br>Resizing the panel</td>
+<td width="50%"><img src="media/02-edit-mode.gif" width="100%"><br>Entering edit mode</td>
+</tr>
+<tr>
+<td><img src="media/03-split-pane.gif" width="100%"><br>Splitting into panes</td>
+<td><img src="media/04-snap.gif" width="100%"><br>Snapping panes into place</td>
+</tr>
+<tr>
+<td><img src="media/05-detach.gif" width="100%"><br>Detaching a tab</td>
+<td><img src="media/06-add-to-ui.gif" width="100%"><br>Capturing Grasshopper controls into the panel</td>
+</tr>
+<tr>
+<td><img src="media/07-workspace-and-tabs.gif" width="100%"><br>Workspaces and tabs</td>
+<td><img src="media/08-movement-and-group.gif" width="100%"><br>Moving and grouping controls</td>
+</tr>
+<tr>
+<td><img src="media/09-dark-light-mode.gif" width="100%"><br>Dark and light theme</td>
+<td><img src="media/10-close-and-delete.gif" width="100%"><br>Closing and deleting tabs/panes</td>
+</tr>
+<tr>
+<td><img src="media/11-edit-mode-overview.gif" width="100%"><br>Edit mode, fully populated</td>
+<td></td>
+</tr>
+</table>
 
 ## Why Slate
 
