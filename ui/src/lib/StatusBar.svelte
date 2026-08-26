@@ -1,7 +1,5 @@
 <script>
   import { mode, hoverHint, altHeld, ctrlHeld } from '../stores/uiState.js'
-
-  export const VERSION = '0.1.18'
 </script>
 
 <div class="status-bar">
@@ -91,7 +89,7 @@
       </span>
     {/if}
   </div>
-  <span class="version">v{VERSION}</span>
+  <span class="version">v{__SLATE_VERSION__} ({__SLATE_COMMIT__})</span>
 </div>
 
 <style>
