@@ -2,6 +2,7 @@
   import { workspaces, activeWorkspaceId, addWorkspace, removeWorkspace, renameWorkspace, setActiveWorkspace } from '../stores/layout.js'
   import { postStateSnapshot } from './ipc.js'
   import { hoverHint } from '../stores/uiState.js'
+  import { tabDrag, itemDrag } from '../stores/dragState.js'
 
   export let mode = 'preview'
 
@@ -33,6 +34,16 @@
     setActiveWorkspace(id)
     postStateSnapshot()
   }
+
+  // Switching workspace mid-drag — a tab/slider/group drag is a native HTML5
+  // DnD (see dragState.js), which the browser tracks independently of the
+  // DOM underneath the cursor, so swapping the active workspace here doesn't
+  // drop it. Only fires once per hover-in (guarded by the id check), so it
+  // doesn't spam activate()/postStateSnapshot() on every dragover frame.
+  function onDragEnterTab(id) {
+    if (!$tabDrag && !$itemDrag) return
+    if (id !== $activeWorkspaceId) activate(id)
+  }
   function remove(id) {
     removeWorkspace(id)
     postStateSnapshot()
@@ -54,6 +65,8 @@
         on:keydown={e => e.key === 'Enter' && activate(w.id)}
         on:mouseenter={() => hoverHint.set(mode === 'edit' ? 'Double-click: rename  ·  Ctrl+1–9: switch workspace' : 'Ctrl+1–9: switch workspace')}
         on:mouseleave={() => hoverHint.set(null)}
+        on:dragenter|preventDefault={() => onDragEnterTab(w.id)}
+        on:dragover|preventDefault
     >
       {#if editingId === w.id}
         <input class="rename-input" bind:value={editValue} use:focusAndSelect

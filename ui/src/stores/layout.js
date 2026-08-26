@@ -152,21 +152,6 @@ function doInsertTab(node, paneId, tab) {
   }))
 }
 
-function doSplitWithTab(node, targetPaneId, dir, side, fromPaneId, tabId) {
-  const [extracted, tab] = doExtractTab(node, fromPaneId, tabId)
-  if (!tab) return node
-  function splitAndInsert(n) {
-    if (n.type === 'leaf') {
-      if (n.paneId !== targetPaneId) return n
-      const newPane = makeLeaf([tab], tab.id)
-      const [a, b] = side === 'before' ? [newPane, n] : [n, newPane]
-      return makeSplit(dir, a, b)
-    }
-    return { ...n, a: splitAndInsert(n.a), b: splitAndInsert(n.b) }
-  }
-  return splitAndInsert(extracted)
-}
-
 const MIN_PANE_SIZE = 40
 
 // Trims `amount` off whatever pane(s) sit at the top/left edge along `dir`,
@@ -238,17 +223,56 @@ export function collapsePane(paneId) {
   })
 }
 
-export function moveTab(fromPaneId, tabId, toPaneId) {
-  if (fromPaneId === toPaneId) return
-  updateActiveLayout(l => {
-    const [extracted, tab] = doExtractTab(l, fromPaneId, tabId)
-    if (!tab) return l
-    return doInsertTab(extracted, toPaneId, tab)
-  })
+// Runs `extract` against fromWorkspaceId's layout and `insert` against
+// toWorkspaceId's layout — used by every cross-pane move (tab or item) so
+// they all work whether the source and destination pane live in the same
+// workspace (the common case) or the user switched workspace mid-drag
+// (WorkspaceTabs activates the hovered workspace without ending the drag).
+// `extract(layout) => [newLayout, payload]`, payload falsy means "nothing
+// found to move" and aborts; `insert(layout, payload) => newLayout`.
+function moveBetweenWorkspaces(fromWorkspaceId, toWorkspaceId, extract, insert) {
+  const list = get(workspaces)
+  const fromWs = list.find(w => w.id === fromWorkspaceId)
+  if (!fromWs) return
+  const [strippedLayout, payload] = extract(fromWs.layout)
+  if (!payload) return
+  if (fromWorkspaceId === toWorkspaceId) {
+    workspaces.set(list.map(w => w.id === fromWorkspaceId ? { ...w, layout: insert(strippedLayout, payload) } : w))
+    return
+  }
+  const toWs = list.find(w => w.id === toWorkspaceId)
+  if (!toWs) return
+  workspaces.set(list.map(w => {
+    if (w.id === fromWorkspaceId) return { ...w, layout: strippedLayout }
+    if (w.id === toWorkspaceId)   return { ...w, layout: insert(toWs.layout, payload) }
+    return w
+  }))
 }
 
-export function splitWithTab(targetPaneId, dir, side, fromPaneId, tabId) {
-  updateActiveLayout(l => doSplitWithTab(l, targetPaneId, dir, side, fromPaneId, tabId))
+export function moveTab(fromWorkspaceId, fromPaneId, tabId, toWorkspaceId, toPaneId) {
+  if (fromWorkspaceId === toWorkspaceId && fromPaneId === toPaneId) return
+  moveBetweenWorkspaces(fromWorkspaceId, toWorkspaceId,
+    l => doExtractTab(l, fromPaneId, tabId),
+    (l, tab) => doInsertTab(l, toPaneId, tab)
+  )
+}
+
+export function splitWithTab(fromWorkspaceId, fromPaneId, tabId, toWorkspaceId, targetPaneId, dir, side) {
+  moveBetweenWorkspaces(fromWorkspaceId, toWorkspaceId,
+    l => doExtractTab(l, fromPaneId, tabId),
+    (l, tab) => {
+      function splitAndInsert(n) {
+        if (n.type === 'leaf') {
+          if (n.paneId !== targetPaneId) return n
+          const newPane = makeLeaf([tab], tab.id)
+          const [a, b] = side === 'before' ? [newPane, n] : [n, newPane]
+          return makeSplit(dir, a, b)
+        }
+        return { ...n, a: splitAndInsert(n.a), b: splitAndInsert(n.b) }
+      }
+      return splitAndInsert(l)
+    }
+  )
 }
 
 // Legacy restore path: an old save had a single tree, not a workspace list —
@@ -567,38 +591,44 @@ export function extractSlidersByIds(tab, idSet) {
 }
 
 // Move a slider (or a whole multi-selected block of sliders) or a single group
-// from one pane/tab to another pane/tab
-export function moveCrossPaneItem(fromPaneId, fromTabId, itemIds, itemType, toPaneId, toTabId) {
-  updateActiveLayout(l => {
-    let items = []
-    function extract(n) {
-      if (n.type === 'split') return { ...n, a: extract(n.a), b: extract(n.b) }
-      if (n.paneId !== fromPaneId) return n
-      return { ...n, tabs: n.tabs.map(t => {
-        if (t.id !== fromTabId) return t
-        if (itemType === 'slider') {
-          const [stripped, extracted] = extractSlidersByIds(t, new Set(itemIds))
-          items = extracted
-          return stripped
-        } else {
-          const found = t.groups.find(g => g.id === itemIds[0])
-          items = found ? [found] : []
-          return { ...t, groups: t.groups.filter(g => g.id !== itemIds[0]) }
-        }
-      })}
+// from one pane/tab to another pane/tab — pane/tab may live in different
+// workspaces (see moveBetweenWorkspaces) when the user switched workspace
+// mid-drag via WorkspaceTabs.
+export function moveCrossPaneItem(fromWorkspaceId, fromPaneId, fromTabId, itemIds, itemType, toWorkspaceId, toPaneId, toTabId) {
+  moveBetweenWorkspaces(fromWorkspaceId, toWorkspaceId,
+    l => {
+      let items = []
+      function extract(n) {
+        if (n.type === 'split') return { ...n, a: extract(n.a), b: extract(n.b) }
+        if (n.paneId !== fromPaneId) return n
+        return { ...n, tabs: n.tabs.map(t => {
+          if (t.id !== fromTabId) return t
+          if (itemType === 'slider') {
+            const [stripped, extracted] = extractSlidersByIds(t, new Set(itemIds))
+            items = extracted
+            return stripped
+          } else {
+            const found = t.groups.find(g => g.id === itemIds[0])
+            items = found ? [found] : []
+            return { ...t, groups: t.groups.filter(g => g.id !== itemIds[0]) }
+          }
+        })}
+      }
+      const newLayout = extract(l)
+      return [newLayout, items.length ? items : null]
+    },
+    (l, items) => {
+      function insert(n) {
+        if (n.type === 'split') return { ...n, a: insert(n.a), b: insert(n.b) }
+        if (n.paneId !== toPaneId) return n
+        return { ...n, tabs: n.tabs.map(t => {
+          if (t.id !== toTabId) return t
+          const placed = withAppendedPositions(t, items)
+          if (itemType === 'slider') return { ...t, sliders: [...t.sliders, ...placed] }
+          return { ...t, groups: [...t.groups, ...placed] }
+        })}
+      }
+      return insert(l)
     }
-    function insert(n) {
-      if (n.type === 'split') return { ...n, a: insert(n.a), b: insert(n.b) }
-      if (n.paneId !== toPaneId) return n
-      return { ...n, tabs: n.tabs.map(t => {
-        if (t.id !== toTabId) return t
-        const placed = withAppendedPositions(t, items)
-        if (itemType === 'slider') return { ...t, sliders: [...t.sliders, ...placed] }
-        return { ...t, groups: [...t.groups, ...placed] }
-      })}
-    }
-    const extracted = extract(l)
-    if (!items.length) return l
-    return insert(extracted)
-  })
+  )
 }

@@ -259,7 +259,15 @@
              ?? leaf.tabs.find(t => t.label.toLowerCase() === (msg.tabId ?? '').toLowerCase())
       if (t) { targetPaneId = leaf.paneId; targetTabId = t.id; break }
     }
-    if (!targetPaneId) { targetPaneId = leaves[0]?.paneId; targetTabId = leaves[0]?.activeTabId }
+    if (!targetPaneId) {
+      // Same stale-activeTabId guard as Pane.svelte's activeTab derivation —
+      // a leaf's stored activeTabId can point at a tab that's no longer
+      // there, and inserting into that id here would silently drop the
+      // captured control (nothing in p.tabs would match it).
+      const fallbackLeaf = leaves[0]
+      targetPaneId = fallbackLeaf?.paneId
+      targetTabId  = fallbackLeaf?.tabs.find(t => t.id === fallbackLeaf.activeTabId)?.id ?? fallbackLeaf?.tabs[0]?.id
+    }
     if (!targetPaneId) return
     const groupId = msg.groupId ?? null
     updatePane(targetPaneId, p => ({

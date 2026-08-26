@@ -10,11 +10,12 @@
   import ActionBar    from './ActionBar.svelte'
   import CornerHandle from './CornerHandle.svelte'
   import ContextMenu  from './ContextMenu.svelte'
-  import { layout, updatePane, findLeaf, newTabId, splitPane, splitPaneSpanning, newSplitId, setSplitSize, collapsePane, findNeighborPane, moveCrossPaneItem, extractSlidersByIds, orderedItems, flattenSliderIds, posBetween, posAppend, withAppendedPositions, reorderTabTopLevel } from '../stores/layout.js'
+  import { layout, activeWorkspaceId, updatePane, findLeaf, newTabId, splitPane, splitPaneSpanning, newSplitId, setSplitSize, collapsePane, findNeighborPane, moveCrossPaneItem, extractSlidersByIds, orderedItems, flattenSliderIds, posBetween, posAppend, withAppendedPositions, reorderTabTopLevel } from '../stores/layout.js'
   import { tabDrag, itemDrag } from '../stores/dragState.js'
   import { computeAlignedSnapTargets, snapRaw } from './splitSnap.js'
   import { mode, deleteRequest, captureRequest, clearSelectionTick, hoverHint, theme } from '../stores/uiState.js'
   import { postToCs, postStateSnapshot } from './ipc.js'
+  import { get } from 'svelte/store'
   import { flip } from 'svelte/animate'
   import { cubicOut } from 'svelte/easing'
 
@@ -34,8 +35,16 @@
   // ── derive pane state reactively (not derived() — paneId must stay live) ─────
   $: pane        = findLeaf($layout, paneId)
   $: tabs        = pane?.tabs        ?? []
-  $: activeTabId = pane?.activeTabId ?? null
-  $: activeTab   = tabs.find(t => t.id === activeTabId) ?? tabs[0]
+  // activeTab falls back to tabs[0] whenever pane.activeTabId doesn't match any
+  // tab still in this pane (stale id — e.g. left over from a tab move/removal
+  // that didn't update this leaf). activeTabId is derived FROM that already-
+  // corrected activeTab, not read straight off pane.activeTabId, so every
+  // downstream use of it (TabBar's highlight, capture, cross-pane drop target)
+  // agrees with what's actually being shown — otherwise TabBar could show no
+  // tab as active at all while this pane still renders tabs[0]'s content, and
+  // capture/cross-pane-drop would silently target a tab id that doesn't exist.
+  $: activeTab   = tabs.find(t => t.id === pane?.activeTabId) ?? tabs[0]
+  $: activeTabId = activeTab?.id ?? null
   $: activeItems = activeTab ? orderedItems(activeTab) : []
 
   // SliderRow's name column is a fixed grid width (needs to line up across
@@ -337,7 +346,7 @@
       ? [...selectedIds]
       : [id]
     activeDrag = { type, id, ids, fromTabId, fromGroupId }
-    itemDrag.set({ type, id, ids, fromPaneId: paneId, fromTabId, fromGroupId })
+    itemDrag.set({ type, id, ids, fromPaneId: paneId, fromTabId, fromGroupId, fromWorkspaceId: get(activeWorkspaceId) })
   }
   function endDrag() {
     activeDrag = null; dropTarget = null; itemDrag.set(null); lastReorderKey = null
@@ -750,7 +759,7 @@
   import { moveTab, splitWithTab } from '../stores/layout.js'
 
   function onTabDragStart(tabId, label) {
-    tabDrag.set({ tabId, fromPaneId: paneId, label })
+    tabDrag.set({ tabId, fromPaneId: paneId, fromWorkspaceId: get(activeWorkspaceId), label })
   }
   function onTabDragEnd() {
     tabDrag.set(null)
@@ -782,13 +791,14 @@
   function onPaneDrop(e) {
     e.preventDefault()
     if ($tabDrag && $tabDrag.fromPaneId !== paneId && edgeZone) {
-      const { tabId, fromPaneId } = $tabDrag
+      const { tabId, fromPaneId, fromWorkspaceId } = $tabDrag
+      const toWorkspaceId = get(activeWorkspaceId)
       if (edgeZone === 'center') {
-        moveTab(fromPaneId, tabId, paneId)
+        moveTab(fromWorkspaceId ?? toWorkspaceId, fromPaneId, tabId, toWorkspaceId, paneId)
       } else {
         const dir  = (edgeZone === 'left' || edgeZone === 'right') ? 'h' : 'v'
         const side = (edgeZone === 'left' || edgeZone === 'top')   ? 'before' : 'after'
-        splitWithTab(paneId, dir, side, fromPaneId, tabId)
+        splitWithTab(fromWorkspaceId ?? toWorkspaceId, fromPaneId, tabId, toWorkspaceId, paneId, dir, side)
       }
       tabDrag.set(null)
       edgeZone = null
@@ -796,20 +806,34 @@
       return
     }
     if ($itemDrag && $itemDrag.fromPaneId !== paneId && activeTabId) {
-      const { type, id, ids, fromPaneId: fp, fromTabId: ft } = $itemDrag
-      moveCrossPaneItem(fp, ft, ids ?? [id], type, paneId, activeTabId)
-      itemDrag.set(null)
-      itemDragHover = false
-      postStateSnapshot()
+      dropItemOnTab(activeTabId)
       return
     }
     edgeZone = null
     itemDragHover = false
   }
 
-  $: canDragTabs   = true
-  $: isDraggingTab = $tabDrag !== null
-  $: isDropTarget  = isDraggingTab && $tabDrag?.fromPaneId !== paneId
+  // Cross-pane item drop targeted at a specific tab button (possibly not the
+  // destination pane's active tab) — lets a drag land straight in the right
+  // tab instead of always going to whichever tab happens to be open there,
+  // which used to force a drop-then-switch-tab-then-move-again round trip.
+  let itemDropTabId = null   // tab id currently highlighted while a cross-pane item drag hovers this pane's TabBar
+  $: if (!$itemDrag) itemDropTabId = null
+
+  function dropItemOnTab(tabId) {
+    if (!$itemDrag || $itemDrag.fromPaneId === paneId) return
+    const { type, id, ids, fromPaneId: fp, fromTabId: ft, fromWorkspaceId } = $itemDrag
+    moveCrossPaneItem(fromWorkspaceId ?? get(activeWorkspaceId), fp, ft, ids ?? [id], type, get(activeWorkspaceId), paneId, tabId)
+    itemDrag.set(null)
+    itemDragHover = false
+    itemDropTabId = null
+    postStateSnapshot()
+  }
+
+  $: canDragTabs        = true
+  $: isDraggingTab      = $tabDrag !== null
+  $: isDropTarget       = isDraggingTab && $tabDrag?.fromPaneId !== paneId
+  $: crossPaneItemDrag  = $itemDrag !== null && $itemDrag.fromPaneId !== paneId
 </script>
 
 <!-- svelte-ignore a11y-no-static-element-interactions -->
@@ -835,8 +859,9 @@
     <TabBar
       {tabs} {activeTabId} mode={$mode}
       isDragging={activeDrag !== null}
-      dropTabId={dropTarget?.type === 'tab' ? dropTarget.id : null}
+      dropTabId={dropTarget?.type === 'tab' ? dropTarget.id : itemDropTabId}
       {canDragTabs}
+      {crossPaneItemDrag}
       on:select={e        => { setActive(e.detail); clearSelection() }}
       on:rename={e        => renameTab(e.detail.id, e.detail.label)}
       on:setColor={e      => setTabColor(e.detail.id, e.detail.color)}
@@ -847,6 +872,9 @@
       on:tabDrop={e       => executeDrop('tab', e.detail)}
       on:tabDragStart={e  => onTabDragStart(e.detail.tabId, e.detail.label)}
       on:tabDragEnd={onTabDragEnd}
+      on:itemDragOverTab={e  => itemDropTabId = e.detail}
+      on:itemDragLeaveTab={e => { if (itemDropTabId === e.detail) itemDropTabId = null }}
+      on:itemDropOnTab={e    => dropItemOnTab(e.detail)}
       on:capture={() => postToCs({ type: 'capture', tabId: activeTabId })}
     />
 

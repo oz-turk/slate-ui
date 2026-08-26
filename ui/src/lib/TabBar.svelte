@@ -8,9 +8,10 @@
   export let tabs        = []
   export let activeTabId = ''
   export let mode        = 'preview'
-  export let isDragging  = false   // slider/group drag active
+  export let isDragging  = false   // same-pane slider/group drag active
   export let dropTabId   = null
   export let canDragTabs = false   // cross-pane tab drag allowed
+  export let crossPaneItemDrag = false   // a slider/group dragged FROM ANOTHER pane is in flight — lets a drop target this tab directly instead of always landing on whichever tab is active here
 
   let editingId = null
   let editValue = ''
@@ -64,13 +65,15 @@
   // ── cross-pane tab drag ───────────────────────────────────────────────────────
   let dragTabId = null
 
-  function onTabPointerDown(e, tab) {
-    if (!canDragTabs || mode !== 'edit') return
-    dragTabId = tab.id
-  }
-
+  // Set from dragstart (a real drag actually starting), not pointerdown —
+  // pointerdown fires on every plain click too, and a click never fires
+  // dragend, so a version of this that flagged the tab on pointerdown left
+  // it permanently dimmed (opacity: 0.4, the being-dragged look) the moment
+  // you clicked it without dragging. dragstart/dragend always pair up, so
+  // this can't get stuck.
   function onTabDragStart(e, tab) {
     if (!canDragTabs || mode !== 'edit') { e.preventDefault(); return }
+    dragTabId = tab.id
     e.dataTransfer.effectAllowed = 'move'
     e.dataTransfer.setData('text/plain', tab.id)
     dispatch('tabDragStart', { tabId: tab.id, label: tab.label })
@@ -88,7 +91,7 @@
     <div
       class="tab"
       class:active={tab.id === activeTabId}
-      class:drag-target={isDragging && tab.id !== activeTabId}
+      class:drag-target={(isDragging || crossPaneItemDrag) && tab.id !== activeTabId}
       class:drag-over={dropTabId === tab.id}
       class:being-dragged={dragTabId === tab.id}
       draggable={canDragTabs && mode === 'edit' && editingId !== tab.id}
@@ -98,12 +101,11 @@
       on:contextmenu={e => onTabContextMenu(e, tab)}
       on:mouseenter={() => mode === 'edit' && hoverHint.set('Double-click: rename  ·  Drag: reorder or move to another pane  ·  Right-click: colour')}
       on:mouseleave={() => hoverHint.set(null)}
-      on:pointerdown={e => onTabPointerDown(e, tab)}
       on:dragstart={e => onTabDragStart(e, tab)}
       on:dragend={onTabDragEnd}
-      on:dragover|preventDefault={() => isDragging && dispatch('tabDragOver', tab.id)}
-      on:dragleave={e => { if (!e.currentTarget.contains(e.relatedTarget)) dispatch('tabDragLeave', tab.id) }}
-      on:drop|preventDefault={() => dispatch('tabDrop', tab.id)}
+      on:dragover|preventDefault={() => crossPaneItemDrag ? dispatch('itemDragOverTab', tab.id) : (isDragging && dispatch('tabDragOver', tab.id))}
+      on:dragleave={e => { if (!e.currentTarget.contains(e.relatedTarget)) dispatch(crossPaneItemDrag ? 'itemDragLeaveTab' : 'tabDragLeave', tab.id) }}
+      on:drop|preventDefault={() => dispatch(crossPaneItemDrag ? 'itemDropOnTab' : 'tabDrop', tab.id)}
       role="tab"
       tabindex="0"
       on:keydown={e => e.key === 'Enter' && dispatch('select', tab.id)}
