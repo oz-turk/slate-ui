@@ -8,7 +8,7 @@ A modern parametric control panel for Grasshopper, an alternative to Human UI, b
 
 Grasshopper definitions often need a clean control surface for clients or teammates who shouldn't have to touch the canvas. Slate captures your existing sliders, toggles, buttons, panels and other controls into a floating panel. State (layout, tabs, groups, captured controls) is saved with your `.gh` file, so a saved definition reopens with its panel exactly as you left it.
 
-**Multi-panel layout.** Split the window into resizable panes from any corner, each with its own tabs. Panes snap into place as you resize, including an invisible 50% midpoint snap; or pull a tab out into its own floating window when you want it on a second monitor or out of the way.
+**Multi-panel layout.** Split the window into resizable panes from any corner, each with its own tabs. Panes snap into place as you resize, including an invisible 50% midpoint snap, or pull a tab out into its own floating window when you want it on a second monitor or out of the way.
 
 <table>
 <tr>
@@ -25,7 +25,7 @@ Grasshopper definitions often need a clean control surface for clients or teamma
 
 ![Entering edit mode](media/02-edit-mode.gif)
 
-**Capturing controls.** Select sliders, toggles, buttons, panels and other controls on the GH canvas, then pull them into a tab with the capture button. Wide control coverage: sliders, boolean toggles, buttons, value lists (dropdown/checklist/sequence), text panels, item pickers, colour swatches; plus, read via reflection with no compile-time dependency on either plugin, [Human UI](https://www.food4rhino.com/en/app/human-ui)'s Item Selector and [Pancake](https://www.food4rhino.com/en/app/pancake)'s True Only Button.
+**Capturing controls.** Select sliders, toggles, buttons, panels and other controls on the GH canvas, then pull them into a tab with the capture button. Wide control coverage: sliders, boolean toggles, buttons, value lists (dropdown/checklist/sequence), text panels, item pickers, colour swatches. Also read via reflection, with no compile-time dependency on either plugin: [Human UI](https://www.food4rhino.com/en/app/human-ui)'s Item Selector and [Pancake](https://www.food4rhino.com/en/app/pancake)'s True Only Button.
 
 ![Capturing Grasshopper controls into the panel](media/06-add-to-ui.gif)
 
