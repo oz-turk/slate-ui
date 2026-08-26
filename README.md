@@ -12,15 +12,22 @@ Grasshopper definitions often need a clean control surface for clients or teamma
 
 ![Entering edit mode](media/02-edit-mode.gif)
 
-**Capturing controls.** Select sliders, toggles, buttons, panels and other controls on the GH canvas, then pull them into a tab with the capture button. Wide control coverage: sliders, boolean toggles, buttons, value lists (dropdown/checklist/sequence), text panels, item pickers, colour swatches, and select controls from the Human and Pancake plugins (read via reflection — no compile-time dependency on either).
+**Capturing controls.** Select sliders, toggles, buttons, panels and other controls on the GH canvas, then pull them into a tab with the capture button. Wide control coverage: sliders, boolean toggles, buttons, value lists (dropdown/checklist/sequence), text panels, item pickers, colour swatches — plus, read via reflection with no compile-time dependency on either plugin, [Human UI](https://www.food4rhino.com/en/app/human-ui)'s Item Selector and [Pancake](https://www.food4rhino.com/en/app/pancake)'s True Only Button.
 
 ![Capturing Grasshopper controls into the panel](media/06-add-to-ui.gif)
 
 **Multi-panel layout.** Split the window into resizable panes from any corner, each with its own tabs. Panes snap into place as you resize, including an invisible 50% midpoint snap.
 
-![Resizing the panel](media/01-resize.gif)
-![Splitting into panes](media/03-split-pane.gif)
-![Snapping panes into place](media/04-snap.gif)
+<table>
+<tr>
+<td width="50%"><img src="media/01-resize.gif" width="100%"><br>Resizing the panel</td>
+<td width="50%"><img src="media/03-split-pane.gif" width="100%"><br>Splitting into panes</td>
+</tr>
+<tr>
+<td><img src="media/04-snap.gif" width="100%"><br>Snapping panes into place</td>
+<td></td>
+</tr>
+</table>
 
 **Detaching.** Pull a tab out into its own floating window when you want it on a second monitor or out of the way.
 
