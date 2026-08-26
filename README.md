@@ -80,4 +80,4 @@ Or run `.\build.ps1` from the repo root, which does both steps, closes/reopens R
 
 ## License
 
-[MIT](LICENSE). Third-party notices (icons) in [NOTICE.md](NOTICE.md).
+[GPLv3](LICENSE). Third-party notices (icons) in [NOTICE.md](NOTICE.md).
