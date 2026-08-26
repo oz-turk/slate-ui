@@ -4,6 +4,7 @@ src/obj/
 src/Resources/assets/
 yak/*.gha
 yak/*.yak
+yak/*.dll
 
 # Node
 ui/node_modules/

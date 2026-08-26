@@ -48,15 +48,19 @@
   </ItemGroup>
 
   <Target Name="DeployToGrasshopper" AfterTargets="Build">
+    <ItemGroup>
+      <!-- Every NuGet-provided DLL next to the .gha (WebView2, System.Text.Json,
+           and their own transitive deps like System.Buffers/Memory/Numerics.Vectors).
+           Rhino 7 has no fallback source for these — unlike Rhino 8, which apparently
+           already provides a compatible System.Text.Json on its own — so a single
+           missing one throws a silent FileNotFoundException deep inside a
+           JSON-serializing IPC call (capture/reset stop working, no error shown).
+           Copy the whole output dir instead of hand-picking files so a future
+           PackageReference doesn't quietly reintroduce the same bug. -->
+      <DeployAssemblies Include="$(TargetDir)*.dll" />
+    </ItemGroup>
     <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(APPDATA)\Grasshopper\Libraries" />
-    <!-- Core.dll + WinForms.dll both now come from the NuGet package, not
-         from Rhino\System\ (Rhino 7 doesn't ship its own copy). -->
-    <Copy SourceFiles="$(TargetDir)Microsoft.Web.WebView2.Core.dll"
-          DestinationFolder="$(APPDATA)\Grasshopper\Libraries"
-          Condition="Exists('$(TargetDir)Microsoft.Web.WebView2.Core.dll')" />
-    <Copy SourceFiles="$(TargetDir)Microsoft.Web.WebView2.WinForms.dll"
-          DestinationFolder="$(APPDATA)\Grasshopper\Libraries"
-          Condition="Exists('$(TargetDir)Microsoft.Web.WebView2.WinForms.dll')" />
+    <Copy SourceFiles="@(DeployAssemblies)" DestinationFolder="$(APPDATA)\Grasshopper\Libraries" />
     <Copy SourceFiles="$(TargetDir)runtimes\win-x64\native\WebView2Loader.dll"
           DestinationFolder="$(APPDATA)\Grasshopper\Libraries"
           Condition="Exists('$(TargetDir)runtimes\win-x64\native\WebView2Loader.dll')" />

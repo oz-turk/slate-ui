@@ -61,7 +61,7 @@ Put it all together and a fully built-out panel looks like this:
 
 <!-- TODO: once published — `_PackageManager` search "Slate" (Yak), or Food4Rhino link -->
 
-Not yet published to a package manager. For now, build from source (below) and copy the resulting `Slate.gha` into your Grasshopper `Libraries` folder.
+Not yet published to a package manager. For now, build from source (below) — the build copies `Slate.gha` **and every dependency DLL next to it** (WebView2 + System.Text.Json's chain) into your Grasshopper `Libraries` folder automatically; copying just `Slate.gha` on its own will fail to load.
 
 ## Building from source
 
