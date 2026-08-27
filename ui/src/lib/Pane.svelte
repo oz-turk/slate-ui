@@ -322,10 +322,6 @@
     mutateTabs(tabs => tabs.map(t => t.id === id ? { ...t, label } : t))
   }
 
-  function setTabColor(id, color) {
-    mutateTabs(tabs => tabs.map(t => t.id === id ? { ...t, color } : t))
-  }
-
   function removeTab(id) {
     updatePane(paneId, p => {
       if (p.tabs.length <= 1) return {}
@@ -864,7 +860,6 @@
       {crossPaneItemDrag}
       on:select={e        => { setActive(e.detail); clearSelection() }}
       on:rename={e        => renameTab(e.detail.id, e.detail.label)}
-      on:setColor={e      => setTabColor(e.detail.id, e.detail.color)}
       on:remove={e        => removeTab(e.detail)}
       on:add={addTab}
       on:tabDragOver={e   => setDropTarget('tab', e.detail)}
