@@ -11,12 +11,21 @@ namespace Slate.Bridge;
 internal static class SlateLogo
 {
     // Fractions of the target square size, taken from the 64px reference:
-    // outline square at (0, 11) size 46 radius 10; fill square at (18, 0) size 46 radius 10.
-    const float OutlineX = 0f       / 64f, OutlineY = 11f / 64f;
-    const float FillX    = 18f      / 64f, FillY    = 0f  / 64f;
-    const float SquareSz = 46f      / 64f;
-    const float Radius   = 10f      / 64f;
-    const float StrokeFr = 3f       / 64f;
+    // outline square at (5.12, 17.3) size 38.64 radius 8.4; fill square at
+    // (20.24, 8.06) size 38.64 radius 8.4. This is the original edge-to-edge
+    // composition (outline at (0, 14.5), fill at (18, 3.5), size 46 — already
+    // vertically centered, see git history) scaled 0.84x about the frame's own
+    // center (32, 32) to leave a visible margin on every side (~8% horizontal,
+    // ~12.6% vertical — the mark's natural bbox is wider than tall, so equal
+    // scaling doesn't give equal margins on both axes). Previously the mark
+    // ran flush to the left/right edges, which reads as cramped next to other
+    // plugin icons (e.g. Nautilus, ~5-9% margin) once placed in a standalone
+    // square frame like a food4rhino/store icon rather than a toolbar slot.
+    const float OutlineX = 5.12f  / 64f, OutlineY = 17.3f / 64f;
+    const float FillX    = 20.24f / 64f, FillY    = 8.06f / 64f;
+    const float SquareSz = 38.64f / 64f;
+    const float Radius   = 8.4f   / 64f;
+    const float StrokeFr = 2.52f  / 64f;
 
     public static void Draw(Graphics g, RectangleF bounds, Color outline, Color fill, float scale = 1f)
     {
