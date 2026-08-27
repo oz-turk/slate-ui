@@ -379,6 +379,14 @@ public class SlateWindow : Form
     public static Size?  PendingWindowSize     { get; set; }
     public static Point? PendingWindowLocation { get; set; }
 
+    // Static, not GH_IO-serialized: survives a Show/Hide toggle recreating
+    // _instance (GetOrCreate() builds a fresh SlateWindow — and thus a fresh
+    // DefaultWindowSize — whenever _instance is null or disposed) within the
+    // same Rhino session, distinct from PendingWindowSize which only carries
+    // the size across an actual file Read().
+    private static Size?  _lastKnownSize;
+    private static Point? _lastKnownLocation;
+
     public static Size?  GetCurrentWindowSize()     => _instance != null && !_instance.IsDisposed ? _instance.Size     : (Size?)null;
     public static Point? GetCurrentWindowLocation()  => _instance != null && !_instance.IsDisposed ? _instance.Location : (Point?)null;
 
@@ -682,11 +690,14 @@ public class SlateWindow : Form
     {
         Text            = "Slate";
         FormBorderStyle = FormBorderStyle.Sizable;
-        Size            = DefaultWindowSize;
+        Size            = _lastKnownSize     ?? DefaultWindowSize;
         MinimumSize     = new Size(320, 480);
         StartPosition   = FormStartPosition.Manual;
-        Location        = DefaultWindowLocation;
+        Location        = _lastKnownLocation ?? DefaultWindowLocation;
         BackColor       = Color.FromArgb(18, 18, 18);
+
+        Resize += (_, _) => { if (WindowState == FormWindowState.Normal) _lastKnownSize     = Size; };
+        Move   += (_, _) => { if (WindowState == FormWindowState.Normal) _lastKnownLocation = Location; };
 
         _webView.Dock = DockStyle.Fill;
         Controls.Add(_webView);

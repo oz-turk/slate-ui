@@ -5,7 +5,7 @@
          Rhino 8 still loads netfx .gha's via its compat runtime, so a single
          net48 target covers both. -->
     <TargetFramework>net48</TargetFramework>
-    <Version>0.1.0</Version>
+    <Version>0.1.1</Version>
     <AssemblyName>Slate</AssemblyName>
     <RootNamespace>Slate</RootNamespace>
     <TargetExt>.gha</TargetExt>
