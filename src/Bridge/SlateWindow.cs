@@ -154,7 +154,7 @@ public class SlateWindow : Form
     // theme apply synchronously, with no dependency on WebView2 ever loading.
     static string PeekPendingTheme()
     {
-        string? json = _stateSnapshot ?? PendingFileState;
+        string? json = (HostDocument != null && _uiStateByDoc.TryGetValue(HostDocument, out var s)) ? s : PendingFileState;
         if (json == null) return "dark";
         try
         {
@@ -348,32 +348,48 @@ public class SlateWindow : Form
             _latestColourValues.Clear();
             _solveRunning = false;
 
-            // The cached snapshot/window are keyed to whichever document last
-            // owned them, not to "the current session" — reusing them for a
-            // different document (e.g. closing Slate in file A via the X button,
-            // then opening a fresh Slate component in file B) would otherwise
-            // leak file A's tabs/groups into file B's blank panel. Only clear
-            // when the OWNING document actually changes; a same-document
-            // close/reopen (HostDocument never moves away from it) must still
-            // restore normally.
-            if (value != null && value != _stateSnapshotOwner)
-            {
-                _stateSnapshot = null;
-                _stateSnapshotOwner = null;
-                _instance?.ClearDicts();
-            }
+            // The live GH object references (_sliders etc.) belong to whichever
+            // document last owned them — reusing them for a different document
+            // (multiple .gh files open as tabs, each with its own Slate panel)
+            // would apply slider drags to the wrong file's objects. Always drop
+            // them on an actual document change; the per-document ui_state cache
+            // below (keyed by document, not a single slot) is what lets the
+            // right tab/group layout come back when switching back to a document.
+            _instance?.ClearDicts();
 
             if (_hostDocument != null) _hostDocument.SolutionEnd += OnDocSolutionEnd;
         }
     }
 
-    // Static: survives window close/reopen within the same Rhino session,
-    // but only for the document that produced it — see HostDocument's setter.
-    private static string? _stateSnapshot;
-    private static Grasshopper.Kernel.GH_Document? _stateSnapshotOwner;
-    public static string?  GetSerializedState()  => _stateSnapshot;
-    public static string?  PendingFileState      { get; set; }
+    // Keyed by document (not a single slot) so multiple open .gh files, each
+    // with their own Slate panel, keep their own tabs/groups/values in memory
+    // independently — switching the active GH tab (see the DocumentChanged
+    // hook wired up in SlateAssemblyPriority) looks up this document's own
+    // entry instead of showing whatever the previously-active file left behind.
+    // Updated on every "state_snapshot" push from JS (see OnMessageFromJs) and
+    // seeded from a file's persisted ui_state when it's read (see SlatePanel.Read
+    // → SeedDocumentState). Entries are intentionally never evicted on document
+    // close — GH_Document instances are cheap to keep and this avoids losing a
+    // background tab's state if it gets closed and reopened via Undo.
+    private static readonly Dictionary<Grasshopper.Kernel.GH_Document, string> _uiStateByDoc = new();
+
+    public static string? GetSerializedState(Grasshopper.Kernel.GH_Document? doc) =>
+        doc != null && _uiStateByDoc.TryGetValue(doc, out var s) ? s : null;
+
+    // Only used to seed the very first restore for a freshly-Read document —
+    // see SeedDocumentState and the "ui_ready" case in OnMessageFromJs.
+    public static string? PendingFileState      { get; set; }
     public static bool     NeedsFileRestore      { get; set; }
+
+    // Called from SlatePanel.Read() so a document's saved ui_state is known
+    // here as soon as the file loads, even before it ever becomes the active
+    // tab (DocumentChanged can then restore it immediately on first switch,
+    // instead of showing a blank panel until something else pushes state).
+    public static void SeedDocumentState(Grasshopper.Kernel.GH_Document doc, string? state)
+    {
+        if (state != null && !_uiStateByDoc.ContainsKey(doc))
+            _uiStateByDoc[doc] = state;
+    }
 
     // ── window geometry persistence ─────────────────────────────────────────
     public static Size?  PendingWindowSize     { get; set; }
@@ -387,8 +403,59 @@ public class SlateWindow : Form
     private static Size?  _lastKnownSize;
     private static Point? _lastKnownLocation;
 
+    // Keyed by document, same reasoning as _uiStateByDoc above: each open .gh
+    // file can have its own window size/position, and switching the active GH
+    // tab (OnActiveDocumentChanged) needs to re-apply THAT file's geometry
+    // instead of leaving whatever the previously-active file's window looked
+    // like. Kept updated live by the Resize/Move handlers in the constructor
+    // (stamped against whichever document is HostDocument at the time) and
+    // seeded from a file's persisted win_w/h/x/y on Read (SeedDocumentGeometry).
+    private static readonly Dictionary<Grasshopper.Kernel.GH_Document, Size>  _sizeByDoc     = new();
+    private static readonly Dictionary<Grasshopper.Kernel.GH_Document, Point> _locationByDoc = new();
+
     public static Size?  GetCurrentWindowSize()     => _instance != null && !_instance.IsDisposed ? _instance.Size     : (Size?)null;
     public static Point? GetCurrentWindowLocation()  => _instance != null && !_instance.IsDisposed ? _instance.Location : (Point?)null;
+
+    // Used by SlatePanel.Write() so a document's saved geometry reflects ITS
+    // OWN last-known size/position, not whatever the window currently looks
+    // like if a different tab is active when that document happens to be
+    // saved. Falls back to the live window geometry when this document has no
+    // cached entry yet (e.g. its first-ever save this session while active).
+    public static Size?  GetWindowSize(Grasshopper.Kernel.GH_Document? doc) =>
+        doc != null && _sizeByDoc.TryGetValue(doc, out var s) ? s : GetCurrentWindowSize();
+    public static Point? GetWindowLocation(Grasshopper.Kernel.GH_Document? doc) =>
+        doc != null && _locationByDoc.TryGetValue(doc, out var p) ? p : GetCurrentWindowLocation();
+
+    public static void SeedDocumentGeometry(Grasshopper.Kernel.GH_Document doc, Size? size, Point? location)
+    {
+        if (size     is Size  sz && !_sizeByDoc.ContainsKey(doc))     _sizeByDoc[doc]     = sz;
+        if (location is Point pt && !_locationByDoc.ContainsKey(doc)) _locationByDoc[doc] = pt;
+    }
+
+    const int MinWinW = 320, MinWinH = 480, MaxWinW = 3000, MaxWinH = 2000;
+
+    private static void ApplySize(SlateWindow w, Size size) =>
+        w.Size = new Size(
+            Math.Max(MinWinW, Math.Min(MaxWinW, size.Width)),
+            Math.Max(MinWinH, Math.Min(MaxWinH, size.Height)));
+
+    private static void ApplyLocation(SlateWindow w, Point loc)
+    {
+        // Only trust a restored position if it still lands on a connected monitor —
+        // otherwise fall back to the default corner instead of opening off-screen.
+        bool onScreen = Screen.AllScreens.Any(s => s.WorkingArea.Contains(loc.X + 20, loc.Y + 20));
+        w.Location = onScreen ? loc : new Point(60, 60);
+    }
+
+    // Called when OnActiveDocumentChanged switches HostDocument to a document
+    // that's never had Resize/Move fire against it this session (e.g. its
+    // ui_state was seeded from file but it hasn't been the active tab yet).
+    private static void ApplyGeometryForDocument(Grasshopper.Kernel.GH_Document doc)
+    {
+        var w = GetOrCreate();
+        if (_sizeByDoc.TryGetValue(doc, out var size))         ApplySize(w, size);
+        if (_locationByDoc.TryGetValue(doc, out var location)) ApplyLocation(w, location);
+    }
 
     // ── solve throttle (latest-value batching) ───────────────────────────────
     // Only the most recent value per slider ID survives to the next solve.
@@ -477,11 +544,31 @@ public class SlateWindow : Form
             }));
         }
 
-        foreach (var kv in win._sliders)    PushIfChanged(kv.Key, kv.Value.NickName);
+        foreach (var kv in win._sliders)    PushIfChanged(kv.Key, kv.Value.ImpliedNickName);
         foreach (var kv in win._toggles)    PushIfChanged(kv.Key, kv.Value.NickName);
         foreach (var kv in win._buttons)    PushIfChanged(kv.Key, kv.Value.NickName);
         foreach (var kv in win._valueLists) PushIfChanged(kv.Key, kv.Value.NickName);
         foreach (var kv in win._pancakeTrueOnlyButtons) PushIfChanged(kv.Key, kv.Value.NickName);
+    }
+
+    // GH_Panel.UserText is only the typed-in source text for an unwired panel
+    // (the string it feeds downstream). A wired panel never touches UserText —
+    // GH_Param<T>.CollectData() copies the source's data straight into
+    // VolatileData instead of running CollectVolatileData_Custom(), so the
+    // canvas's own display (GH_PanelAttributes.GetContentAsString) reads
+    // VolatileData once there's a source. Mirror that here, or a wired panel's
+    // captured value always comes through empty.
+    private static string GetPanelText(GH_Panel panel)
+    {
+        if (panel.SourceCount == 0) return panel.UserText;
+
+        if (panel.VolatileData is Grasshopper.Kernel.Data.GH_Structure<Grasshopper.Kernel.Types.GH_String> data)
+        {
+            return string.Join("\n", data.AllData(true)
+                .OfType<Grasshopper.Kernel.Types.GH_String>()
+                .Select(g => g.Value ?? ""));
+        }
+        return "";
     }
 
     // Panels carry more than a name (text content + connected/editable state),
@@ -494,7 +581,7 @@ public class SlateWindow : Form
         foreach (var kv in win._panels)
         {
             var name     = kv.Value.NickName;
-            var text     = kv.Value.UserText;
+            var text     = GetPanelText(kv.Value);
             var readOnly = kv.Value.SourceCount > 0;
             var fingerprint = name + "" + text + "" + readOnly;
             if (_lastPushedPanels.TryGetValue(kv.Key, out var last) && last == fingerprint) continue;
@@ -647,18 +734,14 @@ public class SlateWindow : Form
 
         if (PendingWindowSize is Size size)
         {
-            const int minW = 320, minH = 480, maxW = 3000, maxH = 2000;
-            w.Size = new Size(
-                Math.Max(minW, Math.Min(maxW, size.Width)),
-                Math.Max(minH, Math.Min(maxH, size.Height)));
+            ApplySize(w, size);
+            if (HostDocument != null) _sizeByDoc[HostDocument] = w.Size;
             PendingWindowSize = null;
         }
         if (PendingWindowLocation is Point loc)
         {
-            // Only trust a restored position if it still lands on a connected monitor —
-            // otherwise fall back to the default corner instead of opening off-screen.
-            bool onScreen = Screen.AllScreens.Any(s => s.WorkingArea.Contains(loc.X + 20, loc.Y + 20));
-            w.Location = onScreen ? loc : new Point(60, 60);
+            ApplyLocation(w, loc);
+            if (HostDocument != null) _locationByDoc[HostDocument] = w.Location;
             PendingWindowLocation = null;
         }
 
@@ -681,6 +764,75 @@ public class SlateWindow : Form
             _instance.Hide();
     }
 
+    // ── active-tab tracking ──────────────────────────────────────────────────
+    // Grasshopper can have several .gh files open as tabs on ONE canvas —
+    // AddedToDocument/RemovedFromDocument (see SlatePanel) only fire when a
+    // Slate panel is placed/deleted, never when the user just clicks a
+    // different already-open tab, so HostDocument used to keep pointing at
+    // whichever file's panel loaded/solved LAST, not whichever tab is actually
+    // on screen. Hooked onto GH_Canvas.DocumentChanged from
+    // SlateAssemblyPriority so every tab switch re-syncs which document (if
+    // any) the window is currently showing.
+    // Separate from HostDocument, which deliberately keeps pointing at the last
+    // document that HAD a panel even while a panel-less tab is active (so that
+    // tab's state/live object refs survive the detour) — de-duping purely on
+    // HostDocument would then make switching BACK to that same document a
+    // no-op and skip re-showing the window. This tracks whatever tab is
+    // literally on screen right now, independent of that.
+    private static Grasshopper.Kernel.GH_Document? _lastActiveDoc;
+
+    // Called from SlateAssemblyPriority on GH_DocumentServer.DocumentRemoved —
+    // fired when a .gh file is actually closed, not when a component is merely
+    // deleted from a still-open document (RemovedFromDocument, which
+    // deliberately keeps this document's cache around so Undo can restore it).
+    // A closed document's GH_Document instance can never come back, so nothing
+    // is lost by dropping every reference to it here — and since those
+    // references (the per-doc dictionaries below, plus HostDocument/
+    // HostComponent/_lastActiveDoc while they still point at it) are the only
+    // thing keeping the file's whole object graph (sliders, panels, wires)
+    // alive, this is what lets it actually get garbage collected instead of
+    // leaking for the rest of the Rhino session.
+    public static void EvictDocument(Grasshopper.Kernel.GH_Document doc)
+    {
+        _uiStateByDoc.Remove(doc);
+        _sizeByDoc.Remove(doc);
+        _locationByDoc.Remove(doc);
+        if (_lastActiveDoc == doc) _lastActiveDoc = null;
+        if (HostComponent != null && HostComponent.OnPingDocument() == doc) HostComponent = null;
+        if (HostDocument == doc) HostDocument = null;
+    }
+
+    public static void OnActiveDocumentChanged(Grasshopper.Kernel.GH_Document? newDoc)
+    {
+        if (newDoc == _lastActiveDoc) return;
+        _lastActiveDoc = newDoc;
+
+        var panel = newDoc?.Objects.OfType<Slate.Components.SlatePanel>().FirstOrDefault();
+        if (panel == null)
+        {
+            // The newly active file has no Slate panel at all — per-file
+            // opt-in, so nothing of THIS file's business is shown for it.
+            // HostDocument is deliberately left pointing at the last file
+            // that DID have a panel, so its state/live object refs are still
+            // intact if the user switches back to it.
+            HideIfOpen();
+            return;
+        }
+
+        if (newDoc != HostDocument)
+        {
+            HostDocument = newDoc;
+            if (newDoc != null) ApplyGeometryForDocument(newDoc);
+            if (newDoc != null && _uiStateByDoc.TryGetValue(newDoc, out var json))
+                GetOrCreate().RestoreState(json, newDoc);
+            else
+                GetOrCreate().ClearAll();
+        }
+
+        if (panel.LastShowValue) EnsureVisible();
+        else                     HideIfOpen();
+    }
+
     // ── construction ─────────────────────────────────────────────────────────
 
     internal static readonly Size  DefaultWindowSize     = new Size(380, 760);
@@ -696,8 +848,8 @@ public class SlateWindow : Form
         Location        = _lastKnownLocation ?? DefaultWindowLocation;
         BackColor       = Color.FromArgb(18, 18, 18);
 
-        Resize += (_, _) => { if (WindowState == FormWindowState.Normal) _lastKnownSize     = Size; };
-        Move   += (_, _) => { if (WindowState == FormWindowState.Normal) _lastKnownLocation = Location; };
+        Resize += (_, _) => { if (WindowState == FormWindowState.Normal) { _lastKnownSize     = Size;     if (HostDocument != null) _sizeByDoc[HostDocument]     = Size; } };
+        Move   += (_, _) => { if (WindowState == FormWindowState.Normal) { _lastKnownLocation = Location; if (HostDocument != null) _locationByDoc[HostDocument] = Location; } };
 
         _webView.Dock = DockStyle.Fill;
         Controls.Add(_webView);
@@ -887,15 +1039,15 @@ public class SlateWindow : Form
                         NeedsFileRestore = false;
                         PendingFileState = null;
                     }
-                    else if (!NeedsFileRestore && _stateSnapshot is string ss && HostDocument is Grasshopper.Kernel.GH_Document sd)
+                    else if (!NeedsFileRestore && HostDocument is Grasshopper.Kernel.GH_Document sd
+                             && _uiStateByDoc.TryGetValue(sd, out var ss))
                     {
                         RestoreState(ss, sd);
                     }
                     break;
 
                 case "state_snapshot":
-                    _stateSnapshot = e.WebMessageAsJson;
-                    _stateSnapshotOwner = HostDocument;
+                    if (HostDocument != null) _uiStateByDoc[HostDocument] = e.WebMessageAsJson;
                     string themeName = root.TryGetProperty("theme", out var th) ? th.GetString() ?? "dark" : "dark";
                     if (themeName != _lastAppliedTheme)
                     {
@@ -980,6 +1132,10 @@ public class SlateWindow : Form
     public void AddSlider(string tabId, GH_NumberSlider slider) =>
         AddSlider(tabId, null, slider);
 
+    // ImpliedNickName, not NickName: an unrenamed slider's NickName is empty,
+    // but the canvas shows the nearest wired recipient's name in its place
+    // (GH_NumberSlider.ImpliedNickName falls back to that automatically) — a
+    // plain NickName read here would just show blank for those.
     public void AddSlider(string tabId, string? groupId, GH_NumberSlider slider)
     {
         string id = slider.InstanceGuid.ToString();
@@ -988,7 +1144,7 @@ public class SlateWindow : Form
         PostToJs(SlateEvent.SliderAdded(
             tabId,
             id,
-            slider.NickName,
+            slider.ImpliedNickName,
             (double)slider.Slider.Minimum,
             (double)slider.Slider.Maximum,
             (double)slider.CurrentValue,
@@ -1069,7 +1225,7 @@ public class SlateWindow : Form
         string id = panel.InstanceGuid.ToString();
         _panels[id] = panel;
 
-        PostToJs(SlateEvent.PanelAdded(tabId, id, panel.NickName, panel.UserText, panel.SourceCount > 0, groupId));
+        PostToJs(SlateEvent.PanelAdded(tabId, id, panel.NickName, GetPanelText(panel), panel.SourceCount > 0, groupId));
     }
 
     public void AddItemPicker(string tabId, string? groupId, GH_ItemPicker picker)
@@ -1248,7 +1404,7 @@ public class SlateWindow : Form
                         if (docPanels.TryGetValue(id, out var pnl))
                         {
                             _panels[id] = pnl;
-                            s["value"]    = pnl.UserText;
+                            s["value"]    = GetPanelText(pnl);
                             s["name"]     = pnl.NickName;
                             s["readOnly"] = pnl.SourceCount > 0;
                         }
@@ -1309,7 +1465,7 @@ public class SlateWindow : Form
                         s["min"]            = (double)gh.Slider.Minimum;
                         s["max"]            = (double)gh.Slider.Maximum;
                         s["decimalPlaces"]  = EffectiveDecimalPlaces(gh.Slider);
-                        s["name"]           = gh.NickName;
+                        s["name"]           = gh.ImpliedNickName;
                     }
                     else arr.RemoveAt(i);
                 }

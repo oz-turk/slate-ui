@@ -34,13 +34,26 @@ public class SlatePanel : GH_Component
         pManager.AddTextParameter("Log", "L", "Status", GH_ParamAccess.item);
     }
 
+    // Cached ui_state/geometry read from the file, held here until
+    // AddedToDocument knows which GH_Document it belongs to (see
+    // SlateWindow.SeedDocumentState / SeedDocumentGeometry).
+    private string? _savedUiState;
+    private System.Drawing.Size?  _savedWinSize;
+    private System.Drawing.Point? _savedWinLocation;
+
+    // Last "Show" input value seen in SolveInstance — read by
+    // SlateWindow.OnActiveDocumentChanged to decide whether to show/hide the
+    // window when this component's document becomes the active tab, without
+    // forcing a fresh solve just from switching tabs.
+    public bool LastShowValue { get; private set; } = true;
+
     public override bool Write(GH_IWriter writer)
     {
-        var state = SlateWindow.GetSerializedState();
+        var state = SlateWindow.GetSerializedState(OnPingDocument());
         if (state != null) writer.SetString("ui_state", state);
 
-        var size = SlateWindow.GetCurrentWindowSize();
-        var loc  = SlateWindow.GetCurrentWindowLocation();
+        var size = SlateWindow.GetWindowSize(OnPingDocument());
+        var loc  = SlateWindow.GetWindowLocation(OnPingDocument());
         if (size is System.Drawing.Size sz)
         {
             writer.SetInt32("win_w", sz.Width);
@@ -59,18 +72,27 @@ public class SlatePanel : GH_Component
     {
         if (reader.ItemExists("ui_state"))
         {
-            SlateWindow.PendingFileState = reader.GetString("ui_state");
+            _savedUiState = reader.GetString("ui_state");
+            SlateWindow.PendingFileState = _savedUiState;
             SlateWindow.NeedsFileRestore = true;
         }
         if (reader.ItemExists("win_w") && reader.ItemExists("win_h"))
-            SlateWindow.PendingWindowSize = new System.Drawing.Size(reader.GetInt32("win_w"), reader.GetInt32("win_h"));
+        {
+            _savedWinSize = new System.Drawing.Size(reader.GetInt32("win_w"), reader.GetInt32("win_h"));
+            SlateWindow.PendingWindowSize = _savedWinSize;
+        }
         if (reader.ItemExists("win_x") && reader.ItemExists("win_y"))
-            SlateWindow.PendingWindowLocation = new System.Drawing.Point(reader.GetInt32("win_x"), reader.GetInt32("win_y"));
+        {
+            _savedWinLocation = new System.Drawing.Point(reader.GetInt32("win_x"), reader.GetInt32("win_y"));
+            SlateWindow.PendingWindowLocation = _savedWinLocation;
+        }
         return base.Read(reader);
     }
 
     public override void AddedToDocument(GH_Document document)
     {
+        SlateWindow.SeedDocumentState(document, _savedUiState);
+        SlateWindow.SeedDocumentGeometry(document, _savedWinSize, _savedWinLocation);
         SlateWindow.HostComponent = this;
         SlateWindow.HostDocument  = document;
         base.AddedToDocument(document);
@@ -97,6 +119,8 @@ public class SlatePanel : GH_Component
         DA.GetData(2, ref capture);
         DA.GetData(3, ref clear);
         DA.GetData(4, ref reset);
+
+        LastShowValue = show;
 
         // Drain log messages queued by SlateWindow
         var logLines = new System.Text.StringBuilder();
