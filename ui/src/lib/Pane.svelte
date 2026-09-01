@@ -964,7 +964,6 @@
             {@const group = item.data}
             <GroupSection
               {group} mode={$mode} {selectedIds} {dropTarget} {resizingSliderId} {activeDrag}
-              isLast={i === activeItems.length - 1}
               dropHighlight={dropTarget?.type === 'group-header' && dropTarget.id === group.id && activeDrag?.type === 'slider'}
               dropNest={dropTarget?.type === 'group-header' && dropTarget.id === group.id && dropTarget.pos === 'nest' && activeDrag?.type === 'group'}
               dropBeforeMe={dropTarget?.type === 'group-header' && dropTarget.id === group.id && dropTarget.pos === 'before' && activeDrag?.type === 'group'}

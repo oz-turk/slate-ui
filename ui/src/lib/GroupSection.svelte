@@ -25,10 +25,6 @@
   export let dropTarget    = null
   export let activeDrag    = null
   export let depth         = 0
-  // Whether this group is the last item in its own list (top-level list, or
-  // a parent group's body) — suppresses the trailing divider, same idea as
-  // isLast on the row components.
-  export let isLast        = false
   // id of the row currently being resized, or null — passed down from Pane.
   // While set, flip is skipped for the whole list (see row-slot below), not
   // just this row: see Pane.svelte's resizingSliderId comment for why.
@@ -95,7 +91,7 @@
 </script>
 
 <!-- svelte-ignore a11y-no-static-element-interactions -->
-<div class="group" class:nested={depth > 0} class:drop-before-me={dropBeforeMe} class:drop-after-me={dropAfterMe} class:group-dragging={groupDragging} class:group-last={isLast} data-group-id={group.id} style="--depth:{depth}">
+<div class="group" class:nested={depth > 0} class:drop-before-me={dropBeforeMe} class:drop-after-me={dropAfterMe} class:group-dragging={groupDragging} data-group-id={group.id} style="--depth:{depth}">
   <!-- svelte-ignore a11y-click-events-have-key-events -->
   <div class="group-header"
       class:drop-highlight={dropHighlight}
@@ -181,7 +177,6 @@
               {resizingSliderId}
               {activeDrag}
               depth={depth + 1}
-              isLast={i === items.length - 1}
               containerId={group.id}
               dropHighlight={dropTarget?.type === 'group-header' && dropTarget.id === subGroup.id && activeDrag?.type === 'slider'}
               dropNest={dropTarget?.type === 'group-header' && dropTarget.id === subGroup.id && dropTarget.pos === 'nest' && activeDrag?.type === 'group'}
@@ -235,17 +230,6 @@
   .group.nested {
     margin-left: -9px;
   }
-  .group:not(.group-last)::after {
-    content: '';
-    position: absolute;
-    left: 12px;
-    right: 12px;
-    bottom: 0;
-    height: 1px;
-    background: var(--edge-tint);
-    pointer-events: none;
-  }
-
   .group-header.drop-nest {
     background: rgba(var(--accent-rgb), 0.12) !important;
     outline: 1px solid rgba(var(--accent-rgb), 0.33);
