@@ -22,7 +22,7 @@
           Multi-select
         </span>
         <span class="hint-item">
-          <span class="kbd">Ctrl</span> + <span class="kbd">Shift</span> + click
+          <span class="kbd">Shift</span> + click
           Range select
         </span>
       {/if}
@@ -60,7 +60,7 @@
             <rect x="6" y="3" width="6" height="5" rx="2" fill="currentColor" stroke="none" />
           </svg>
         </span>
-        Multi-select
+        Range select
       </span>
       <span class="hint-item">
         <span class="kbd">Drag</span>

@@ -498,7 +498,7 @@ export function orderedItems(container) {
 
 // Depth-first, top-to-bottom slider-id order for a tab — the same order
 // GroupSection recurses sliders/groups into when rendering. Pane.svelte's
-// ctrl+shift range-select uses this to resolve "everything between the
+// shift range-select uses this to resolve "everything between the
 // anchor and the clicked row" regardless of how deeply either is nested.
 export function flattenSliderIds(tab) {
   const ids = []

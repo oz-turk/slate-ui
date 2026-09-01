@@ -7,8 +7,8 @@
   const shortcuts = [
     { keys: ['Tab'],          desc: 'Toggle Edit / Preview' },
     { keys: ['Click'],        desc: 'Select a control (edit mode)' },
-    { keys: ['Shift/Ctrl', 'Click'], desc: 'Add to selection' },
-    { keys: ['Ctrl', 'Shift', 'Click'], desc: 'Select range from last click' },
+    { keys: ['Ctrl', 'Click'],  desc: 'Add to selection' },
+    { keys: ['Shift', 'Click'], desc: 'Select range from last click' },
     { keys: ['Esc'],          desc: 'Clear selection' },
     { keys: ['Drag'],         desc: 'Reorder / move controls' },
     { keys: ['x'],            desc: 'Delete control / ungroup group under mouse' },

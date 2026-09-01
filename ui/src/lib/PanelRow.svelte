@@ -154,6 +154,20 @@
   // whatever's next in tab order, which reads as the shortcut having no
   // effect at all. Replicate the same toggle here so Tab still does the one
   // thing it's supposed to do everywhere else in the app.
+  // Plain click/drag inside the textarea is normal text editing and must
+  // stay local (not toggle the row's selection). Ctrl+click is the app-wide
+  // "add to selection" gesture (see Pane.svelte's onSliderSelect) — for that
+  // one case we preventDefault so the browser doesn't just move focus/caret,
+  // and let the event bubble to the row's on:click instead of stopping it.
+  function onTextPointerDown(e) {
+    if (e.ctrlKey) { e.preventDefault(); return }
+    e.stopPropagation()
+  }
+  function onTextClick(e) {
+    if (e.ctrlKey) return
+    e.stopPropagation()
+  }
+
   function onTextKeydown(e) {
     if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
       e.preventDefault()
@@ -229,8 +243,8 @@
         value={slider.value}
         placeholder="Type text… (Ctrl+Enter to apply)"
         spellcheck="false"
-        on:click|stopPropagation
-        on:pointerdown|stopPropagation
+        on:click={onTextClick}
+        on:pointerdown={onTextPointerDown}
         on:keydown|stopPropagation={onTextKeydown}
         on:change={commit}
         on:blur={commit}

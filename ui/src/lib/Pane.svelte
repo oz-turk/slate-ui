@@ -95,7 +95,7 @@
 
   // ── local UI state ────────────────────────────────────────────────────────────
   let selectedIds   = new Set()
-  // Anchor for ctrl+shift range-select — the last slider explicitly clicked
+  // Anchor for shift range-select — the last slider explicitly clicked
   // (plain or toggled). Reset alongside selectedIds in clearSelection so a
   // stale anchor from a different tab can never leak a cross-tab range.
   let lastClickedId = null
@@ -555,14 +555,15 @@
   }
 
   // ── selection ─────────────────────────────────────────────────────────────────
-  // shift/ctrl toggle a single row in/out of the selection (existing
-  // behaviour). ctrl+shift instead selects the whole run between the anchor
-  // (lastClickedId) and this row — resolved via flattenSliderIds, so it
-  // follows visual order through nested groups. The anchor only ever comes
-  // from the active tab's own flatten, so a range can't reach across tabs.
+  // ctrl toggles a single row in/out of the selection. shift selects the
+  // whole run between the anchor (lastClickedId) and this row — resolved via
+  // flattenSliderIds, so it follows visual order through nested groups. The
+  // anchor only ever comes from the active tab's own flatten, so a range
+  // can't reach across tabs. Falls through to a plain single-select if shift
+  // has no usable anchor yet (nothing clicked before, or same row).
   function onSliderSelect(sliderId, shift, ctrl) {
     if ($mode !== 'edit') return
-    if (shift && ctrl && lastClickedId && lastClickedId !== sliderId) {
+    if (shift && lastClickedId && lastClickedId !== sliderId) {
       const order = flattenSliderIds(activeTab)
       const iFrom = order.indexOf(lastClickedId)
       const iTo   = order.indexOf(sliderId)
@@ -575,11 +576,14 @@
         return
       }
     }
-    const multi = shift || ctrl
-    const next = new Set(selectedIds)
-    if (multi) { if (next.has(sliderId)) next.delete(sliderId); else next.add(sliderId) }
-    else        { selectedIds = next.has(sliderId) && next.size === 1 ? new Set() : new Set([sliderId]); lastClickedId = sliderId; return }
-    selectedIds = next
+    if (ctrl) {
+      const next = new Set(selectedIds)
+      if (next.has(sliderId)) next.delete(sliderId); else next.add(sliderId)
+      selectedIds = next
+      lastClickedId = sliderId
+      return
+    }
+    selectedIds = selectedIds.has(sliderId) && selectedIds.size === 1 ? new Set() : new Set([sliderId])
     lastClickedId = sliderId
   }
   function clearSelection() { selectedIds = new Set(); lastClickedId = null }
