@@ -5,6 +5,7 @@ src/Resources/assets/
 yak/*.gha
 yak/*.yak
 yak/*.dll
+yak/*.zip
 
 # Node
 ui/node_modules/
