@@ -11,7 +11,7 @@
     updatePane, syncControl, clearAllWorkspaces, resetToDefault, makeLeaf, setActiveWorkspace,
     posAppend, applyWindowEdgeResize, orderedItems, reorderTabTopLevel
   } from './stores/layout.js'
-  import { mode, pinned, theme, deleteRequest, captureRequest, settingsOpen, clearSelectionTick, hoverHint, altHeld, ctrlHeld } from './stores/uiState.js'
+  import { mode, pinned, theme, deleteRequest, captureRequest, settingsOpen, clearSelectionTick, groupSelectionTick, hoverHint, altHeld, ctrlHeld } from './stores/uiState.js'
   import { undo, suppressDuring } from './stores/history.js'
   import { postToCs, postStateSnapshot } from './lib/ipc.js'
 
@@ -120,9 +120,16 @@
     // a text field has focus.
     if (get(mode) !== 'edit' || isTextEditable(document.activeElement)) return
     const el = document.elementFromPoint(mouseX, mouseY)
+    const paneEl = el?.closest('[data-pane-id]')
+    if (!paneEl) return
     const sliderEl = el?.closest('[data-slider-id]')
-    const paneEl   = el?.closest('[data-pane-id]')
-    if (sliderEl && paneEl) deleteRequest.set({ paneId: paneEl.dataset.paneId, sliderId: sliderEl.dataset.sliderId })
+    if (sliderEl) { deleteRequest.set({ paneId: paneEl.dataset.paneId, sliderId: sliderEl.dataset.sliderId }); return }
+    // Mouse is over a group but not over one of its slider rows specifically
+    // (e.g. the header, or empty padding) — same target resolution as
+    // triggerCapture's groupEl below, so "x" ungroups whatever group is
+    // under the cursor, matching GroupSection's own "×" button.
+    const groupEl = el?.closest('[data-group-id]')
+    if (groupEl) deleteRequest.set({ paneId: paneEl.dataset.paneId, groupId: groupEl.dataset.groupId })
   }
   function triggerCapture() {
     if (get(mode) !== 'edit' || isTextEditable(document.activeElement)) return
@@ -214,6 +221,7 @@
 
       if (e.key === 'x') { triggerDelete(); return }
       if (e.key === 'c') { triggerCapture(); return }
+      if (e.key === 'g') { groupSelectionTick.update(n => n + 1); return }
     }
     window.addEventListener('keydown', onKeydown)
     return () => window.removeEventListener('keydown', onKeydown)
@@ -331,6 +339,11 @@
     // triggerCapture/triggerDelete above and the poll timer in SlateWindow.cs.
     if (msg.type === 'capture_hotkey') triggerCapture()
     if (msg.type === 'delete_hotkey')  triggerDelete()
+    // Same poll again for 'g' — no mouse-position resolution needed (it acts
+    // on whatever's already selected, not whatever's under the cursor), but
+    // still needs the ground-truth fallback since GH's canvas has its own
+    // native "Group" command on the same key that a stolen keydown would hit.
+    if (msg.type === 'group_hotkey') groupSelectionTick.update(n => n + 1)
 
     if (msg.type === 'slider_added') {
       addCapturedControl({ id: msg.id, type: 'slider', name: msg.name, min: msg.min, max: msg.max, value: msg.value, decimalPlaces: msg.decimalPlaces }, msg)

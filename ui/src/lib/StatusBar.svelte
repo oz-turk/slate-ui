@@ -75,6 +75,10 @@
         Capture
       </span>
       <span class="hint-item">
+        <span class="kbd">g</span>
+        Group selected
+      </span>
+      <span class="hint-item">
         <span class="kbd">Esc</span>
         Clear selection
       </span>

@@ -39,7 +39,7 @@
 <!-- svelte-ignore a11y-no-static-element-interactions -->
 <!-- svelte-ignore a11y-click-events-have-key-events -->
 <div class="row" data-slider-id={slider.id} class:edit={mode === 'edit'} class:selected
-    class:row-dragging={rowDragging}
+    class:row-dragging={rowDragging} class:row-last={isLast}
     bind:this={rowEl}
     style={dragTranslateY ? `transform: translateY(${dragTranslateY}px)` : ''}
     on:click={e => mode === 'edit' && dispatch('select', { shift: e.shiftKey, ctrl: e.ctrlKey })}
@@ -97,7 +97,7 @@
     transition: background 0.1s, transform 0.08s ease-out;
     position: relative;
   }
-  .row::after {
+  .row:not(.row-last)::after {
     content: '';
     position: absolute;
     left: 12px;

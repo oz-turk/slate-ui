@@ -25,7 +25,14 @@
   export let dropTarget    = null
   export let activeDrag    = null
   export let depth         = 0
-  export let resizingSliderId = null  // row currently being resized — flip is skipped for it
+  // Whether this group is the last item in its own list (top-level list, or
+  // a parent group's body) — suppresses the trailing divider, same idea as
+  // isLast on the row components.
+  export let isLast        = false
+  // id of the row currently being resized, or null — passed down from Pane.
+  // While set, flip is skipped for the whole list (see row-slot below), not
+  // just this row: see Pane.svelte's resizingSliderId comment for why.
+  export let resizingSliderId = null
   // The id of whichever container (a parent group, or null for top-level)
   // this group instance itself lives in — rides along on headerDragOver/Drop
   // so Pane.svelte always knows exactly where to insert a dragged group,
@@ -88,12 +95,11 @@
 </script>
 
 <!-- svelte-ignore a11y-no-static-element-interactions -->
-<div class="group" class:drop-before-me={dropBeforeMe} class:drop-after-me={dropAfterMe} class:group-dragging={groupDragging} data-group-id={group.id} style="--depth:{depth}">
+<div class="group" class:nested={depth > 0} class:drop-before-me={dropBeforeMe} class:drop-after-me={dropAfterMe} class:group-dragging={groupDragging} class:group-last={isLast} data-group-id={group.id} style="--depth:{depth}">
   <!-- svelte-ignore a11y-click-events-have-key-events -->
   <div class="group-header"
       class:drop-highlight={dropHighlight}
       class:drop-nest={dropNest}
-      style="padding-left: {6 + depth * 14}px"
       on:click={() => dispatch('toggle', group.id)}
       on:mouseenter={() => hoverHint.set('Double-click: rename  ·  Drag items onto the header to add them, drag the group itself to reorder (top/bottom edge) or nest it (middle)')}
       on:mouseleave={() => hoverHint.set(null)}
@@ -136,13 +142,13 @@
   </div>
 
   {#if !group.collapsed}
-    <div class="group-body">
+    <div class="group-body" style="margin-left: {mode === 'edit' ? 36 : 12}px">
       {#if group.sliders.length === 0 && (group.groups ?? []).length === 0}
         <div class="empty-group">Empty group</div>
       {/if}
 
       {#each items as item, i (item.id)}
-        <div class="row-slot" animate:flip={{ duration: item.kind === 'slider' && item.data.id === resizingSliderId ? 0 : 150, easing: cubicOut }}>
+        <div class="row-slot" animate:flip={{ duration: resizingSliderId ? 0 : 150, easing: cubicOut }}>
           {#if item.kind === 'slider'}
             {@const slider = item.data}
             <svelte:component
@@ -175,6 +181,7 @@
               {resizingSliderId}
               {activeDrag}
               depth={depth + 1}
+              isLast={i === items.length - 1}
               containerId={group.id}
               dropHighlight={dropTarget?.type === 'group-header' && dropTarget.id === subGroup.id && activeDrag?.type === 'slider'}
               dropNest={dropTarget?.type === 'group-header' && dropTarget.id === subGroup.id && dropTarget.pos === 'nest' && activeDrag?.type === 'group'}
@@ -214,7 +221,21 @@
   .group {
     position: relative;
   }
-  .group::after {
+  /* A nested group sits inside its parent's .group-body, which already pushes
+     children right by its own border-left (1px) + padding-left (8px) — on top
+     of this group's own margin-left below (set inline, which positions ITS
+     line under ITS OWN chevron the same way at every depth), that compounds
+     into a bigger gap between a parent's line and a child's line than between
+     the pane edge and a top-level group's line (which has no such parent step
+     to compound with). Cancelling that inherited step here — instead of
+     shrinking the inline margin-left itself, which would pull the line out
+     from under this group's own chevron — keeps every line-to-line gap equal
+     to the pane-to-first-line one, and the chevron alignment intact at every
+     depth (width:auto absorbs the 9px back on the right, so nothing overflows). */
+  .group.nested {
+    margin-left: -9px;
+  }
+  .group:not(.group-last)::after {
     content: '';
     position: absolute;
     left: 12px;
@@ -254,6 +275,7 @@
     display: flex;
     align-items: center;
     gap: 4px;
+    padding-left: 6px;
     padding-right: 6px;
     height: 44px;
     cursor: pointer;
@@ -354,7 +376,18 @@
   }
   .del-group:hover { background: var(--grid); color: rgba(var(--text-rgb), 0.58); }
 
-  .group-body { }
+  /* Tree-indent guide: every nesting level shifts ALL of its content right
+     by the same step, leaf rows included — not just group headers — so a
+     slider two groups deep visually lines up under its own group instead of
+     starting flush with top-level items. Compounds naturally with nesting
+     since each subgroup's own .group-body applies the same padding again.
+     margin-left (set inline, above) lines the border up under the chevron's
+     own centre — 12px in preview, 36px in edit where the drag handle pushes
+     the chevron over by 24px (20px handle + 4px flex gap). */
+  .group-body {
+    padding-left: 8px;
+    border-left: 1px solid rgba(var(--text-rgb), 0.1);
+  }
   .row-slot   { display: block; }
 
   .empty-group {

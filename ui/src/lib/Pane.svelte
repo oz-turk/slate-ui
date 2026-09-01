@@ -13,7 +13,7 @@
   import { layout, activeWorkspaceId, updatePane, findLeaf, newTabId, splitPane, splitPaneSpanning, newSplitId, setSplitSize, collapsePane, findNeighborPane, moveCrossPaneItem, extractSlidersByIds, orderedItems, flattenSliderIds, posBetween, posAppend, withAppendedPositions, reorderTabTopLevel } from '../stores/layout.js'
   import { tabDrag, itemDrag } from '../stores/dragState.js'
   import { computeAlignedSnapTargets, snapRaw } from './splitSnap.js'
-  import { mode, deleteRequest, captureRequest, clearSelectionTick, hoverHint, theme } from '../stores/uiState.js'
+  import { mode, deleteRequest, captureRequest, clearSelectionTick, groupSelectionTick, hoverHint, theme } from '../stores/uiState.js'
   import { postToCs, postStateSnapshot } from './ipc.js'
   import { get } from 'svelte/store'
   import { flip } from 'svelte/animate'
@@ -73,7 +73,8 @@
   // "x"/"c" hotkeys — App.svelte resolves what's under the mouse via the DOM
   // (data-pane-id / data-slider-id) and sets these; whichever Pane matches acts.
   $: if ($deleteRequest?.paneId === paneId && activeTab) {
-    removeSlider(activeTab.id, $deleteRequest.sliderId)
+    if ($deleteRequest.sliderId) removeSlider(activeTab.id, $deleteRequest.sliderId)
+    else if ($deleteRequest.groupId) removeGroup($deleteRequest.groupId)
     deleteRequest.set(null)
   }
   $: if ($captureRequest?.paneId === paneId && activeTabId) {
@@ -83,6 +84,10 @@
 
   // Escape — every pane clears its own selection, not just the one under the mouse.
   $: if ($clearSelectionTick) clearSelection()
+
+  // "g" — groups whichever pane's selection is non-empty; groupSelected()
+  // itself no-ops when this pane has nothing selected, same as clearSelection above.
+  $: if ($groupSelectionTick) groupSelected()
 
   // Leaving edit mode: selection is an edit-mode concept, so the blue
   // highlight shouldn't persist once preview mode hides the ActionBar.
@@ -103,7 +108,13 @@
   let edgeZone     = null   // 'left' | 'right' | 'top' | 'bottom' | 'center' | null
   let itemDragHover = false  // true only while a cross-pane item drag is hovering this pane
   let paneEl
-  let resizingSliderId = null  // row currently being resized — flip is skipped for it (see row-slot)
+  // id of the row currently being resized, or null. While set, flip is
+  // skipped for the WHOLE list (see row-slot), not just this row — every
+  // resize tick reflows the rows below it, and animating that reflow at
+  // flip's normal 150ms would restart on each tick faster than it can
+  // finish, reading as a trailing/laggy chase instead of the rows tracking
+  // the drag directly.
+  let resizingSliderId = null
   let contextMenu = null  // { x, y, items } | null — right-click menu on the pane itself
 
   // The "Right-click: split or close" hint is only useful while hovering
@@ -580,12 +591,33 @@
     selectedIds = new Set()
   }
 
+  // Maps every slider id in a tab to the id of the group directly containing
+  // it (null for top-level) — lets groupSelected land the new group next to
+  // where the selection actually lives instead of always at the tab's top.
+  function sliderParentIds(container, parentId, map) {
+    for (const s of container.sliders) map.set(s.id, parentId)
+    for (const g of container.groups ?? []) sliderParentIds(g, g.id, map)
+    return map
+  }
+
   function groupSelected() {
     if (!selectedIds.size) return
     const idSet = selectedIds
     mutateTabs(tabs => tabs.map(t => {
       if (t.id !== activeTab.id) return t
+      // Selection shares one parent (a specific group, or top-level) → nest
+      // the new group there. A selection spanning multiple containers has no
+      // single sensible home, so it falls back to the tab's top level.
+      const parentMap = sliderParentIds(t, null, new Map())
+      const parents = new Set([...idSet].map(id => parentMap.get(id)))
+      const targetGroupId = parents.size === 1 ? [...parents][0] : null
       const [stripped, items] = extractSlidersByIds(t, idSet)
+      if (targetGroupId) {
+        const groups = mapGroupTree(stripped.groups, targetGroupId, g => ({
+          groups: [...(g.groups ?? []), { id: 'g_' + Date.now(), label: 'Group', collapsed: false, sliders: items, groups: [], pos: posAppend(g) }]
+        }))
+        return { ...stripped, groups }
+      }
       const newGroup = { id: 'g_' + Date.now(), label: 'Group', collapsed: false, sliders: items, groups: [], pos: posAppend(stripped) }
       return { ...stripped, groups: [...stripped.groups, newGroup] }
     }))
@@ -901,7 +933,7 @@
       </div>
     {:else}
       {#each activeItems as item, i (item.id)}
-        <div class="row-slot" animate:flip={{ duration: item.kind === 'slider' && item.data.id === resizingSliderId ? 0 : 150, easing: cubicOut }}>
+        <div class="row-slot" animate:flip={{ duration: resizingSliderId ? 0 : 150, easing: cubicOut }}>
           {#if item.kind === 'slider'}
             {@const slider = item.data}
             <svelte:component
@@ -928,6 +960,7 @@
             {@const group = item.data}
             <GroupSection
               {group} mode={$mode} {selectedIds} {dropTarget} {resizingSliderId} {activeDrag}
+              isLast={i === activeItems.length - 1}
               dropHighlight={dropTarget?.type === 'group-header' && dropTarget.id === group.id && activeDrag?.type === 'slider'}
               dropNest={dropTarget?.type === 'group-header' && dropTarget.id === group.id && dropTarget.pos === 'nest' && activeDrag?.type === 'group'}
               dropBeforeMe={dropTarget?.type === 'group-header' && dropTarget.id === group.id && dropTarget.pos === 'before' && activeDrag?.type === 'group'}

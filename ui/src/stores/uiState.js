@@ -26,7 +26,7 @@ export const hoverHint = writable(null)
 // document.elementFromPoint() rather than wiring hover state through every
 // row/pane component. App.svelte sets these; the matching Pane instance
 // (found by paneId) reacts and clears it.
-export const deleteRequest  = writable(null)  // { paneId, sliderId } | null
+export const deleteRequest  = writable(null)  // { paneId, sliderId } | { paneId, groupId } | null
 export const captureRequest = writable(null)  // { paneId, groupId } | null — groupId null means "capture to the tab, not a specific group"
 
 // Toggled by the gear icon in EditToolbar.
@@ -35,6 +35,12 @@ export const settingsOpen = writable(false)
 // Escape clears selection everywhere at once — a tick counter rather than a
 // per-pane request, since every Pane (not just one under the mouse) should react.
 export const clearSelectionTick = writable(0)
+
+// "g" groups the current selection — same broadcast-tick shape as
+// clearSelectionTick above (not a paneId-targeted request like delete/capture-
+// Request) since it acts on whatever Pane already holds a selection, not
+// whatever's under the mouse.
+export const groupSelectionTick = writable(0)
 
 // True while Alt is held — lets corner-handles highlight themselves as "this
 // drag will act on more than just one pane" before the user even starts

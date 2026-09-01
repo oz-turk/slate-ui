@@ -1,7 +1,7 @@
 <script>
   import { onMount, tick } from 'svelte'
   import { createEventDispatcher } from 'svelte'
-  import { hoverHint } from '../stores/uiState.js'
+  import { hoverHint, mode as modeStore } from '../stores/uiState.js'
   import { dragTranslateYFor, rowDragOver, rowDragLeave, rowDrop } from './rowDrag.js'
   import { resizeHint, measureResizeBounds, computeResizeHeight } from './resizeHandle.js'
   const dispatch = createEventDispatcher()
@@ -25,21 +25,34 @@
   //
   // Snapping naturalHeight alone isn't enough — same issue the manual resize
   // handle already solves via resizeOverhead (see resizeHandle.js): the
-  // header/margin/padding/border around the body is ~59px, not itself a
-  // multiple of MODULE, so a body that's an exact multiple of MODULE still
-  // leaves the ROW's outer edge off-grid. Overhead is measured live off
-  // rowEl (like measureResizeBounds does), not hardcoded, so it keeps
-  // working if the surrounding layout ever changes.
+  // header/margin/padding/border around the body isn't itself a multiple of
+  // MODULE, so a body that's an exact multiple of MODULE can still leave the
+  // ROW's outer edge off-grid. overhead is the row's own real, current chrome
+  // (whatever it is right now — with or without a header), measured live off
+  // rowEl like measureResizeBounds does, so `overhead + body` always lands on
+  // a MODULE multiple regardless of showHeader: no fixed header-size constant
+  // to keep in sync with the CSS, and no separate accounting for the
+  // header/no-header cases.
   let textEl
   let naturalHeight = 0
   let overhead = 0
+  // Header is only worth its 44px+margin when it's carrying something to
+  // read: the name. An untitled panel would otherwise waste a full MODULE on
+  // a blank bar — in edit mode too (the handle lives outside the header, see
+  // .handle below, so losing the header doesn't cost it; the remove/badge
+  // controls just move off until the panel is named).
+  $: showHeader = !!slider.name
+
   async function remeasure() {
     await tick()
     if (textEl) naturalHeight = textEl.scrollHeight
     if (rowEl) overhead = rowEl.offsetHeight - bodyHeight
   }
   onMount(remeasure)
-  $: (slider.value, slider.id, remeasure())
+  // showHeader is included because naming/unnaming a panel changes rowEl's
+  // actual chrome (the header appearing/disappearing), so a fresh measurement
+  // is needed after Svelte patches the DOM.
+  $: (slider.value, slider.id, showHeader, remeasure())
   // Math.max clamps the TOTAL (overhead + body) to at least one MODULE, not
   // the body alone — overhead here is already bigger than one MODULE, so the
   // floor never actually bites, but clamping the body instead would produce
@@ -63,6 +76,7 @@
   let resizeOverhead = 0
   let maxBodyHeight  = Infinity   // capped to the pane's visible area — can't drag past the window
   let lastCtrlKey = false
+  let resizeRaf = null   // see onResizeMove
 
   function onResizeDown(e) {
     e.preventDefault()
@@ -81,17 +95,35 @@
     const h = computeResizeHeight({ clientY: e.clientY, resizeStartY, resizeStartH, resizeOverhead, maxBodyHeight, snapped, MODULE })
     return { h, snapped }
   }
+  // liveHeight drives this row's own box directly (see .text-wrap below), so
+  // it tracks the pointer with zero latency regardless of what the store is
+  // doing. The 'resize' dispatch — which the parent turns into a full
+  // tabs/sliders/groups clone so *other* rows can reflow around this one's
+  // new height — is throttled to one per animation frame instead of one per
+  // pointermove. Pointermove can fire far faster than the page can clone and
+  // re-render that whole tree, and without throttling the events queue up
+  // faster than Svelte can drain them: this row itself stayed smooth before
+  // (nothing but liveHeight gated its own box), but everything below it was
+  // rendering an increasingly stale backlog of those queued heights, which
+  // reads as delayed/rubber-banding tracking and the occasional wrong-height
+  // flash ("stretch") when a frame briefly shows a stale value.
   function onResizeMove(e) {
     if (!resizing) return
     lastCtrlKey = e.ctrlKey
     const { h, snapped } = computeHeight(e)
     liveHeight = h
     hoverHint.set(resizeHint(h, snapped))
-    dispatch('resize', h)
+    if (resizeRaf === null) {
+      resizeRaf = requestAnimationFrame(() => {
+        resizeRaf = null
+        if (resizing) dispatch('resize', liveHeight)
+      })
+    }
   }
   function onResizeUp(e) {
     if (!resizing) return
     resizing = false
+    if (resizeRaf !== null) { cancelAnimationFrame(resizeRaf); resizeRaf = null }
     // Recompute from the pointerup event's own clientY — pointermove can
     // coalesce/drop under the browser, so the last onResizeMove reading can
     // lag behind the actual release point. OR the ctrlKey with the last move's
@@ -113,10 +145,25 @@
     dispatch('change', e.target.value)
   }
 
+  // The textarea stops keydown propagation (see on:keydown below) so typing
+  // never leaks into the app's global shortcuts — but that also swallows the
+  // global Tab-toggles-edit/preview shortcut (App.svelte's window keydown
+  // handler skips it on purpose while a text field is focused, via
+  // isTextEditable, so it can't fire from here either way). Left alone, Tab
+  // just falls through to the browser's native default: focus jumps to
+  // whatever's next in tab order, which reads as the shortcut having no
+  // effect at all. Replicate the same toggle here so Tab still does the one
+  // thing it's supposed to do everywhere else in the app.
   function onTextKeydown(e) {
     if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
       e.preventDefault()
       commit(e)
+      return
+    }
+    if (e.key === 'Tab') {
+      e.preventDefault()
+      commit(e)
+      modeStore.update(m => m === 'edit' ? 'preview' : 'edit')
     }
   }
 
@@ -125,7 +172,8 @@
 <!-- svelte-ignore a11y-no-static-element-interactions -->
 <!-- svelte-ignore a11y-click-events-have-key-events -->
 <div class="row" data-slider-id={slider.id} class:edit={mode === 'edit'} class:selected
-    class:row-dragging={rowDragging}
+    class:row-dragging={rowDragging} class:row-last={isLast}
+    class:headerless={!showHeader}
     bind:this={rowEl}
     style={dragTranslateY ? `transform: translateY(${dragTranslateY}px)` : ''}
     on:click={e => mode === 'edit' && dispatch('select', { shift: e.shiftKey, ctrl: e.ctrlKey })}
@@ -134,24 +182,28 @@
     on:dragleave={e => rowDragLeave(e, dispatch)}
     on:drop|preventDefault={e => rowDrop(e, dispatch)}
 >
-  <div class="header">
-    {#if mode === 'edit'}
-      <!-- svelte-ignore a11y-no-static-element-interactions -->
-      <div class="handle"
-          draggable="true"
-          on:click|stopPropagation
-          on:dragstart={e => { e.dataTransfer.effectAllowed = 'move'; rowDragging = true; dispatch('dragStart') }}
-          on:drag={onHandleDrag}
-          on:dragend={() => { rowDragging = false; dragTranslateY = 0; dispatch('dragEnd') }}
-      >
-        <svg width="8" height="12" viewBox="0 0 8 12" fill="currentColor">
-          <circle cx="2" cy="2"  r="1.2"/><circle cx="6" cy="2"  r="1.2"/>
-          <circle cx="2" cy="6"  r="1.2"/><circle cx="6" cy="6"  r="1.2"/>
-          <circle cx="2" cy="10" r="1.2"/><circle cx="6" cy="10" r="1.2"/>
-        </svg>
-      </div>
-    {/if}
+  {#if mode === 'edit'}
+    <!-- svelte-ignore a11y-no-static-element-interactions -->
+    <!-- Spans the whole row (header + body), not just the header — a
+         steadier, easier-to-hit grab target than a strip inside the header
+         alone, and stays put regardless of showHeader. -->
+    <div class="handle"
+        draggable="true"
+        on:click|stopPropagation
+        on:dragstart={e => { e.dataTransfer.effectAllowed = 'move'; rowDragging = true; dispatch('dragStart') }}
+        on:drag={onHandleDrag}
+        on:dragend={() => { rowDragging = false; dragTranslateY = 0; dispatch('dragEnd') }}
+    >
+      <svg width="8" height="12" viewBox="0 0 8 12" fill="currentColor">
+        <circle cx="2" cy="2"  r="1.2"/><circle cx="6" cy="2"  r="1.2"/>
+        <circle cx="2" cy="6"  r="1.2"/><circle cx="6" cy="6"  r="1.2"/>
+        <circle cx="2" cy="10" r="1.2"/><circle cx="6" cy="10" r="1.2"/>
+      </svg>
+    </div>
+  {/if}
 
+  {#if showHeader}
+  <div class="header">
     <span class="name" title={slider.name}>{slider.name}</span>
 
     <div class="spacer"></div>
@@ -164,8 +216,9 @@
       <button class="del" on:click|stopPropagation={() => dispatch('remove')} title="Remove">×</button>
     {/if}
   </div>
+  {/if}
 
-  <div class="text-wrap" style="height: {bodyHeight}px">
+  <div class="text-wrap" style="height: {resizing ? liveHeight : bodyHeight}px">
     {#if slider.readOnly}
       <div class="text-display" bind:this={textEl}>{slider.value || '—'}</div>
     {:else}
@@ -204,11 +257,11 @@
   .row {
     display: flex;
     flex-direction: column;
-    padding: 0 12px 10px;
+    padding: 0 12px 3px;
     transition: background 0.1s, transform 0.08s ease-out;
     position: relative;
   }
-  .row::after {
+  .row:not(.row-last)::after {
     content: '';
     position: absolute;
     left: 12px;
@@ -218,7 +271,14 @@
     background: var(--edge-tint);
     pointer-events: none;
   }
-  .row.edit            { padding: 0 8px 10px 6px; }
+  .row.edit            { padding: 0 8px 3px 26px; }
+  /* Without a header, the recessed text box is the row's very first thing —
+     flush against the divider line above it (the previous row's .row::after)
+     with nothing to hold it off, unlike the bottom edge which already has
+     the padding above. Named panels don't need this: the header's own 44px
+     band reads as breathing room even with padding-top:0. Matches the
+     bottom's 3px (see TabBar's own inter-tab gap for that reference value). */
+  .row.headerless      { padding-top: 3px; }
   .row:hover          { background: var(--bg); }
   .row.selected       { background: rgba(var(--accent-rgb), 0.15); }
   .row.selected:hover { background: rgba(var(--accent-rgb), 0.22); }
@@ -231,15 +291,31 @@
     margin-bottom: 4px;
   }
 
+  /* Absolutely positioned (like .resize-handle below) rather than a normal-
+     flow flex item — it needs to span the whole row (header + body) as a
+     grab target, not just sit inside the header. left:6px + 20px width
+     mirrors the other row types' left:6px padding + 20px handle column (see
+     e.g. SliderRow's `.row.edit`), so the grip sits at the same horizontal
+     position everywhere instead of drifting left; .row's own left padding
+     (26px in edit mode, see .row.edit above = that 6px + this 20px) reserves
+     exactly the room for it. The grip icon itself is pinned near the top
+     (padding-top centers it within the 44px header band) rather than
+     centered over the whole span — centering over the full height put it
+     noticeably lower on any panel whose body is taller than one module
+     (resized, or just multi-line text), since the body's height dominates
+     the average. */
   .handle {
-    display: flex;
-    align-items: center;
-    justify-content: center;
+    position: absolute;
+    left: 6px;
+    top: 0;
+    bottom: 0;
     width: 20px;
-    height: 100%;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding-top: 16px;
     color: rgba(var(--text-rgb), 0.21);
     cursor: grab;
-    flex-shrink: 0;
   }
   .handle:hover  { color: rgba(var(--text-rgb), 0.43); }
   .handle:active { cursor: grabbing; }
