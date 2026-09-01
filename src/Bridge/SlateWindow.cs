@@ -461,6 +461,19 @@ public class SlateWindow : Form
         if (_locationByDoc.TryGetValue(doc, out var location)) ApplyLocation(w, location);
     }
 
+    // Bumped on every real document switch (see SyncToDocument) and echoed
+    // back by JS on every state_snapshot it sends (see ipc.js's
+    // postStateSnapshot / Cleared/Reset/RestoreState's outbound "epoch"
+    // field). A snapshot whose epoch doesn't match the CURRENT value here is
+    // stale — queued behind a resize-debounce timer, or one Chromium
+    // throttled while the window was hidden — and gets dropped instead of
+    // overwriting the right document's cache with the wrong one's layout
+    // (see the "state_snapshot" case in OnMessageFromJs). Fixing this at the
+    // message level, rather than trying to close each individual timing gap,
+    // is what makes it safe regardless of which async path a stale message
+    // took to arrive late.
+    private static int _syncEpoch;
+
     // Every write to HostDocument must go through here (the null-out in
     // EvictDocument is the one safe exception — the window is hidden by then).
     // Skipping this is what let a freshly-placed SlatePanel show whichever
@@ -472,15 +485,48 @@ public class SlateWindow : Form
     // Show()/BringToFront()) would then write that stale DOM into `doc`'s own
     // _uiStateByDoc slot, poisoning it with the wrong file's layout. See
     // cozulen-problemler.md, "Yeni Slate component eklenince ... " (2026-08-31).
+    //
+    // That fix alone wasn't enough (confirmed live 2026-09-01, see
+    // multi-window-state-sync.md): RestoreState/ClearAll here are correct at
+    // the moment they run, but a LATER stale snapshot — from a timer that
+    // started before this switch — can still land afterward and clobber
+    // what was just correctly set. _syncEpoch (bumped below) is what lets
+    // OnMessageFromJs tell that stale write apart from a real one.
     public static void SyncToDocument(Grasshopper.Kernel.GH_Document doc)
     {
         if (doc == HostDocument) return;
+        _syncEpoch++;
         HostDocument = doc;
         ApplyGeometryForDocument(doc);
-        if (_uiStateByDoc.TryGetValue(doc, out var json))
-            GetOrCreate().RestoreState(json, doc);
-        else
-            GetOrCreate().ClearAll();
+
+        // Deferred via BeginInvoke (2026-09-01, see multi-window-state-sync.md):
+        // calling RestoreState/ResetAll synchronously here — inline within
+        // SlatePanel.AddedToDocument — races GH's own file-load sequence. GH
+        // fires AddedToDocument on each object in file order AS it
+        // deserializes them; if the SlatePanel comes before some of its own
+        // captured sliders/panels in that order (e.g. they were placed on the
+        // canvas after the panel), doc.Objects doesn't have them yet at this
+        // exact point, and RestoreState silently drops them as "not found" —
+        // a loss that then gets baked into the NEXT save. Posting this to the
+        // UI message queue instead runs it after the current synchronous
+        // load/AddedToDocument batch has fully unwound, by which point every
+        // object from this file load is in doc.Objects. Confirmed live:
+        // stashing back to the pre-SyncToDocument code (a plain
+        // `HostDocument = document` with no synchronous restore call here)
+        // made captured items surviving save+reload reliably; this was the
+        // only difference.
+        var win = GetOrCreate();
+        _ = win.Handle; // force handle creation so BeginInvoke below always works, even on this session's very first sync
+        win.BeginInvoke((Action)(() =>
+        {
+            // Superseded by a later switch before this ran — leave the
+            // window to whatever that one set up instead of clobbering it.
+            if (HostDocument != doc) return;
+            if (_uiStateByDoc.TryGetValue(doc, out var json))
+                GetOrCreate().RestoreState(json, doc);
+            else
+                GetOrCreate().ResetAll();
+        }));
     }
 
     // ── solve throttle (latest-value batching) ───────────────────────────────
@@ -818,6 +864,24 @@ public class SlateWindow : Form
     // thing keeping the file's whole object graph (sliders, panels, wires)
     // alive, this is what lets it actually get garbage collected instead of
     // leaking for the rest of the Rhino session.
+    //
+    // Also hides the window itself when this document was the one being
+    // shown (confirmed live, 2026-09-01, see multi-window-state-sync.md):
+    // SlatePanel.RemovedFromDocument has its own guard for this
+    // (HostDocument != document → skip, meant for "closing a background
+    // tab while the canvas already switched focus to another one" — don't
+    // re-hide a window that's now correctly showing THAT document). But
+    // DocumentRemoved and RemovedFromDocument fire independently, and if
+    // this method runs first and nulls HostDocument below, that guard then
+    // sees HostDocument(null) != document and wrongly concludes some other
+    // document must already be active, skipping its own hide — leaving the
+    // window orphaned, still open, showing whatever was last rendered.
+    // Hiding here too makes the outcome correct regardless of which of the
+    // two runs first: this check only fires when `doc` was truly the one
+    // being shown (the same condition RemovedFromDocument's guard already
+    // requires to act), so the background-tab case above is untouched —
+    // HostDocument is already the OTHER (still-open) document by the time
+    // either runs, and this stays a no-op for it.
     public static void EvictDocument(Grasshopper.Kernel.GH_Document doc)
     {
         _uiStateByDoc.Remove(doc);
@@ -825,7 +889,11 @@ public class SlateWindow : Form
         _locationByDoc.Remove(doc);
         if (_lastActiveDoc == doc) _lastActiveDoc = null;
         if (HostComponent != null && HostComponent.OnPingDocument() == doc) HostComponent = null;
-        if (HostDocument == doc) HostDocument = null;
+        if (HostDocument == doc)
+        {
+            HideIfOpen();
+            HostDocument = null;
+        }
     }
 
     public static void OnActiveDocumentChanged(Grasshopper.Kernel.GH_Document? newDoc)
@@ -1068,6 +1136,20 @@ public class SlateWindow : Form
                     break;
 
                 case "state_snapshot":
+                    // A snapshot stamped with an old epoch was generated before the
+                    // most recent SyncToDocument (a resize-debounce timer queued
+                    // pre-switch, or one Chromium throttled while the window was
+                    // hidden and only now got to run) — it reflects the PREVIOUS
+                    // document's DOM, so writing it here would silently re-poison
+                    // HostDocument's cache right after ClearAll/RestoreState just
+                    // set it correctly. Treat a missing epoch (older JS build) as
+                    // current so this never blocks the fresh-JS case it's meant for.
+                    int snapshotEpoch = root.TryGetProperty("epoch", out var epEl) ? epEl.GetInt32() : _syncEpoch;
+                    if (snapshotEpoch != _syncEpoch)
+                    {
+                        Log($"Ignored stale state_snapshot (epoch {snapshotEpoch} != current {_syncEpoch}).");
+                        break;
+                    }
                     if (HostDocument != null) _uiStateByDoc[HostDocument] = e.WebMessageAsJson;
                     string themeName = root.TryGetProperty("theme", out var th) ? th.GetString() ?? "dark" : "dark";
                     if (themeName != _lastAppliedTheme)
@@ -1286,7 +1368,7 @@ public class SlateWindow : Form
     public void ClearAll()
     {
         ClearDicts();
-        PostToJs(SlateEvent.Cleared());
+        PostToJs(SlateEvent.Cleared(_syncEpoch));
     }
 
     // Full structural reset — back to one empty workspace/pane/tab, as if the
@@ -1295,7 +1377,7 @@ public class SlateWindow : Form
     public void ResetAll()
     {
         ClearDicts();
-        PostToJs(SlateEvent.Reset());
+        PostToJs(SlateEvent.Reset(_syncEpoch));
     }
 
     // Everything ResetAll() does, plus the window goes back to its
@@ -1391,7 +1473,7 @@ public class SlateWindow : Form
                             s["value"] = tgl.Value ? 1 : 0;
                             s["name"]  = tgl.NickName;
                         }
-                        else arr.RemoveAt(i);
+                        else { Log($"RestoreState: dropped {kind} id={id} — no matching live object in doc.Objects."); arr.RemoveAt(i); }
                     }
                     else if (kind == "button")
                     {
@@ -1401,7 +1483,7 @@ public class SlateWindow : Form
                             s["value"] = btn.ButtonDown ? 1 : 0;
                             s["name"]  = btn.NickName;
                         }
-                        else arr.RemoveAt(i);
+                        else { Log($"RestoreState: dropped {kind} id={id} — no matching live object in doc.Objects."); arr.RemoveAt(i); }
                     }
                     else if (kind == "valueList")
                     {
@@ -1418,7 +1500,7 @@ public class SlateWindow : Form
                             s["loop"]        = IsLoopMode(vl.ListMode);
                             s["options"]     = new JsonArray(vl.ListItems.Select(li => JsonValue.Create(li.Name)).ToArray());
                         }
-                        else arr.RemoveAt(i);
+                        else { Log($"RestoreState: dropped {kind} id={id} — no matching live object in doc.Objects."); arr.RemoveAt(i); }
                     }
                     else if (kind == "panel")
                     {
@@ -1429,7 +1511,7 @@ public class SlateWindow : Form
                             s["name"]     = pnl.NickName;
                             s["readOnly"] = pnl.SourceCount > 0;
                         }
-                        else arr.RemoveAt(i);
+                        else { Log($"RestoreState: dropped {kind} id={id} — no matching live object in doc.Objects."); arr.RemoveAt(i); }
                     }
                     else if (kind == "itemPicker")
                     {
@@ -1440,7 +1522,7 @@ public class SlateWindow : Form
                             s["name"]    = picker.NickName;
                             s["options"] = new JsonArray(GetPickerOptions(picker).Select(o => JsonValue.Create(o)).ToArray());
                         }
-                        else arr.RemoveAt(i);
+                        else { Log($"RestoreState: dropped {kind} id={id} — no matching live object in doc.Objects."); arr.RemoveAt(i); }
                     }
                     else if (kind == "humanValueList")
                     {
@@ -1457,7 +1539,7 @@ public class SlateWindow : Form
                             s["loop"]        = loop;
                             s["options"]     = new JsonArray(options.Select(o => JsonValue.Create(o)).ToArray());
                         }
-                        else arr.RemoveAt(i);
+                        else { Log($"RestoreState: dropped {kind} id={id} — no matching live object in doc.Objects."); arr.RemoveAt(i); }
                     }
                     else if (kind == "colourPicker")
                     {
@@ -1467,7 +1549,7 @@ public class SlateWindow : Form
                             s["value"] = ColorToHex(cp.SwatchColour);
                             s["name"]  = cp.NickName;
                         }
-                        else arr.RemoveAt(i);
+                        else { Log($"RestoreState: dropped {kind} id={id} — no matching live object in doc.Objects."); arr.RemoveAt(i); }
                     }
                     else if (kind == "pancakeButton")
                     {
@@ -1477,7 +1559,7 @@ public class SlateWindow : Form
                             s["value"] = GetPancakeButtonDown(pbtn) ? 1 : 0;
                             s["name"]  = pbtn.NickName;
                         }
-                        else arr.RemoveAt(i);
+                        else { Log($"RestoreState: dropped {kind} id={id} — no matching live object in doc.Objects."); arr.RemoveAt(i); }
                     }
                     else if (docSliders.TryGetValue(id, out var gh))
                     {
@@ -1488,7 +1570,7 @@ public class SlateWindow : Form
                         s["decimalPlaces"]  = EffectiveDecimalPlaces(gh.Slider);
                         s["name"]           = gh.ImpliedNickName;
                     }
-                    else arr.RemoveAt(i);
+                    else { Log($"RestoreState: dropped slider id={id} — no matching live object in doc.Objects."); arr.RemoveAt(i); }
                 }
             }
 
@@ -1541,7 +1623,8 @@ public class SlateWindow : Form
             state["winW"] = Width;
             state["winH"] = Height;
 
-            state["type"] = "restore_state";
+            state["type"]  = "restore_state";
+            state["epoch"] = _syncEpoch;
             PostToJs(state.ToJsonString());
             Log($"State restored: {_sliders.Count} slider(s), {_toggles.Count} toggle(s), {_buttons.Count} button(s), {_valueLists.Count} value list(s), {_panels.Count} panel(s), {_itemPickers.Count} item picker(s), {_humanValueLists.Count} item selector(s), {_colourPickers.Count} colour picker(s), {_pancakeTrueOnlyButtons.Count} true-only button(s).");
         }

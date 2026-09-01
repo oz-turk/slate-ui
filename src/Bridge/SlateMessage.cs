@@ -59,11 +59,17 @@ public static class SlateEvent
     public static string GroupHotkey() =>
         JsonSerializer.Serialize(new { type = "group_hotkey" });
 
-    public static string Cleared() =>
-        JsonSerializer.Serialize(new { type = "cleared" });
+    // epoch: current SlateWindow._syncEpoch, echoed back by JS on every
+    // subsequent state_snapshot (see ipc.js's postStateSnapshot) so a stale
+    // snapshot — queued or throttled from before this switch, e.g. a
+    // resize-debounce timer that survived a hide/show cycle — can be told
+    // apart from a fresh one and dropped instead of overwriting the right
+    // document's cache with the wrong one's layout. See SyncToDocument.
+    public static string Cleared(int epoch) =>
+        JsonSerializer.Serialize(new { type = "cleared", epoch });
 
     // Unlike Cleared (empties sliders/groups but keeps tabs/panes/workspaces),
     // Reset drops the whole layout back to one empty workspace/pane/tab.
-    public static string Reset() =>
-        JsonSerializer.Serialize(new { type = "reset" });
+    public static string Reset(int epoch) =>
+        JsonSerializer.Serialize(new { type = "reset", epoch });
 }
