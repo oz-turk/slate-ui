@@ -53,19 +53,23 @@ public class SlateWindow : Form
     private readonly System.Windows.Forms.Timer _altPollTimer = new() { Interval = 30 };
     private bool _altHeld;
 
-    // ── 'c'/'x' hotkey state (capture / delete) ──────────────────────────────────
+    // ── 'c'/'x'/'g' hotkey state (capture / delete / group) ──────────────────────
     // Same underlying problem as Alt above, different trigger: Rhino's own
     // command-line textbox can silently steal keyboard focus from the WebView2
     // over a long session (a general Rhino/Eto focus-routing issue, not
     // specific to this plugin — typing into a GH canvas rename box has the same
-    // symptom), so the DOM's own keydown for 'c'/'x' can go quiet with no
-    // visible sign anything's wrong. Polled here the same way: GetAsyncKeyState
-    // reads live physical key state independent of focus, gated on the mouse
-    // actually being over Slate's window (mirrors the hover-based semantics the
-    // hotkeys already have on the JS side) and edge-detected so a held key
-    // doesn't repeat-fire every 30ms.
-    const int VK_C = 0x43, VK_X = 0x58;
-    private bool _cHeld, _xHeld;
+    // symptom), so the DOM's own keydown for 'c'/'x'/'g' can go quiet with no
+    // visible sign anything's wrong — worse for 'g' specifically, since the GH
+    // canvas has its own native "Group" command bound to the same key, so a
+    // stolen keydown doesn't just silently no-op, it groups objects on the GH
+    // canvas instead. Polled here the same way: GetAsyncKeyState reads live
+    // physical key state independent of focus, gated on the mouse actually
+    // being over Slate's window (mirrors the hover-based semantics the
+    // hotkeys already have on the JS side — this also stops a 'g' typed while
+    // deliberately using GH's own canvas shortcut from leaking into Slate) and
+    // edge-detected so a held key doesn't repeat-fire every 30ms.
+    const int VK_C = 0x43, VK_X = 0x58, VK_G = 0x47;
+    private bool _cHeld, _xHeld, _gHeld;
 
     static Icon? _iconLight, _iconDark;
 
@@ -457,6 +461,28 @@ public class SlateWindow : Form
         if (_locationByDoc.TryGetValue(doc, out var location)) ApplyLocation(w, location);
     }
 
+    // Every write to HostDocument must go through here (the null-out in
+    // EvictDocument is the one safe exception — the window is hidden by then).
+    // Skipping this is what let a freshly-placed SlatePanel show whichever
+    // document's UI happened to still be on screen: the HostDocument setter
+    // only drops the C# object-reference dicts, it never touches the JS/DOM
+    // side, so without an explicit RestoreState/ClearAll here the WebView
+    // keeps rendering the PREVIOUS document's tabs — and a debounced
+    // postStateSnapshot (App.svelte's resize handler, fired by EnsureVisible's
+    // Show()/BringToFront()) would then write that stale DOM into `doc`'s own
+    // _uiStateByDoc slot, poisoning it with the wrong file's layout. See
+    // cozulen-problemler.md, "Yeni Slate component eklenince ... " (2026-08-31).
+    public static void SyncToDocument(Grasshopper.Kernel.GH_Document doc)
+    {
+        if (doc == HostDocument) return;
+        HostDocument = doc;
+        ApplyGeometryForDocument(doc);
+        if (_uiStateByDoc.TryGetValue(doc, out var json))
+            GetOrCreate().RestoreState(json, doc);
+        else
+            GetOrCreate().ClearAll();
+    }
+
     // ── solve throttle (latest-value batching) ───────────────────────────────
     // Only the most recent value per slider ID survives to the next solve.
     // SetSliderValue is called exactly once per slider per solve, never on every IPC message.
@@ -819,15 +845,7 @@ public class SlateWindow : Form
             return;
         }
 
-        if (newDoc != HostDocument)
-        {
-            HostDocument = newDoc;
-            if (newDoc != null) ApplyGeometryForDocument(newDoc);
-            if (newDoc != null && _uiStateByDoc.TryGetValue(newDoc, out var json))
-                GetOrCreate().RestoreState(json, newDoc);
-            else
-                GetOrCreate().ClearAll();
-        }
+        SyncToDocument(newDoc!); // non-null here: panel is derived from newDoc and already returned above if null
 
         if (panel.LastShowValue) EnsureVisible();
         else                     HideIfOpen();
@@ -874,10 +892,13 @@ public class SlateWindow : Form
             bool mouseOverWindow = Visible && Bounds.Contains(Cursor.Position);
             bool cDown = (GetAsyncKeyState(VK_C) & 0x8000) != 0;
             bool xDown = (GetAsyncKeyState(VK_X) & 0x8000) != 0;
+            bool gDown = (GetAsyncKeyState(VK_G) & 0x8000) != 0;
             if (cDown && !_cHeld && mouseOverWindow) PostToJs(SlateEvent.CaptureHotkey());
             if (xDown && !_xHeld && mouseOverWindow) PostToJs(SlateEvent.DeleteHotkey());
+            if (gDown && !_gHeld && mouseOverWindow) PostToJs(SlateEvent.GroupHotkey());
             _cHeld = cDown;
             _xHeld = xDown;
+            _gHeld = gDown;
         };
         _altPollTimer.Start();
     }

@@ -94,12 +94,21 @@ public class SlatePanel : GH_Component
         SlateWindow.SeedDocumentState(document, _savedUiState);
         SlateWindow.SeedDocumentGeometry(document, _savedWinSize, _savedWinLocation);
         SlateWindow.HostComponent = this;
-        SlateWindow.HostDocument  = document;
+        SlateWindow.SyncToDocument(document);
         base.AddedToDocument(document);
     }
 
     public override void RemovedFromDocument(GH_Document document)
     {
+        // Guard against a stale call clobbering a document that's already
+        // become active again by the time this fires (e.g. closing a
+        // background tab: GH tears down its objects, including this panel,
+        // AFTER the canvas has already switched focus back and re-synced
+        // HostDocument to the now-active tab). Without this check, hiding
+        // the window and nulling HostDocument here re-hides a window that
+        // was just correctly shown for a DIFFERENT document.
+        if (SlateWindow.HostDocument != document) { base.RemovedFromDocument(document); return; }
+
         SlateWindow.HideIfOpen();
         SlateWindow.HostDocument  = null;
         SlateWindow.HostComponent = null;

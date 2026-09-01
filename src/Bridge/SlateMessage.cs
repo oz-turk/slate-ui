@@ -56,6 +56,9 @@ public static class SlateEvent
     public static string DeleteHotkey() =>
         JsonSerializer.Serialize(new { type = "delete_hotkey" });
 
+    public static string GroupHotkey() =>
+        JsonSerializer.Serialize(new { type = "group_hotkey" });
+
     public static string Cleared() =>
         JsonSerializer.Serialize(new { type = "cleared" });
 
