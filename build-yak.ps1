@@ -16,7 +16,13 @@ dotnet build "$root\src\Slate.csproj" -c Release | Out-Host
 if (-not (Test-Path "$outDir\Slate.gha")) { Write-Host "Build failed - no Slate.gha produced."; exit 1 }
 
 Write-Host "Copying .gha + dependency DLLs into yak/..."
-Get-ChildItem "$yakDir\*.gha", "$yakDir\*.dll", "$yakDir\*.yak" -ErrorAction SilentlyContinue | Remove-Item -Force
+# *.zip included: yak build packages every file sitting in this directory
+# wholesale, so a leftover manual-install zip from a previous release (it's
+# hand-built, no script of its own — see NOTICE/workflow notes) gets swept
+# into the NEW .yak as an accidental nested file if not cleared first. It's
+# stale for this release anyway; regenerate it by hand from this run's gha +
+# DLLs when it's time to update the Food4Rhino manual-download listing.
+Get-ChildItem "$yakDir\*.gha", "$yakDir\*.dll", "$yakDir\*.yak", "$yakDir\*.zip" -ErrorAction SilentlyContinue | Remove-Item -Force
 Copy-Item "$outDir\Slate.gha" $yakDir
 Copy-Item "$outDir\*.dll" $yakDir
 Copy-Item "$outDir\runtimes\win-x64\native\WebView2Loader.dll" $yakDir
