@@ -3,6 +3,7 @@ using Grasshopper.Kernel;
 using Grasshopper.Kernel.Special;
 using Slate.Bridge;
 using System.Drawing;
+using System.Windows.Forms;
 
 namespace Slate.Components;
 
@@ -32,6 +33,7 @@ public class SlatePanel : GH_Component
     protected override void RegisterOutputParams(GH_OutputParamManager pManager)
     {
         pManager.AddTextParameter("Log", "L", "Status", GH_ParamAccess.item);
+        pManager.AddTextParameter("State", "S", "What's currently captured for this document — file name, item counts, last save time. Always current, unlike Log (which only shows recent events).", GH_ParamAccess.item);
     }
 
     // Cached ui_state/geometry read from the file, held here until
@@ -49,8 +51,10 @@ public class SlatePanel : GH_Component
 
     public override bool Write(GH_IWriter writer)
     {
-        var state = SlateWindow.GetSerializedState(OnPingDocument());
-        if (state != null) writer.SetString("ui_state", state);
+        var doc = OnPingDocument();
+        var state = SlateWindow.GetSerializedState(doc);
+        SlateWindow.LogWriteSummary(doc, state); // dedup fingerprint must see the unstamped content
+        if (state != null) writer.SetString("ui_state", SlateWindow.StampSavedAt(state)!); // non-null: state is non-null here
 
         var size = SlateWindow.GetWindowSize(OnPingDocument());
         var loc  = SlateWindow.GetWindowLocation(OnPingDocument());
@@ -94,7 +98,7 @@ public class SlatePanel : GH_Component
         SlateWindow.SeedDocumentState(document, _savedUiState);
         SlateWindow.SeedDocumentGeometry(document, _savedWinSize, _savedWinLocation);
         SlateWindow.HostComponent = this;
-        SlateWindow.SyncToDocument(document);
+        SlateWindow.SyncToDocument(document, deferIfRestoring: true);
         base.AddedToDocument(document);
     }
 
@@ -113,6 +117,17 @@ public class SlatePanel : GH_Component
         SlateWindow.HostDocument  = null;
         SlateWindow.HostComponent = null;
         base.RemovedFromDocument(document);
+    }
+
+    // Not persisted (Write/Read don't touch it) and not per-document — a
+    // single process-wide switch, on purpose: this is a throwaway
+    // troubleshooting aid, not a setting anyone should need to remember
+    // between sessions or ship captured in a saved .gh.
+    public override void AppendAdditionalMenuItems(ToolStripDropDown menu)
+    {
+        Menu_AppendItem(menu, "Debug logging", (s, e) => SlateWindow.DebugLogging = !SlateWindow.DebugLogging,
+            true, SlateWindow.DebugLogging);
+        base.AppendAdditionalMenuItems(menu);
     }
 
     protected override void SolveInstance(IGH_DataAccess DA)
@@ -202,5 +217,6 @@ public class SlatePanel : GH_Component
             UiWork();
 
         DA.SetData(0, log.TrimEnd());
+        DA.SetData(1, SlateWindow.DescribeCurrentState(OnPingDocument()));
     }
 }

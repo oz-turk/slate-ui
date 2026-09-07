@@ -13,7 +13,7 @@
   } from './stores/layout.js'
   import { mode, pinned, theme, deleteRequest, captureRequest, settingsOpen, clearSelectionTick, groupSelectionTick, hoverHint, altHeld, ctrlHeld } from './stores/uiState.js'
   import { undo, suppressDuring } from './stores/history.js'
-  import { postToCs, postStateSnapshot, setEpoch } from './lib/ipc.js'
+  import { postToCs, postStateSnapshot } from './lib/ipc.js'
 
   // Driven from the theme store directly rather than var(--panel-bg) — that
   // var kept resolving to something dark in light mode for this specific
@@ -410,13 +410,11 @@
     }
 
     if (msg.type === 'cleared') {
-      setEpoch(msg.epoch)
       clearAllWorkspaces()
       postStateSnapshot()
     }
 
     if (msg.type === 'reset') {
-      setEpoch(msg.epoch)
       resetToDefault()
       postStateSnapshot()
     }
@@ -445,7 +443,6 @@
     }
 
     if (msg.type === 'restore_state') {
-      setEpoch(msg.epoch)
       // msg.workspaces is the current multi-workspace format
       // msg.layout is the older single-tree format
       // msg.tabs is the oldest, legacy flat format

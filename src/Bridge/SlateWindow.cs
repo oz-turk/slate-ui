@@ -339,6 +339,20 @@ public class SlateWindow : Form
     public static readonly System.Collections.Concurrent.ConcurrentQueue<string> LogQueue = new();
     public static Grasshopper.Kernel.GH_Component? HostComponent { get; set; }
 
+    // Off by default — trace-level detail (every state_snapshot accepted,
+    // every SyncToDocument sync/skip, every Write() dedup-skip) is only
+    // useful while actively chasing a state-sync bug, not on every normal
+    // solve. Toggled
+    // from SlatePanel's right-click menu (not persisted — resets to off each
+    // Rhino session, so it can't accidentally get baked into a saved .gh and
+    // spam a client's log). See DebugLog below.
+    public static bool DebugLogging { get; set; }
+
+    private static void DebugLog(string msg)
+    {
+        if (DebugLogging) Log($"[debug] {msg}");
+    }
+
     private static Grasshopper.Kernel.GH_Document? _hostDocument;
     public static Grasshopper.Kernel.GH_Document? HostDocument
     {
@@ -346,7 +360,11 @@ public class SlateWindow : Form
         set
         {
             if (_hostDocument == value) return;
-            if (_hostDocument != null) _hostDocument.SolutionEnd -= OnDocSolutionEnd;
+            if (_hostDocument != null)
+            {
+                _hostDocument.SolutionEnd -= OnDocSolutionEnd;
+                _hostDocument.ModifiedChanged -= OnDocModifiedChanged;
+            }
             _hostDocument = value;
             _latestValues.Clear();
             _latestColourValues.Clear();
@@ -361,7 +379,11 @@ public class SlateWindow : Form
             // right tab/group layout come back when switching back to a document.
             _instance?.ClearDicts();
 
-            if (_hostDocument != null) _hostDocument.SolutionEnd += OnDocSolutionEnd;
+            if (_hostDocument != null)
+            {
+                _hostDocument.SolutionEnd += OnDocSolutionEnd;
+                _hostDocument.ModifiedChanged += OnDocModifiedChanged;
+            }
         }
     }
 
@@ -379,6 +401,126 @@ public class SlateWindow : Form
 
     public static string? GetSerializedState(Grasshopper.Kernel.GH_Document? doc) =>
         doc != null && _uiStateByDoc.TryGetValue(doc, out var s) ? s : null;
+
+    // Populated in OnDocModifiedChanged (the dirty→clean transition, i.e. a
+    // real disk save) — separate from StampSavedAt's per-payload timestamp so
+    // DescribeCurrentState can report "last saved" even when GetSerializedState
+    // is empty (nothing captured yet) or hasn't changed since the last save.
+    private static readonly Dictionary<Grasshopper.Kernel.GH_Document, string> _lastSavedAt = new();
+
+    // Backs the SlatePanel's "State" output — a live, always-current snapshot
+    // of what's captured for THIS document (file name, item counts, last real
+    // save time), as opposed to "Log", which only shows recent events and
+    // goes back to empty after GH drains it. Meant to answer "is anything
+    // actually going to be saved right now" at a glance, without needing to
+    // scroll back through the log or trigger a fresh capture/save to find out.
+    public static string DescribeCurrentState(Grasshopper.Kernel.GH_Document? doc)
+    {
+        if (doc == null) return "No document.";
+        var state = GetSerializedState(doc);
+        var counts = state == null ? "no captured UI" : SummarizeStateCounts(state);
+        var savedAt = _lastSavedAt.TryGetValue(doc, out var s) ? s : "never saved this session";
+        return $"{doc.DisplayName}: {counts} (last saved: {savedAt})";
+    }
+
+    // Write() runs on every GH_IO serialization of this document — not just an
+    // actual Ctrl+S, but every undo-checkpoint and copy/paste too — so logging
+    // it unconditionally would spam the output on completely unrelated canvas
+    // edits elsewhere in the file. Keyed by doc and compared against the last
+    // logged payload so it only ever logs when the CONTENT about to be written
+    // actually changed (a real capture, layout edit, or drag that GH is now
+    // persisting), which in practice tracks "what will end up on disk next
+    // save" closely enough to answer "kaç slider kayıtlı" without the noise.
+    private static readonly Dictionary<Grasshopper.Kernel.GH_Document, string> _lastLoggedWriteState = new();
+
+    // Stamped into the JSON that actually gets written to disk (not into the
+    // live _uiStateByDoc cache — that keeps getting overwritten by the next
+    // state_snapshot regardless) so that on the NEXT open, RestoreState can
+    // report exactly when the layout it's restoring was captured, answering
+    // "dosya ne zaman kaydedildi" without GH exposing a per-object save time.
+    public static string? StampSavedAt(string? state)
+    {
+        if (state == null) return null;
+        try
+        {
+            var node = JsonNode.Parse(state)!.AsObject();
+            node["savedAt"] = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+            return node.ToJsonString();
+        }
+        catch { return state; }
+    }
+
+    public static void LogWriteSummary(Grasshopper.Kernel.GH_Document? doc, string? state)
+    {
+        if (doc == null) return;
+        var key = state ?? "\0empty";
+        if (_lastLoggedWriteState.TryGetValue(doc, out var last) && last == key)
+        {
+            DebugLog($"Write: skipped logging — content unchanged since last Write for doc={doc.DisplayName}.");
+            return;
+        }
+        _lastLoggedWriteState[doc] = key;
+
+        Log(state == null
+            ? "Write: no captured UI for this document yet — nothing to save."
+            : $"Write: saving {SummarizeStateCounts(state)}.");
+    }
+
+    // Same tree shape RestoreState walks (workspaces → layout tree → tabs →
+    // sliders/groups), but read-only — just tallies item "type" fields
+    // instead of re-binding them to live GH objects.
+    private static string SummarizeStateCounts(string stateJson)
+    {
+        try
+        {
+            var state = JsonNode.Parse(stateJson)!.AsObject();
+            var counts = new Dictionary<string, int>();
+            void Bump(string kind) { counts.TryGetValue(kind, out var c); counts[kind] = c + 1; }
+
+            void CountItems(JsonArray? arr)
+            {
+                if (arr == null) return;
+                foreach (var item in arr)
+                    Bump(item!.AsObject()["type"]?.GetValue<string>() ?? "slider");
+            }
+            void CountTab(JsonObject tab)
+            {
+                CountItems(tab["sliders"]?.AsArray());
+                if (tab["groups"] is JsonArray groups)
+                    foreach (var g in groups)
+                        CountItems(g!.AsObject()["sliders"]?.AsArray());
+            }
+            void CountNode(JsonObject node)
+            {
+                var type = node["type"]?.GetValue<string>();
+                if (type == "leaf")
+                {
+                    if (node["tabs"] is JsonArray tabs)
+                        foreach (var t in tabs) CountTab(t!.AsObject());
+                }
+                else if (type == "split")
+                {
+                    if (node["a"] is JsonObject a) CountNode(a);
+                    if (node["b"] is JsonObject b) CountNode(b);
+                }
+                else if (node["tabs"] is JsonArray legacyTabs)
+                    foreach (var t in legacyTabs) CountTab(t!.AsObject());
+            }
+
+            if (state["workspaces"] is JsonArray workspacesArr)
+                foreach (var w in workspacesArr)
+                    if (w!.AsObject()["layout"] is JsonObject wLayout) CountNode(wLayout);
+            else if (state["layout"] is JsonObject layoutNode)
+                CountNode(layoutNode);
+            else
+                CountNode(state);
+
+            return counts.Count == 0
+                ? "0 item(s)"
+                : string.Join(", ", counts.OrderBy(kv => kv.Key).Select(kv => $"{kv.Value} {kv.Key}(s)"));
+        }
+        catch (Exception ex) { return $"<count error: {ex.GetType().Name}: {ex.Message}>"; }
+    }
 
     // Only used to seed the very first restore for a freshly-Read document —
     // see SeedDocumentState and the "ui_ready" case in OnMessageFromJs.
@@ -456,23 +598,17 @@ public class SlateWindow : Form
     // ui_state was seeded from file but it hasn't been the active tab yet).
     private static void ApplyGeometryForDocument(Grasshopper.Kernel.GH_Document doc)
     {
+        // The window is a singleton that outlives document switches (Hide
+        // just hides it, GetOrCreate() reuses the same _instance) — so with
+        // no per-doc entry, doing nothing here left it at whatever size/
+        // location the PREVIOUSLY active document happened to leave it at,
+        // same bug class as ResetAll's "no cached state → blank" but missed
+        // for geometry. Fall back to the same defaults the constructor uses
+        // for a session's very first window.
         var w = GetOrCreate();
-        if (_sizeByDoc.TryGetValue(doc, out var size))         ApplySize(w, size);
-        if (_locationByDoc.TryGetValue(doc, out var location)) ApplyLocation(w, location);
+        ApplySize(w, _sizeByDoc.TryGetValue(doc, out var size) ? size : DefaultWindowSize);
+        ApplyLocation(w, _locationByDoc.TryGetValue(doc, out var location) ? location : DefaultWindowLocation);
     }
-
-    // Bumped on every real document switch (see SyncToDocument) and echoed
-    // back by JS on every state_snapshot it sends (see ipc.js's
-    // postStateSnapshot / Cleared/Reset/RestoreState's outbound "epoch"
-    // field). A snapshot whose epoch doesn't match the CURRENT value here is
-    // stale — queued behind a resize-debounce timer, or one Chromium
-    // throttled while the window was hidden — and gets dropped instead of
-    // overwriting the right document's cache with the wrong one's layout
-    // (see the "state_snapshot" case in OnMessageFromJs). Fixing this at the
-    // message level, rather than trying to close each individual timing gap,
-    // is what makes it safe regardless of which async path a stale message
-    // took to arrive late.
-    private static int _syncEpoch;
 
     // Every write to HostDocument must go through here (the null-out in
     // EvictDocument is the one safe exception — the window is hidden by then).
@@ -480,53 +616,74 @@ public class SlateWindow : Form
     // document's UI happened to still be on screen: the HostDocument setter
     // only drops the C# object-reference dicts, it never touches the JS/DOM
     // side, so without an explicit RestoreState/ClearAll here the WebView
-    // keeps rendering the PREVIOUS document's tabs — and a debounced
-    // postStateSnapshot (App.svelte's resize handler, fired by EnsureVisible's
-    // Show()/BringToFront()) would then write that stale DOM into `doc`'s own
-    // _uiStateByDoc slot, poisoning it with the wrong file's layout. See
-    // cozulen-problemler.md, "Yeni Slate component eklenince ... " (2026-08-31).
+    // keeps rendering the PREVIOUS document's tabs. See cozulen-problemler.md,
+    // "Yeni Slate component eklenince ... " (2026-08-31).
     //
-    // That fix alone wasn't enough (confirmed live 2026-09-01, see
-    // multi-window-state-sync.md): RestoreState/ClearAll here are correct at
-    // the moment they run, but a LATER stale snapshot — from a timer that
-    // started before this switch — can still land afterward and clobber
-    // what was just correctly set. _syncEpoch (bumped below) is what lets
-    // OnMessageFromJs tell that stale write apart from a real one.
-    public static void SyncToDocument(Grasshopper.Kernel.GH_Document doc)
+    // `deferIfRestoring`: only `AddedToDocument` (opening/placing on a file
+    // mid-deserialization) needs the BeginInvoke deferral below, and only
+    // when there's cached state to restore — GH adds objects in file order,
+    // so if this SlatePanel comes before some of its own captured
+    // sliders/panels, doc.Objects doesn't have them yet at this exact point
+    // and RestoreState would silently drop them as "not found" (a loss that
+    // then gets baked into the NEXT save). Confirmed live 2026-09-01: a fully
+    // synchronous restore here lost captured items on reload for exactly this
+    // reason (see multi-window-state-sync.md).
+    //
+    // ResetAll has no such object-lookup dependency (there's nothing to find
+    // in an empty/new document), and OnActiveDocumentChanged's tab-switch
+    // path never runs mid-file-load — both call this with the default
+    // `false` and sync immediately. This closes the race a blanket deferral
+    // used to leave open: a capture landing in the still-showing PREVIOUS
+    // document's DOM right after AddedToDocument, only to be silently wiped
+    // when the deferred ResetAll/RestoreState finally ran afterward and
+    // cleared that DOM out from under it — the actual cause of "capture
+    // looked fine but Save/State showed nothing" on a freshly-placed panel.
+    // (An epoch counter used to guard the JS→C# side of this same gap by
+    // rejecting snapshots tagged with a stale sync generation — removed
+    // 2026-09-07: it never had confirmed evidence of fixing the original
+    // cross-document poisoning it targeted, and it was provably discarding
+    // legitimate captures made in this exact window instead. Closing the gap
+    // itself, rather than filtering messages that fall into it, needs no such
+    // guard.)
+    public static void SyncToDocument(Grasshopper.Kernel.GH_Document doc, bool deferIfRestoring = false)
     {
         if (doc == HostDocument) return;
-        _syncEpoch++;
         HostDocument = doc;
         ApplyGeometryForDocument(doc);
 
-        // Deferred via BeginInvoke (2026-09-01, see multi-window-state-sync.md):
-        // calling RestoreState/ResetAll synchronously here — inline within
-        // SlatePanel.AddedToDocument — races GH's own file-load sequence. GH
-        // fires AddedToDocument on each object in file order AS it
-        // deserializes them; if the SlatePanel comes before some of its own
-        // captured sliders/panels in that order (e.g. they were placed on the
-        // canvas after the panel), doc.Objects doesn't have them yet at this
-        // exact point, and RestoreState silently drops them as "not found" —
-        // a loss that then gets baked into the NEXT save. Posting this to the
-        // UI message queue instead runs it after the current synchronous
-        // load/AddedToDocument batch has fully unwound, by which point every
-        // object from this file load is in doc.Objects. Confirmed live:
-        // stashing back to the pre-SyncToDocument code (a plain
-        // `HostDocument = document` with no synchronous restore call here)
-        // made captured items surviving save+reload reliably; this was the
-        // only difference.
-        var win = GetOrCreate();
-        _ = win.Handle; // force handle creation so BeginInvoke below always works, even on this session's very first sync
-        win.BeginInvoke((Action)(() =>
+        bool hasCachedState = _uiStateByDoc.ContainsKey(doc);
+
+        void DoSync()
         {
             // Superseded by a later switch before this ran — leave the
             // window to whatever that one set up instead of clobbering it.
-            if (HostDocument != doc) return;
+            if (HostDocument != doc)
+            {
+                DebugLog($"SyncToDocument: deferred sync for doc={doc.DisplayName} skipped — superseded by a later switch to {HostDocument?.DisplayName ?? "null"}.");
+                return;
+            }
             if (_uiStateByDoc.TryGetValue(doc, out var json))
+            {
+                DebugLog($"SyncToDocument: RestoreState running for doc={doc.DisplayName}.");
                 GetOrCreate().RestoreState(json, doc);
+            }
             else
+            {
+                DebugLog($"SyncToDocument: ResetAll running for doc={doc.DisplayName} — no cached ui_state.");
                 GetOrCreate().ResetAll();
-        }));
+            }
+        }
+
+        if (deferIfRestoring && hasCachedState)
+        {
+            var win = GetOrCreate();
+            _ = win.Handle; // force handle creation so BeginInvoke below always works, even on this session's very first sync
+            win.BeginInvoke((Action)DoSync);
+        }
+        else
+        {
+            DoSync();
+        }
     }
 
     // ── solve throttle (latest-value batching) ───────────────────────────────
@@ -553,6 +710,24 @@ public class SlateWindow : Form
             PushHumanValueListUpdates();
             PushColourPickerUpdates();
         }));
+    }
+
+    // GH_Document.Modified flips false exactly when Save/SaveQuiet/SaveAs
+    // finishes writing the file to disk — a much more direct "a real save
+    // just happened" signal than piggybacking on Write(), which GH also
+    // calls for every undo checkpoint and copy/paste, and which
+    // LogWriteSummary intentionally silences when the content hasn't
+    // changed since the last call. This logs on EVERY save regardless of
+    // content, which is the point: confirming the save reached this
+    // component at all, even when nothing was captured/changed.
+    private static void OnDocModifiedChanged(object sender, Grasshopper.Kernel.GH_DocModifiedEventArgs e)
+    {
+        if (e.Modified) return; // only the dirty→clean transition means "just saved"
+        var state = GetSerializedState(e.Document);
+        _lastSavedAt[e.Document] = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+        Log(state == null
+            ? "Saved (no captured UI for this document)."
+            : $"Saved: {SummarizeStateCounts(state)}.");
     }
 
     // Catches color changes made directly on the canvas (right-click the
@@ -789,6 +964,32 @@ public class SlateWindow : Form
     private static void Log(string msg)
     {
         LogQueue.Enqueue($"[{DateTime.Now:HH:mm:ss}] {msg}");
+        ScheduleLogFlush();
+    }
+
+    // Log() fires from async paths that run well after SlatePanel's own last
+    // SolveInstance — RestoreState/dropped-item messages all arrive on
+    // "ui_ready", after the file's initial load solve already
+    // drained an (empty) queue to the "Log" output. Without this, every
+    // diagnostic line sits in LogQueue until the user happens to flip an
+    // input (Show, say), so the output looks silent even when something was
+    // actually logged. ExpireSolution(true) forces exactly the recompute
+    // that drains it; _logFlushScheduled coalesces a burst of Log() calls
+    // (e.g. several dropped-item lines in one RestoreState) into one
+    // recompute instead of one per line. Gated by HostComponent + BeginInvoke
+    // (same marshalling SyncToDocument uses) since Log() can be called from
+    // a WebView2 IPC callback.
+    private static bool _logFlushScheduled;
+    private static void ScheduleLogFlush()
+    {
+        var win = _instance;
+        if (win == null || win.IsDisposed || _logFlushScheduled) return;
+        _logFlushScheduled = true;
+        win.BeginInvoke((Action)(() =>
+        {
+            _logFlushScheduled = false;
+            HostComponent?.ExpireSolution(true);
+        }));
     }
 
     // ── singleton ────────────────────────────────────────────────────────────
@@ -1136,20 +1337,20 @@ public class SlateWindow : Form
                     break;
 
                 case "state_snapshot":
-                    // A snapshot stamped with an old epoch was generated before the
-                    // most recent SyncToDocument (a resize-debounce timer queued
-                    // pre-switch, or one Chromium throttled while the window was
-                    // hidden and only now got to run) — it reflects the PREVIOUS
-                    // document's DOM, so writing it here would silently re-poison
-                    // HostDocument's cache right after ClearAll/RestoreState just
-                    // set it correctly. Treat a missing epoch (older JS build) as
-                    // current so this never blocks the fresh-JS case it's meant for.
-                    int snapshotEpoch = root.TryGetProperty("epoch", out var epEl) ? epEl.GetInt32() : _syncEpoch;
-                    if (snapshotEpoch != _syncEpoch)
-                    {
-                        Log($"Ignored stale state_snapshot (epoch {snapshotEpoch} != current {_syncEpoch}).");
-                        break;
-                    }
+                    // Used to be guarded by an epoch check here (rejecting a
+                    // snapshot generated before the most recent SyncToDocument,
+                    // to stop a stale resize-debounce timer from re-poisoning
+                    // HostDocument's cache right after ClearAll/RestoreState
+                    // just set it correctly). Removed 2026-09-07: that guard
+                    // never had confirmed evidence of fixing the cross-document
+                    // case it targeted, and it was provably discarding
+                    // legitimate captures made in the gap between a document
+                    // switch and its deferred restore. SyncToDocument now closes
+                    // that gap directly (synchronous ResetAll/tab-switch, only
+                    // RestoreState-with-cached-state defers), so every
+                    // snapshot that arrives here is trusted for whatever
+                    // HostDocument currently is.
+                    DebugLog($"state_snapshot accepted for doc={HostDocument?.DisplayName ?? "null"}: {SummarizeStateCounts(e.WebMessageAsJson)}.");
                     if (HostDocument != null) _uiStateByDoc[HostDocument] = e.WebMessageAsJson;
                     string themeName = root.TryGetProperty("theme", out var th) ? th.GetString() ?? "dark" : "dark";
                     if (themeName != _lastAppliedTheme)
@@ -1368,7 +1569,7 @@ public class SlateWindow : Form
     public void ClearAll()
     {
         ClearDicts();
-        PostToJs(SlateEvent.Cleared(_syncEpoch));
+        PostToJs(SlateEvent.Cleared());
     }
 
     // Full structural reset — back to one empty workspace/pane/tab, as if the
@@ -1377,7 +1578,7 @@ public class SlateWindow : Form
     public void ResetAll()
     {
         ClearDicts();
-        PostToJs(SlateEvent.Reset(_syncEpoch));
+        PostToJs(SlateEvent.Reset());
     }
 
     // Everything ResetAll() does, plus the window goes back to its
@@ -1623,10 +1824,10 @@ public class SlateWindow : Form
             state["winW"] = Width;
             state["winH"] = Height;
 
-            state["type"]  = "restore_state";
-            state["epoch"] = _syncEpoch;
+            state["type"] = "restore_state";
             PostToJs(state.ToJsonString());
-            Log($"State restored: {_sliders.Count} slider(s), {_toggles.Count} toggle(s), {_buttons.Count} button(s), {_valueLists.Count} value list(s), {_panels.Count} panel(s), {_itemPickers.Count} item picker(s), {_humanValueLists.Count} item selector(s), {_colourPickers.Count} colour picker(s), {_pancakeTrueOnlyButtons.Count} true-only button(s).");
+            var savedAt = state["savedAt"]?.GetValue<string>();
+            Log($"State restored{(savedAt != null ? $" (file saved {savedAt})" : " (no save timestamp — older file)")}: {_sliders.Count} slider(s), {_toggles.Count} toggle(s), {_buttons.Count} button(s), {_valueLists.Count} value list(s), {_panels.Count} panel(s), {_itemPickers.Count} item picker(s), {_humanValueLists.Count} item selector(s), {_colourPickers.Count} colour picker(s), {_pancakeTrueOnlyButtons.Count} true-only button(s).");
         }
         catch (Exception ex) { Log($"RestoreState error: {ex.Message}"); }
     }
