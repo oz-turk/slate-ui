@@ -272,7 +272,7 @@
   .group[style*="--depth:2"] .group-header { background: rgba(0, 0, 0, 0.28); }
 
   .group-header:hover          { background: var(--grid) !important; }
-  .group-header.drop-highlight { background: #1a2a1a; outline: 1px solid #3a7a3a44; }
+  .group-header.drop-highlight { background: rgba(var(--accent-rgb), 0.25); outline: 1px solid rgba(var(--accent-rgb), 0.6); }
 
   .handle {
     display: flex;

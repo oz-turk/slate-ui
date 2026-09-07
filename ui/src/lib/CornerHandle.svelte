@@ -149,7 +149,7 @@
     transition: opacity 0.12s, color 0.12s;
   }
   .corner:hover, .corner.active { opacity: 1; color: rgba(var(--text-rgb), 0.78); }
-  .corner.alt-highlight { opacity: 0.8; color: rgba(255, 255, 255, 0.9); }
+  .corner.alt-highlight { opacity: 0.8; color: rgba(var(--text-rgb), 0.9); }
   /* While Alt is held (spanning-drag mode), only the 4 true window-corner
      triangles should read as visible — every other pane's own corners still
      work as a drag entry point (untouched), they just stop showing the glyph

@@ -312,6 +312,12 @@
     background-position: right 8px center;
     transition: border-color 0.15s;
   }
+  /* the arrow is baked into a data-URI SVG, so it can't read --text via var()
+     like the rest of the app's icons — needs its own light-theme copy with
+     the fill swapped, or it stays near-white-on-near-white in light mode */
+  :global(:root[data-theme='light']) .picker {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='6' viewBox='0 0 8 6'%3E%3Cpath d='M0 0L4 6L8 0Z' fill='%232a2724' fill-opacity='0.5'/%3E%3C/svg%3E");
+  }
   .picker:hover, .picker:focus { border-color: var(--border); outline: none; }
   .picker option {
     background: var(--panel-bg);
