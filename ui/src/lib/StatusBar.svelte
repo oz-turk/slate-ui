@@ -1,9 +1,25 @@
 <script>
+  import { onMount, afterUpdate } from 'svelte'
   import { mode, hoverHint, altHeld, ctrlHeld } from '../stores/uiState.js'
+
+  let hintEl
+  let overflowing = false
+
+  function checkOverflow() {
+    if (hintEl) overflowing = hintEl.scrollWidth > hintEl.clientWidth + 1
+  }
+
+  onMount(() => {
+    checkOverflow()
+    window.addEventListener('resize', checkOverflow)
+    return () => window.removeEventListener('resize', checkOverflow)
+  })
+
+  afterUpdate(checkOverflow)
 </script>
 
 <div class="status-bar">
-  <div class="hint">
+  <div class="hint" class:overflowing bind:this={hintEl}>
     {#if $altHeld}
       <span class="hint-item">
         <span class="kbd">Alt</span> + <span class="kbd">Drag divider</span>
@@ -16,6 +32,9 @@
         </span>
       {/if}
     {:else if $ctrlHeld}
+      {#if $hoverHint}
+        <span class="hint-item">{$hoverHint}</span>
+      {/if}
       {#if $mode === 'edit'}
         <span class="hint-item">
           <span class="kbd">Ctrl</span> + click
@@ -117,6 +136,11 @@
     scrollbar-width: none;
   }
   .hint::-webkit-scrollbar { display: none; }
+
+  .hint.overflowing {
+    mask-image: linear-gradient(to right, black calc(100% - 12px), transparent);
+    -webkit-mask-image: linear-gradient(to right, black calc(100% - 12px), transparent);
+  }
 
   .hint-item {
     display: flex;
