@@ -198,6 +198,12 @@ public class SlateWindow : Form
     // and runs fine on a machine without Pancake installed.
     private readonly Dictionary<string, IGH_Param> _pancakeTrueOnlyButtons = new();
 
+    // Native "Trigger" component (Grasshopper.Kernel.Special.GH_Timer) — a
+    // plain document object, not an IGH_Param like every other captured
+    // control above (no data output; it only fires ExpireTargets() on its
+    // wired targets).
+    private readonly Dictionary<string, GH_Timer> _triggers = new();
+
     // Live GH canvas position for an already-captured id — checks every
     // per-type registry above (same set RestoreState re-attaches from). Used
     // only for the ephemeral "sort_positions_request" round trip; never
@@ -213,6 +219,7 @@ public class SlateWindow : Form
         if (_humanValueLists.TryGetValue(id, out var hv))   { pivot = hv.Attributes.Pivot;  return true; }
         if (_colourPickers.TryGetValue(id, out var cp))     { pivot = cp.Attributes.Pivot;  return true; }
         if (_pancakeTrueOnlyButtons.TryGetValue(id, out var pb)) { pivot = pb.Attributes.Pivot; return true; }
+        if (_triggers.TryGetValue(id, out var tr))          { pivot = tr.Attributes.Pivot;  return true; }
         pivot = default;
         return false;
     }
@@ -709,6 +716,7 @@ public class SlateWindow : Form
             PushItemPickerUpdates();
             PushHumanValueListUpdates();
             PushColourPickerUpdates();
+            PushTriggerUpdates();
         }));
     }
 
@@ -753,6 +761,36 @@ public class SlateWindow : Form
         }
     }
 
+    // Catches Interval/LockTargets changes made directly on the canvas (the
+    // native ModeBox/LockBox, or the right-click Interval submenu) — same
+    // reasoning as PushColourPickerUpdates. Only fires on the next solve
+    // anywhere in the doc, same caveat as that one: a Trigger edit alone
+    // doesn't itself schedule a solve.
+    private static void PushTriggerUpdates()
+    {
+        var win = _instance;
+        if (win == null) return;
+        foreach (var kv in win._triggers)
+        {
+            var name = kv.Value.NickName;
+            var interval = kv.Value.Interval;
+            var intervalString = kv.Value.IntervalString;
+            var lockTargets = kv.Value.LockTargets;
+            var fingerprint = name + "" + interval + "" + intervalString + "" + lockTargets;
+            if (_lastPushedTriggers.TryGetValue(kv.Key, out var last) && last == fingerprint) continue;
+            _lastPushedTriggers[kv.Key] = fingerprint;
+
+            win.PostToJs(System.Text.Json.JsonSerializer.Serialize(new {
+                type = "trigger_update",
+                id = kv.Key,
+                name,
+                interval,
+                intervalString,
+                lockTargets
+            }));
+        }
+    }
+
     // These pushes run on EVERY document solve — anywhere in the canvas,
     // not just Slate-related changes — across every tracked object, over every
     // workspace. Left unguarded that's O(tracked objects) wasted messages (each
@@ -764,6 +802,7 @@ public class SlateWindow : Form
     private static readonly Dictionary<string, string> _lastPushedPickers = new();
     private static readonly Dictionary<string, string> _lastPushedHumanLists = new();
     private static readonly Dictionary<string, string> _lastPushedColours = new();
+    private static readonly Dictionary<string, string> _lastPushedTriggers = new();
 
     private static void ClearPushCaches()
     {
@@ -772,6 +811,7 @@ public class SlateWindow : Form
         _lastPushedHumanLists.Clear();
         _lastPushedColours.Clear();
         _lastPushedPickers.Clear();
+        _lastPushedTriggers.Clear();
     }
 
     private static void PushSliderNameUpdates()
@@ -1288,6 +1328,45 @@ public class SlateWindow : Form
                     }
                     break;
 
+                // Interval/lock are config, not solve data, but still need
+                // ExpireSolution(true) (same immediate-recompute idiom as
+                // panel_change above) — without it neither the Trigger's own
+                // canvas widget (ModeBox/LockBox/interval text) nor anything
+                // downstream redraws until some unrelated solve happens to
+                // pass through.
+                case "trigger_interval_change":
+                    string tiid = root.GetProperty("id").GetString() ?? "";
+                    int interval = root.GetProperty("value").GetInt32();
+                    if (_triggers.TryGetValue(tiid, out var trInterval))
+                    {
+                        trInterval.Interval = interval;
+                        trInterval.ExpireSolution(true);
+                    }
+                    break;
+
+                case "trigger_lock_change":
+                    string tlid = root.GetProperty("id").GetString() ?? "";
+                    bool lockTargets = root.GetProperty("value").GetBoolean();
+                    if (_triggers.TryGetValue(tlid, out var trLock))
+                    {
+                        trLock.LockTargets = lockTargets;
+                        trLock.ExpireSolution(true);
+                    }
+                    break;
+
+                // Mirrors clicking the native PlayBox — ExpireTargets() marks the
+                // wired targets expired, ExpireSolution(true) on the timer itself
+                // forces the actual recompute now (same idiom as panel_change,
+                // not the batched _latestValues/ScheduleSolution path).
+                case "trigger_fire":
+                    string tfid = root.GetProperty("id").GetString() ?? "";
+                    if (_triggers.TryGetValue(tfid, out var trFire))
+                    {
+                        trFire.ExpireTargets();
+                        trFire.ExpireSolution(true);
+                    }
+                    break;
+
                 case "pin":
                     bool pinned = root.GetProperty("value").GetBoolean();
                     Invoke(() => SetPin(pinned));
@@ -1414,7 +1493,11 @@ public class SlateWindow : Form
         foreach (var pb in pancakeButtons)
             if (pb is IGH_Param pbp) AddPancakeTrueOnlyButton(tabId, groupId, pbp);
 
-        Log($"Captured {sliders.Count} slider(s), {toggles.Count} toggle(s), {buttons.Count} button(s), {valueLists.Count} value list(s), {panels.Count} panel(s), {itemPickers.Count} item picker(s), {humanLists.Count} item selector(s), {colourPickers.Count} colour picker(s), {pancakeButtons.Count} true-only button(s).");
+        var triggers = selected.OfType<GH_Timer>().ToList();
+        foreach (var tr in triggers)
+            AddTrigger(tabId, groupId, tr);
+
+        Log($"Captured {sliders.Count} slider(s), {toggles.Count} toggle(s), {buttons.Count} button(s), {valueLists.Count} value list(s), {panels.Count} panel(s), {itemPickers.Count} item picker(s), {humanLists.Count} item selector(s), {colourPickers.Count} colour picker(s), {pancakeButtons.Count} true-only button(s), {triggers.Count} trigger(s).");
     }
 
     // ── C# → JS ──────────────────────────────────────────────────────────────
@@ -1566,6 +1649,14 @@ public class SlateWindow : Form
         PostToJs(SlateEvent.PancakeButtonAdded(tabId, id, button.NickName, GetPancakeButtonDown(button), groupId));
     }
 
+    public void AddTrigger(string tabId, string? groupId, GH_Timer timer)
+    {
+        string id = timer.InstanceGuid.ToString();
+        _triggers[id] = timer;
+
+        PostToJs(SlateEvent.TriggerAdded(tabId, id, timer.NickName, timer.Interval, timer.IntervalString, timer.LockTargets, groupId));
+    }
+
     public void ClearAll()
     {
         ClearDicts();
@@ -1607,6 +1698,7 @@ public class SlateWindow : Form
         _humanValueLists.Clear();
         _colourPickers.Clear();
         _pancakeTrueOnlyButtons.Clear();
+        _triggers.Clear();
         ClearPushCaches();
     }
 
@@ -1647,6 +1739,9 @@ public class SlateWindow : Form
                     ? doc.Objects.Where(o => _pancakeTrueOnlyBtnType.IsInstanceOfType(o)).OfType<IGH_Param>()
                     : Enumerable.Empty<IGH_Param>())
                 .ToDictionary(p => p.InstanceGuid.ToString(), p => p);
+            var docTriggers = doc.Objects
+                .OfType<GH_Timer>()
+                .ToDictionary(t => t.InstanceGuid.ToString(), t => t);
 
             _sliders.Clear();
             _toggles.Clear();
@@ -1657,6 +1752,7 @@ public class SlateWindow : Form
             _humanValueLists.Clear();
             _colourPickers.Clear();
             _pancakeTrueOnlyButtons.Clear();
+            _triggers.Clear();
 
             void ProcessItems(JsonArray arr)
             {
@@ -1759,6 +1855,18 @@ public class SlateWindow : Form
                             _pancakeTrueOnlyButtons[id] = pbtn;
                             s["value"] = GetPancakeButtonDown(pbtn) ? 1 : 0;
                             s["name"]  = pbtn.NickName;
+                        }
+                        else { Log($"RestoreState: dropped {kind} id={id} — no matching live object in doc.Objects."); arr.RemoveAt(i); }
+                    }
+                    else if (kind == "trigger")
+                    {
+                        if (docTriggers.TryGetValue(id, out var tr))
+                        {
+                            _triggers[id] = tr;
+                            s["interval"]       = tr.Interval;
+                            s["intervalString"] = tr.IntervalString;
+                            s["lockTargets"]    = tr.LockTargets;
+                            s["name"]           = tr.NickName;
                         }
                         else { Log($"RestoreState: dropped {kind} id={id} — no matching live object in doc.Objects."); arr.RemoveAt(i); }
                     }

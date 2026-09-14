@@ -30,6 +30,13 @@ public static class SlateEvent
     public static string ColourPickerAdded(string tabId, string id, string name, string hex, string? groupId = null) =>
         JsonSerializer.Serialize(new { type = "colourPicker_added", tabId, id, name, value = hex, groupId });
 
+    // GH_Timer ("Trigger") — interval's sign IS the mode (negative = Manual,
+    // positive = cyclic, value = ms); intervalString is GH's own formatted
+    // display text ("1 second", "----------" for Manual), sent so Slate never
+    // has to reimplement that formatting for the initial/native-driven state.
+    public static string TriggerAdded(string tabId, string id, string name, int interval, string intervalString, bool lockTargets, string? groupId = null) =>
+        JsonSerializer.Serialize(new { type = "trigger_added", tabId, id, name, interval, intervalString, lockTargets, groupId });
+
     public static string HumanValueListAdded(string tabId, string id, string name, IEnumerable<string> options, object value, bool multiSelect, bool cycle, bool loop, string? groupId = null) =>
         JsonSerializer.Serialize(new { type = "humanValueList_added", tabId, id, name, options, value, multiSelect, cycle, loop, groupId });
 

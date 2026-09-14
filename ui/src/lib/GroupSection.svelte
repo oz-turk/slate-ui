@@ -8,12 +8,13 @@
   import ValueListRow from './ValueListRow.svelte'
   import PanelRow from './PanelRow.svelte'
   import ColourPickerRow from './ColourPickerRow.svelte'
+  import TriggerRow from './TriggerRow.svelte'
   import { hoverHint } from '../stores/uiState.js'
   import { orderedItems } from '../stores/layout.js'
   const dispatch = createEventDispatcher()
 
   // slider.type → row component (falls back to SliderRow when unset/unknown)
-  const ROW_COMPONENTS = { toggle: ToggleRow, button: ButtonRow, valueList: ValueListRow, panel: PanelRow, itemPicker: ValueListRow, humanValueList: ValueListRow, colourPicker: ColourPickerRow, pancakeButton: ButtonRow }
+  const ROW_COMPONENTS = { toggle: ToggleRow, button: ButtonRow, valueList: ValueListRow, panel: PanelRow, itemPicker: ValueListRow, humanValueList: ValueListRow, colourPicker: ColourPickerRow, pancakeButton: ButtonRow, trigger: TriggerRow }
 
   export let group        = {}
   export let mode         = 'preview'

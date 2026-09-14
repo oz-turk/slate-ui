@@ -6,6 +6,7 @@
   import ValueListRow from './ValueListRow.svelte'
   import PanelRow     from './PanelRow.svelte'
   import ColourPickerRow from './ColourPickerRow.svelte'
+  import TriggerRow   from './TriggerRow.svelte'
   import GroupSection from './GroupSection.svelte'
   import ActionBar    from './ActionBar.svelte'
   import CornerHandle from './CornerHandle.svelte'
@@ -25,12 +26,12 @@
   // itemPicker reuses ValueListRow — same "pick one from a list" UI, the only
   // difference (candidate list from a wired input vs manually authored) lives
   // entirely on the C# side.
-  const ROW_COMPONENTS = { toggle: ToggleRow, button: ButtonRow, valueList: ValueListRow, panel: PanelRow, itemPicker: ValueListRow, humanValueList: ValueListRow, colourPicker: ColourPickerRow, pancakeButton: ButtonRow }
+  const ROW_COMPONENTS = { toggle: ToggleRow, button: ButtonRow, valueList: ValueListRow, panel: PanelRow, itemPicker: ValueListRow, humanValueList: ValueListRow, colourPicker: ColourPickerRow, pancakeButton: ButtonRow, trigger: TriggerRow }
 
   // Fixed type order for the pane's manual "Sort: Type" menu item — same
   // priority SlatePanel.cs's capture loop checks types in, just reused here
   // as an explicit ranking rather than a type-check chain.
-  const TYPE_ORDER = ['slider', 'toggle', 'button', 'valueList', 'panel', 'itemPicker', 'humanValueList', 'colourPicker', 'pancakeButton']
+  const TYPE_ORDER = ['slider', 'toggle', 'button', 'valueList', 'panel', 'itemPicker', 'humanValueList', 'colourPicker', 'pancakeButton', 'trigger']
 
   // ── derive pane state reactively (not derived() — paneId must stay live) ─────
   $: pane        = findLeaf($layout, paneId)
@@ -54,7 +55,10 @@
   // a longer name elsewhere still fits. Rough char-count estimate, not a
   // measured width — biased wide (not tight) since a little extra slack costs
   // nothing but an under-estimate clips into the ellipsis.
-  function isSliderRowType(s) { return !ROW_COMPONENTS[s.type] }
+  // Trigger also grid-aligns its name column to this width (see
+  // TriggerRow.svelte), so its names count toward the measurement too — every
+  // other typed row (toggle/button/...) stays right-anchored and excluded.
+  function isSliderRowType(s) { return !ROW_COMPONENTS[s.type] || s.type === 'trigger' }
   function maxSliderNameLen(sliders, groups) {
     let max = 0
     for (const s of sliders ?? []) if (isSliderRowType(s)) max = Math.max(max, (s.name ?? '').length)
@@ -288,6 +292,10 @@
     return 'slider_change'
   }
   function onSliderChange(sliderId, value, controlType, multiSelect) {
+    if (controlType === 'trigger') {
+      onTriggerChange(sliderId, value)
+      return
+    }
     if (multiSelect) {
       updateSliderValue(sliderId, prev => {
         const arr = Array.isArray(prev) ? prev : []
@@ -297,6 +305,33 @@
       updateSliderValue(sliderId, value)
     }
     postToCs({ type: changeMessageType(controlType), id: sliderId, value })
+  }
+
+  // Trigger has no single scalar "value" — its row dispatches one of three
+  // discrete actions instead (see TriggerRow.svelte's dispatch('change', ...)).
+  function patchSlider(sliderId, patch) {
+    updatePane(paneId, p => ({
+      tabs: p.tabs.map(t => ({
+        ...t,
+        sliders: t.sliders.map(s => s.id === sliderId ? { ...s, ...patch } : s),
+        groups:  patchSliderFieldInGroups(t.groups, sliderId, patch)
+      }))
+    }))
+  }
+  function onTriggerChange(sliderId, detail) {
+    if (detail.kind === 'fire') {
+      postToCs({ type: 'trigger_fire', id: sliderId })
+      return
+    }
+    if (detail.kind === 'lock') {
+      patchSlider(sliderId, { lockTargets: detail.value })
+      postToCs({ type: 'trigger_lock_change', id: sliderId, value: detail.value })
+      return
+    }
+    if (detail.kind === 'interval') {
+      patchSlider(sliderId, { interval: detail.interval, intervalString: detail.intervalString })
+      postToCs({ type: 'trigger_interval_change', id: sliderId, value: detail.interval })
+    }
   }
   function onSliderCommit(sliderId, value, controlType) {
     updateSliderValue(sliderId, value)

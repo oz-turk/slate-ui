@@ -385,6 +385,12 @@
       addCapturedControl({ id: msg.id, type: 'pancakeButton', name: msg.name, value: msg.value }, msg)
     }
 
+    // Native "Trigger" (GH_Timer) — no single "value": interval (signed ms,
+    // sign = mode) + intervalString (GH's own formatted text) + lockTargets.
+    if (msg.type === 'trigger_added') {
+      addCapturedControl({ id: msg.id, type: 'trigger', name: msg.name, interval: msg.interval, intervalString: msg.intervalString, lockTargets: msg.lockTargets }, msg)
+    }
+
     if (msg.type === 'slider_name_update') {
       syncControl(msg.id, { name: msg.name })
     }
@@ -407,6 +413,13 @@
 
     if (msg.type === 'colourPicker_update') {
       syncControl(msg.id, { name: msg.name, value: msg.value })
+    }
+
+    // Catches Interval/LockTargets changes made directly on the native canvas
+    // (ModeBox/LockBox, or the right-click Interval submenu) — see
+    // PushTriggerUpdates in SlateWindow.cs.
+    if (msg.type === 'trigger_update') {
+      syncControl(msg.id, { name: msg.name, interval: msg.interval, intervalString: msg.intervalString, lockTargets: msg.lockTargets })
     }
 
     if (msg.type === 'cleared') {
