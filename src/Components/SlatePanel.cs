@@ -54,7 +54,7 @@ public class SlatePanel : GH_Component
         var doc = OnPingDocument();
         var state = SlateWindow.GetSerializedState(doc);
         SlateWindow.LogWriteSummary(doc, state); // dedup fingerprint must see the unstamped content
-        if (state != null) writer.SetString("ui_state", SlateWindow.StampSavedAt(state)!); // non-null: state is non-null here
+        if (state != null) writer.SetString("ui_state", SlateWindow.StampSavedAt(doc, state)!); // non-null: state is non-null here
 
         var size = SlateWindow.GetWindowSize(OnPingDocument());
         var loc  = SlateWindow.GetWindowLocation(OnPingDocument());

@@ -445,14 +445,30 @@ public class SlateWindow : Form
     // state_snapshot regardless) so that on the NEXT open, RestoreState can
     // report exactly when the layout it's restoring was captured, answering
     // "dosya ne zaman kaydedildi" without GH exposing a per-object save time.
-    public static string? StampSavedAt(string? state)
+    //
+    // Cached per doc against the UNSTAMPED input: Write() runs on every
+    // undo-checkpoint, not just a real Ctrl+S (see LogWriteSummary above), so
+    // minting a fresh DateTime.Now every call made the written bytes differ
+    // on every single checkpoint even when nothing was actually captured —
+    // which is exactly what GH's undo/IO layer uses to decide the document
+    // changed, so the file stayed permanently "modified" right after saving.
+    // Returning the previous byte-identical stamped output when the raw
+    // state hasn't changed keeps consecutive checkpoints truly identical;
+    // only a genuine capture/edit (raw state differs) earns a new timestamp.
+    private static readonly Dictionary<Grasshopper.Kernel.GH_Document, (string raw, string stamped)> _lastStamped = new();
+
+    public static string? StampSavedAt(Grasshopper.Kernel.GH_Document? doc, string? state)
     {
         if (state == null) return null;
+        if (doc != null && _lastStamped.TryGetValue(doc, out var cached) && cached.raw == state)
+            return cached.stamped;
         try
         {
             var node = JsonNode.Parse(state)!.AsObject();
             node["savedAt"] = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
-            return node.ToJsonString();
+            var stamped = node.ToJsonString();
+            if (doc != null) _lastStamped[doc] = (state, stamped);
+            return stamped;
         }
         catch { return state; }
     }
@@ -735,7 +751,7 @@ public class SlateWindow : Form
         _lastSavedAt[e.Document] = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
         Log(state == null
             ? "Saved (no captured UI for this document)."
-            : $"Saved: {SummarizeStateCounts(state)}.");
+            : $"Saved: {SummarizeStateCounts(state)}.", flush: false);
     }
 
     // Catches color changes made directly on the canvas (right-click the
@@ -1001,10 +1017,23 @@ public class SlateWindow : Form
         _hostDocument?.ScheduleSolution(1, null);
     }
 
-    private static void Log(string msg)
+    private static void Log(string msg) => Log(msg, flush: true);
+
+    // flush:false skips the forced recompute below — used only by
+    // OnDocModifiedChanged's post-save line. That recompute used to run
+    // moments after every real save (Log→ScheduleLogFlush→ExpireSolution),
+    // and GH_Document.IsModified flips true on basically any forced
+    // recompute — including this purely-diagnostic one — so the file could
+    // never stay "saved". A prior fix tried snapshotting/restoring
+    // IsModified around the recompute, but assigning IsModified re-raises
+    // ModifiedChanged synchronously, which re-entered OnDocModifiedChanged →
+    // Log → ScheduleLogFlush → ExpireSolution in an unbounded loop and
+    // crashed Grasshopper. Simplest safe fix: the "Saved: ..." line just
+    // waits in LogQueue for the next natural solve instead of forcing one.
+    private static void Log(string msg, bool flush)
     {
         LogQueue.Enqueue($"[{DateTime.Now:HH:mm:ss}] {msg}");
-        ScheduleLogFlush();
+        if (flush) ScheduleLogFlush();
     }
 
     // Log() fires from async paths that run well after SlatePanel's own last
@@ -1770,7 +1799,7 @@ public class SlateWindow : Form
                             s["value"] = tgl.Value ? 1 : 0;
                             s["name"]  = tgl.NickName;
                         }
-                        else { Log($"RestoreState: dropped {kind} id={id} — no matching live object in doc.Objects."); arr.RemoveAt(i); }
+                        else { Log($"RestoreState: dropped {kind} id={id} — no matching live object in doc.Objects.", flush: false); arr.RemoveAt(i); }
                     }
                     else if (kind == "button")
                     {
@@ -1780,7 +1809,7 @@ public class SlateWindow : Form
                             s["value"] = btn.ButtonDown ? 1 : 0;
                             s["name"]  = btn.NickName;
                         }
-                        else { Log($"RestoreState: dropped {kind} id={id} — no matching live object in doc.Objects."); arr.RemoveAt(i); }
+                        else { Log($"RestoreState: dropped {kind} id={id} — no matching live object in doc.Objects.", flush: false); arr.RemoveAt(i); }
                     }
                     else if (kind == "valueList")
                     {
@@ -1797,7 +1826,7 @@ public class SlateWindow : Form
                             s["loop"]        = IsLoopMode(vl.ListMode);
                             s["options"]     = new JsonArray(vl.ListItems.Select(li => JsonValue.Create(li.Name)).ToArray());
                         }
-                        else { Log($"RestoreState: dropped {kind} id={id} — no matching live object in doc.Objects."); arr.RemoveAt(i); }
+                        else { Log($"RestoreState: dropped {kind} id={id} — no matching live object in doc.Objects.", flush: false); arr.RemoveAt(i); }
                     }
                     else if (kind == "panel")
                     {
@@ -1808,7 +1837,7 @@ public class SlateWindow : Form
                             s["name"]     = pnl.NickName;
                             s["readOnly"] = pnl.SourceCount > 0;
                         }
-                        else { Log($"RestoreState: dropped {kind} id={id} — no matching live object in doc.Objects."); arr.RemoveAt(i); }
+                        else { Log($"RestoreState: dropped {kind} id={id} — no matching live object in doc.Objects.", flush: false); arr.RemoveAt(i); }
                     }
                     else if (kind == "itemPicker")
                     {
@@ -1819,7 +1848,7 @@ public class SlateWindow : Form
                             s["name"]    = picker.NickName;
                             s["options"] = new JsonArray(GetPickerOptions(picker).Select(o => JsonValue.Create(o)).ToArray());
                         }
-                        else { Log($"RestoreState: dropped {kind} id={id} — no matching live object in doc.Objects."); arr.RemoveAt(i); }
+                        else { Log($"RestoreState: dropped {kind} id={id} — no matching live object in doc.Objects.", flush: false); arr.RemoveAt(i); }
                     }
                     else if (kind == "humanValueList")
                     {
@@ -1836,7 +1865,7 @@ public class SlateWindow : Form
                             s["loop"]        = loop;
                             s["options"]     = new JsonArray(options.Select(o => JsonValue.Create(o)).ToArray());
                         }
-                        else { Log($"RestoreState: dropped {kind} id={id} — no matching live object in doc.Objects."); arr.RemoveAt(i); }
+                        else { Log($"RestoreState: dropped {kind} id={id} — no matching live object in doc.Objects.", flush: false); arr.RemoveAt(i); }
                     }
                     else if (kind == "colourPicker")
                     {
@@ -1846,7 +1875,7 @@ public class SlateWindow : Form
                             s["value"] = ColorToHex(cp.SwatchColour);
                             s["name"]  = cp.NickName;
                         }
-                        else { Log($"RestoreState: dropped {kind} id={id} — no matching live object in doc.Objects."); arr.RemoveAt(i); }
+                        else { Log($"RestoreState: dropped {kind} id={id} — no matching live object in doc.Objects.", flush: false); arr.RemoveAt(i); }
                     }
                     else if (kind == "pancakeButton")
                     {
@@ -1856,7 +1885,7 @@ public class SlateWindow : Form
                             s["value"] = GetPancakeButtonDown(pbtn) ? 1 : 0;
                             s["name"]  = pbtn.NickName;
                         }
-                        else { Log($"RestoreState: dropped {kind} id={id} — no matching live object in doc.Objects."); arr.RemoveAt(i); }
+                        else { Log($"RestoreState: dropped {kind} id={id} — no matching live object in doc.Objects.", flush: false); arr.RemoveAt(i); }
                     }
                     else if (kind == "trigger")
                     {
@@ -1868,7 +1897,7 @@ public class SlateWindow : Form
                             s["lockTargets"]    = tr.LockTargets;
                             s["name"]           = tr.NickName;
                         }
-                        else { Log($"RestoreState: dropped {kind} id={id} — no matching live object in doc.Objects."); arr.RemoveAt(i); }
+                        else { Log($"RestoreState: dropped {kind} id={id} — no matching live object in doc.Objects.", flush: false); arr.RemoveAt(i); }
                     }
                     else if (docSliders.TryGetValue(id, out var gh))
                     {
@@ -1879,7 +1908,7 @@ public class SlateWindow : Form
                         s["decimalPlaces"]  = EffectiveDecimalPlaces(gh.Slider);
                         s["name"]           = gh.ImpliedNickName;
                     }
-                    else { Log($"RestoreState: dropped slider id={id} — no matching live object in doc.Objects."); arr.RemoveAt(i); }
+                    else { Log($"RestoreState: dropped slider id={id} — no matching live object in doc.Objects.", flush: false); arr.RemoveAt(i); }
                 }
             }
 
@@ -1935,9 +1964,15 @@ public class SlateWindow : Form
             state["type"] = "restore_state";
             PostToJs(state.ToJsonString());
             var savedAt = state["savedAt"]?.GetValue<string>();
-            Log($"State restored{(savedAt != null ? $" (file saved {savedAt})" : " (no save timestamp — older file)")}: {_sliders.Count} slider(s), {_toggles.Count} toggle(s), {_buttons.Count} button(s), {_valueLists.Count} value list(s), {_panels.Count} panel(s), {_itemPickers.Count} item picker(s), {_humanValueLists.Count} item selector(s), {_colourPickers.Count} colour picker(s), {_pancakeTrueOnlyButtons.Count} true-only button(s).");
+            // flush:false — this runs on every file open with captured Slate
+            // state (deferred via BeginInvoke past GH's own post-Open
+            // Modified=false reset, same as SyncToDocument's deferIfRestoring
+            // path), so a forced recompute here re-dirtied every file the
+            // instant it was opened, same bug as the post-save "Saved: ..."
+            // line above.
+            Log($"State restored{(savedAt != null ? $" (file saved {savedAt})" : " (no save timestamp — older file)")}: {_sliders.Count} slider(s), {_toggles.Count} toggle(s), {_buttons.Count} button(s), {_valueLists.Count} value list(s), {_panels.Count} panel(s), {_itemPickers.Count} item picker(s), {_humanValueLists.Count} item selector(s), {_colourPickers.Count} colour picker(s), {_pancakeTrueOnlyButtons.Count} true-only button(s).", flush: false);
         }
-        catch (Exception ex) { Log($"RestoreState error: {ex.Message}"); }
+        catch (Exception ex) { Log($"RestoreState error: {ex.Message}", flush: false); }
     }
 
     // ── embedded resource helper ─────────────────────────────────────────────
