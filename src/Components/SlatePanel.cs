@@ -68,6 +68,7 @@ public class SlatePanel : GH_Component
             writer.SetInt32("win_x", pt.X);
             writer.SetInt32("win_y", pt.Y);
         }
+        SlateWindow.DebugLogGeometry($"Write: doc={doc?.DisplayName} saving size={size} loc={loc}");
 
         return base.Write(writer);
     }
@@ -90,6 +91,7 @@ public class SlatePanel : GH_Component
             _savedWinLocation = new System.Drawing.Point(reader.GetInt32("win_x"), reader.GetInt32("win_y"));
             SlateWindow.PendingWindowLocation = _savedWinLocation;
         }
+        SlateWindow.DebugLogGeometry($"Read: file had size={_savedWinSize} loc={_savedWinLocation}");
         return base.Read(reader);
     }
 

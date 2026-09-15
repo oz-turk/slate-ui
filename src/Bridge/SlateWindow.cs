@@ -360,6 +360,12 @@ public class SlateWindow : Form
         if (DebugLogging) Log($"[debug] {msg}");
     }
 
+    // Thin public wrapper so SlatePanel.Write()/Read() (same geometry
+    // persistence path as ApplyGeometry's own DebugLog call) can log under
+    // the same "Debug logging" toggle without exposing the whole Log/
+    // DebugLog machinery.
+    public static void DebugLogGeometry(string msg) => DebugLog(msg);
+
     private static Grasshopper.Kernel.GH_Document? _hostDocument;
     public static Grasshopper.Kernel.GH_Document? HostDocument
     {
@@ -582,18 +588,53 @@ public class SlateWindow : Form
     private static readonly Dictionary<Grasshopper.Kernel.GH_Document, Size>  _sizeByDoc     = new();
     private static readonly Dictionary<Grasshopper.Kernel.GH_Document, Point> _locationByDoc = new();
 
-    public static Size?  GetCurrentWindowSize()     => _instance != null && !_instance.IsDisposed ? _instance.Size     : (Size?)null;
-    public static Point? GetCurrentWindowLocation()  => _instance != null && !_instance.IsDisposed ? _instance.Location : (Point?)null;
+    // While WindowState is Maximized (or Minimized), Form.Size/Location report
+    // OS-level maximized bounds — on Windows 10/11 these include an invisible
+    // resize border, so a screen filled edge-to-edge reads back as a few px
+    // OVER the monitor's actual size with a small NEGATIVE Location (observed
+    // live: 2576x1456 at (-8,-8) on a 2560x1440 screen). Saving that raw is
+    // what left the window opening oversized and pinned near the top-left on
+    // the next file open.
+    //
+    // Deliberately NOT using RestoreBounds (WinForms' tracked pre-maximize
+    // bounds) here either — an earlier version did, plus a separate
+    // win_maximized flag applied via FormWindowState.Maximized on restore.
+    // Dropped 2026-09-15: the user doesn't want maximize tracked as a
+    // distinct state at all ("tam ekran mı değil mi pek umrumda değil, tam
+    // ekransa loc/genişlik/yükseklik değeri bellidir zaten") — if the window
+    // was filling the screen when saved, what should come back is a plain
+    // window sized to that screen's actual usable pixels, nothing more. So
+    // when maximized, this reads the CURRENT screen's WorkingArea (excludes
+    // the taskbar, matching what a real maximize visually fills) and hands
+    // that back as if it were an ordinary Normal size/location — restoring
+    // it later is then just the same plain Size/Location assignment as any
+    // other saved geometry, never touching WindowState. That also sidesteps
+    // the singleton-hidden-window unreliability explored in
+    // pencere-boyutu-maximize.md for actually applying FormWindowState.
+    public static Size?  GetCurrentWindowSize()     => _instance != null && !_instance.IsDisposed
+        ? (_instance.WindowState == FormWindowState.Normal ? _instance.Size     : Screen.FromControl(_instance).WorkingArea.Size)
+        : (Size?)null;
+    public static Point? GetCurrentWindowLocation()  => _instance != null && !_instance.IsDisposed
+        ? (_instance.WindowState == FormWindowState.Normal ? _instance.Location : Screen.FromControl(_instance).WorkingArea.Location)
+        : (Point?)null;
 
     // Used by SlatePanel.Write() so a document's saved geometry reflects ITS
     // OWN last-known size/position, not whatever the window currently looks
     // like if a different tab is active when that document happens to be
     // saved. Falls back to the live window geometry when this document has no
     // cached entry yet (e.g. its first-ever save this session while active).
+    //
+    // For the document the window is CURRENTLY showing (doc == HostDocument),
+    // always reads the live window instead of the cache: the cache is only
+    // refreshed by the Resize/Move handlers below while WindowState is
+    // Normal, so it goes stale the moment the active window is maximized —
+    // reading it here would silently save the size/position from before the
+    // user maximized, not the screen-filling px GetCurrentWindowSize/
+    // Location compute for that case.
     public static Size?  GetWindowSize(Grasshopper.Kernel.GH_Document? doc) =>
-        doc != null && _sizeByDoc.TryGetValue(doc, out var s) ? s : GetCurrentWindowSize();
+        doc != null && doc != HostDocument && _sizeByDoc.TryGetValue(doc, out var s) ? s : GetCurrentWindowSize();
     public static Point? GetWindowLocation(Grasshopper.Kernel.GH_Document? doc) =>
-        doc != null && _locationByDoc.TryGetValue(doc, out var p) ? p : GetCurrentWindowLocation();
+        doc != null && doc != HostDocument && _locationByDoc.TryGetValue(doc, out var p) ? p : GetCurrentWindowLocation();
 
     public static void SeedDocumentGeometry(Grasshopper.Kernel.GH_Document doc, Size? size, Point? location)
     {
@@ -603,17 +644,77 @@ public class SlateWindow : Form
 
     const int MinWinW = 320, MinWinH = 480, MaxWinW = 3000, MaxWinH = 2000;
 
-    private static void ApplySize(SlateWindow w, Size size) =>
-        w.Size = new Size(
-            Math.Max(MinWinW, Math.Min(MaxWinW, size.Width)),
-            Math.Max(MinWinH, Math.Min(MaxWinH, size.Height)));
+    // Size actually requested (e.g. from a file's saved win_w/win_h) before
+    // the screen-fit clamp below potentially shrinks it — RestoreState
+    // compares this against the window's live (possibly now-smaller) size to
+    // know whether the saved layout's pane sizeA proportions need rescaling
+    // for a different screen (see coklu-ekran-cozunurluk.md: a layout
+    // authored on a 5K monitor opened on a 4K one used to leave its last
+    // ~20% hidden off-screen with no way to recover it short of manually
+    // resizing every pane).
+    private static Size? _lastRequestedWindowSize;
 
-    private static void ApplyLocation(SlateWindow w, Point loc)
+    // Single choke point for applying window geometry — used both for a
+    // freshly opened file's saved win_w/h/x/y and for switching back to an
+    // already-open document's remembered size/position. Picks whichever
+    // screen the target location actually lands on (falling back to the
+    // nearest one if it's off every connected monitor, e.g. a second display
+    // from a previous session that's no longer plugged in) and clamps both
+    // size and position to THAT screen's working area — not just the fixed
+    // Min/MaxWin* bounds, which say nothing about what the current screen
+    // can actually show.
+    private static void ApplyGeometry(SlateWindow w, Size size, Point loc)
     {
-        // Only trust a restored position if it still lands on a connected monitor —
-        // otherwise fall back to the default corner instead of opening off-screen.
-        bool onScreen = Screen.AllScreens.Any(s => s.WorkingArea.Contains(loc.X + 20, loc.Y + 20));
-        w.Location = onScreen ? loc : new Point(60, 60);
+        // The window is a singleton reused across every document (see
+        // GetOrCreate/_sizeByDoc above) — WindowState is never part of what's
+        // persisted (see GetCurrentWindowSize/Location above for why: a
+        // maximized save is flattened into plain screen-filling px, never a
+        // distinct state), but it's also never reset here on its own, so a
+        // window left Maximized from a previous document/file stays
+        // VISUALLY maximized no matter what Size/Location this call goes on
+        // to set: while Maximized, those setters only update RestoreBounds
+        // (what the window snaps back to once un-maximized), not what's on
+        // screen. Confirmed live 2026-09-14: a file saved perfectly normal
+        // still opened full-screen because the singleton was left maximized
+        // by whichever file was tested right before it. So Size/Location are
+        // always computed and applied in Normal state first (forcing it if
+        // needed) — the block below may switch back to Maximized afterward,
+        // but only once these are the real Bounds it's switching FROM, not
+        // whatever stale RestoreBounds Maximized would otherwise keep.
+        if (w.WindowState != FormWindowState.Normal) w.WindowState = FormWindowState.Normal;
+
+        _lastRequestedWindowSize = size;
+
+        var screen = Screen.AllScreens.FirstOrDefault(s => s.WorkingArea.Contains(loc.X + 20, loc.Y + 20))
+                     ?? Screen.FromPoint(loc);
+        var wa = screen.WorkingArea;
+
+        int width  = Math.Max(MinWinW, Math.Min(Math.Min(MaxWinW, size.Width),  wa.Width));
+        int height = Math.Max(MinWinH, Math.Min(Math.Min(MaxWinH, size.Height), wa.Height));
+        w.Size = new Size(width, height);
+
+        int x = Math.Max(wa.Left, Math.Min(loc.X, wa.Right  - width));
+        int y = Math.Max(wa.Top,  Math.Min(loc.Y, wa.Bottom - height));
+        w.Location = new Point(x, y);
+
+        // A request that exactly fills this screen's working area is what
+        // GetCurrentWindowSize/Location produce when the window really WAS
+        // Maximized at save time (flattened into plain px above, not a
+        // separate persisted state — see those methods). But leaving the
+        // window merely Normal-sized to match doesn't look the same:
+        // Windows only compensates for a top-level window's invisible resize
+        // border (the same border behind the maximized-bounds inflation
+        // noted above) when the window is ACTUALLY Maximized. A Normal
+        // window sized to the working area keeps that border baked inside
+        // its Bounds instead, so its visible edge sits a few px short of the
+        // screen edge on the sides/bottom — reads as "almost but not quite"
+        // fullscreen. So when the numbers land exactly on a full working-
+        // area fill, hand it to a real Maximized state and let Windows do
+        // its own border math, instead of trying to replicate it by hand.
+        if (width == wa.Width && height == wa.Height && x == wa.Left && y == wa.Top)
+            w.WindowState = FormWindowState.Maximized;
+
+        DebugLog($"ApplyGeometry: requested size={size} loc={loc} -> screen={screen.DeviceName} wa={wa} -> applied size={w.Size} loc={w.Location} state={w.WindowState}");
     }
 
     // Called when OnActiveDocumentChanged switches HostDocument to a document
@@ -629,8 +730,9 @@ public class SlateWindow : Form
         // for geometry. Fall back to the same defaults the constructor uses
         // for a session's very first window.
         var w = GetOrCreate();
-        ApplySize(w, _sizeByDoc.TryGetValue(doc, out var size) ? size : DefaultWindowSize);
-        ApplyLocation(w, _locationByDoc.TryGetValue(doc, out var location) ? location : DefaultWindowLocation);
+        var size     = _sizeByDoc.TryGetValue(doc, out var sz) ? sz : DefaultWindowSize;
+        var location = _locationByDoc.TryGetValue(doc, out var loc) ? loc : DefaultWindowLocation;
+        ApplyGeometry(w, size, location);
     }
 
     // Every write to HostDocument must go through here (the null-out in
@@ -747,11 +849,12 @@ public class SlateWindow : Form
     private static void OnDocModifiedChanged(object sender, Grasshopper.Kernel.GH_DocModifiedEventArgs e)
     {
         if (e.Modified) return; // only the dirty→clean transition means "just saved"
+        if (_restoringModified) return; // our own ScheduleLogFlush restoring IsModified after the fact — not a real save
         var state = GetSerializedState(e.Document);
         _lastSavedAt[e.Document] = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
         Log(state == null
             ? "Saved (no captured UI for this document)."
-            : $"Saved: {SummarizeStateCounts(state)}.", flush: false);
+            : $"Saved: {SummarizeStateCounts(state)}.");
     }
 
     // Catches color changes made directly on the canvas (right-click the
@@ -1017,23 +1120,10 @@ public class SlateWindow : Form
         _hostDocument?.ScheduleSolution(1, null);
     }
 
-    private static void Log(string msg) => Log(msg, flush: true);
-
-    // flush:false skips the forced recompute below — used only by
-    // OnDocModifiedChanged's post-save line. That recompute used to run
-    // moments after every real save (Log→ScheduleLogFlush→ExpireSolution),
-    // and GH_Document.IsModified flips true on basically any forced
-    // recompute — including this purely-diagnostic one — so the file could
-    // never stay "saved". A prior fix tried snapshotting/restoring
-    // IsModified around the recompute, but assigning IsModified re-raises
-    // ModifiedChanged synchronously, which re-entered OnDocModifiedChanged →
-    // Log → ScheduleLogFlush → ExpireSolution in an unbounded loop and
-    // crashed Grasshopper. Simplest safe fix: the "Saved: ..." line just
-    // waits in LogQueue for the next natural solve instead of forcing one.
-    private static void Log(string msg, bool flush)
+    private static void Log(string msg)
     {
         LogQueue.Enqueue($"[{DateTime.Now:HH:mm:ss}] {msg}");
-        if (flush) ScheduleLogFlush();
+        ScheduleLogFlush();
     }
 
     // Log() fires from async paths that run well after SlatePanel's own last
@@ -1048,7 +1138,23 @@ public class SlateWindow : Form
     // recompute instead of one per line. Gated by HostComponent + BeginInvoke
     // (same marshalling SyncToDocument uses) since Log() can be called from
     // a WebView2 IPC callback.
+    //
+    // GH_Document.IsModified flips true on basically any forced recompute —
+    // including this purely-diagnostic one, whose only job is refreshing the
+    // "Log"/"State" outputs — so a save/open/write immediately followed by
+    // this flush used to re-dirty the file the instant it was saved/opened.
+    // Snapshotting IsModified and restoring it after the recompute fixes
+    // that, but assigning IsModified re-raises ModifiedChanged synchronously
+    // — without _restoringModified to swallow that synthetic re-entry,
+    // OnDocModifiedChanged would see another dirty→clean transition, log
+    // again, schedule another flush, and loop forever (this crashed
+    // Grasshopper once already). The guard makes the restore's own event a
+    // no-op so only the real save's transition ever does anything — this is
+    // trigger-agnostic (doesn't matter if the flush came from a real save or
+    // a Debug-logging trace), so it should hold with Debug logging on too,
+    // though that combination hasn't been stress-tested.
     private static bool _logFlushScheduled;
+    private static bool _restoringModified;
     private static void ScheduleLogFlush()
     {
         var win = _instance;
@@ -1057,7 +1163,15 @@ public class SlateWindow : Form
         win.BeginInvoke((Action)(() =>
         {
             _logFlushScheduled = false;
+            var doc = HostDocument;
+            bool wasModified = doc?.IsModified ?? false;
             HostComponent?.ExpireSolution(true);
+            if (doc != null && doc.IsModified != wasModified)
+            {
+                _restoringModified = true;
+                doc.IsModified = wasModified;
+                _restoringModified = false;
+            }
         }));
     }
 
@@ -1070,26 +1184,53 @@ public class SlateWindow : Form
         return _instance;
     }
 
+    // Which document's geometry was last reconciled into the live window —
+    // lets EnsureVisible tell "first time this document is being shown/
+    // switched to" (reconcile) apart from "still the same document, just
+    // another SolveInstance re-run while already showing" (skip, so it
+    // doesn't fight a live user resize/maximize of the window they're
+    // currently looking at).
+    private static Grasshopper.Kernel.GH_Document? _lastGeometrySyncedDoc;
+
     public static void EnsureVisible()
     {
         var w = GetOrCreate();
 
-        if (PendingWindowSize is Size size)
-        {
-            ApplySize(w, size);
-            if (HostDocument != null) _sizeByDoc[HostDocument] = w.Size;
-            PendingWindowSize = null;
-        }
-        if (PendingWindowLocation is Point loc)
-        {
-            ApplyLocation(w, loc);
-            if (HostDocument != null) _locationByDoc[HostDocument] = w.Location;
-            PendingWindowLocation = null;
-        }
-
         bool wasVisible = w.Visible;
         if (!wasVisible) w.Show();
         w.BringToFront();
+
+        // Reconcile whenever the window is being (re)shown for a document it
+        // wasn't just showing a moment ago — covers both "was hidden, now
+        // shown" and "was already visible but for a DIFFERENT document" (a
+        // tab switch while the singleton stays on screen). The latter matters
+        // just as much: applying Size/Location/WindowState to an already-
+        // visible window is what reliably sticks (see
+        // pencere-boyutu-maximize.md — doing it while still hidden left a
+        // singleton that had been Maximized for a previous document visually
+        // stuck maximized), so skipping this on a same-document re-run isn't
+        // about reliability, only about not undoing a resize/maximize the
+        // user is actively doing to the window right now.
+        //
+        // Falls back through: this session's Pending* (just Read() from a
+        // freshly opened file) → this document's cached geometry (already
+        // seen this session, e.g. switching back to it) → the class defaults
+        // (brand new document, never saved).
+        if (!wasVisible || HostDocument != _lastGeometrySyncedDoc)
+        {
+            var size     = PendingWindowSize     ?? (HostDocument != null && _sizeByDoc.TryGetValue(HostDocument, out var sz)     ? sz : DefaultWindowSize);
+            var location = PendingWindowLocation ?? (HostDocument != null && _locationByDoc.TryGetValue(HostDocument, out var loc) ? loc : DefaultWindowLocation);
+
+            ApplyGeometry(w, size, location);
+            if (HostDocument != null)
+            {
+                _sizeByDoc[HostDocument]     = w.Size;
+                _locationByDoc[HostDocument] = w.Location;
+            }
+            _lastGeometrySyncedDoc = HostDocument;
+            PendingWindowSize     = null;
+            PendingWindowLocation = null;
+        }
 
         // WinForms re-asserts its own (unset/default) Form.Icon at various
         // points around Show()/activation — same class of "Windows quietly
@@ -1158,6 +1299,7 @@ public class SlateWindow : Form
         _sizeByDoc.Remove(doc);
         _locationByDoc.Remove(doc);
         if (_lastActiveDoc == doc) _lastActiveDoc = null;
+        if (_lastGeometrySyncedDoc == doc) _lastGeometrySyncedDoc = null;
         if (HostComponent != null && HostComponent.OnPingDocument() == doc) HostComponent = null;
         if (HostDocument == doc)
         {
@@ -1204,8 +1346,23 @@ public class SlateWindow : Form
         Location        = _lastKnownLocation ?? DefaultWindowLocation;
         BackColor       = Color.FromArgb(18, 18, 18);
 
-        Resize += (_, _) => { if (WindowState == FormWindowState.Normal) { _lastKnownSize     = Size;     if (HostDocument != null) _sizeByDoc[HostDocument]     = Size; } };
-        Move   += (_, _) => { if (WindowState == FormWindowState.Normal) { _lastKnownLocation = Location; if (HostDocument != null) _locationByDoc[HostDocument] = Location; } };
+        // Diagnostic (2026-09-14): a save made while genuinely maximized was
+        // observed writing an inflated Size (matching live maximized bounds)
+        // alongside an UNCHANGED, correct Location (still the pre-maximize
+        // value) — see window-geometry investigation. That split only makes
+        // sense if Resize and Move disagree about WindowState at the moment
+        // each fires during the same transition. Logging both raw here to
+        // catch it live instead of guessing further.
+        Resize += (_, _) =>
+        {
+            DebugLog($"Resize event: WindowState={WindowState} Size={Size} (doc={HostDocument?.DisplayName})");
+            if (WindowState == FormWindowState.Normal) { _lastKnownSize     = Size;     if (HostDocument != null) _sizeByDoc[HostDocument]     = Size; }
+        };
+        Move   += (_, _) =>
+        {
+            DebugLog($"Move event: WindowState={WindowState} Location={Location} (doc={HostDocument?.DisplayName})");
+            if (WindowState == FormWindowState.Normal) { _lastKnownLocation = Location; if (HostDocument != null) _locationByDoc[HostDocument] = Location; }
+        };
 
         _webView.Dock = DockStyle.Fill;
         Controls.Add(_webView);
@@ -1799,7 +1956,7 @@ public class SlateWindow : Form
                             s["value"] = tgl.Value ? 1 : 0;
                             s["name"]  = tgl.NickName;
                         }
-                        else { Log($"RestoreState: dropped {kind} id={id} — no matching live object in doc.Objects.", flush: false); arr.RemoveAt(i); }
+                        else { Log($"RestoreState: dropped {kind} id={id} — no matching live object in doc.Objects."); arr.RemoveAt(i); }
                     }
                     else if (kind == "button")
                     {
@@ -1809,7 +1966,7 @@ public class SlateWindow : Form
                             s["value"] = btn.ButtonDown ? 1 : 0;
                             s["name"]  = btn.NickName;
                         }
-                        else { Log($"RestoreState: dropped {kind} id={id} — no matching live object in doc.Objects.", flush: false); arr.RemoveAt(i); }
+                        else { Log($"RestoreState: dropped {kind} id={id} — no matching live object in doc.Objects."); arr.RemoveAt(i); }
                     }
                     else if (kind == "valueList")
                     {
@@ -1826,7 +1983,7 @@ public class SlateWindow : Form
                             s["loop"]        = IsLoopMode(vl.ListMode);
                             s["options"]     = new JsonArray(vl.ListItems.Select(li => JsonValue.Create(li.Name)).ToArray());
                         }
-                        else { Log($"RestoreState: dropped {kind} id={id} — no matching live object in doc.Objects.", flush: false); arr.RemoveAt(i); }
+                        else { Log($"RestoreState: dropped {kind} id={id} — no matching live object in doc.Objects."); arr.RemoveAt(i); }
                     }
                     else if (kind == "panel")
                     {
@@ -1837,7 +1994,7 @@ public class SlateWindow : Form
                             s["name"]     = pnl.NickName;
                             s["readOnly"] = pnl.SourceCount > 0;
                         }
-                        else { Log($"RestoreState: dropped {kind} id={id} — no matching live object in doc.Objects.", flush: false); arr.RemoveAt(i); }
+                        else { Log($"RestoreState: dropped {kind} id={id} — no matching live object in doc.Objects."); arr.RemoveAt(i); }
                     }
                     else if (kind == "itemPicker")
                     {
@@ -1848,7 +2005,7 @@ public class SlateWindow : Form
                             s["name"]    = picker.NickName;
                             s["options"] = new JsonArray(GetPickerOptions(picker).Select(o => JsonValue.Create(o)).ToArray());
                         }
-                        else { Log($"RestoreState: dropped {kind} id={id} — no matching live object in doc.Objects.", flush: false); arr.RemoveAt(i); }
+                        else { Log($"RestoreState: dropped {kind} id={id} — no matching live object in doc.Objects."); arr.RemoveAt(i); }
                     }
                     else if (kind == "humanValueList")
                     {
@@ -1865,7 +2022,7 @@ public class SlateWindow : Form
                             s["loop"]        = loop;
                             s["options"]     = new JsonArray(options.Select(o => JsonValue.Create(o)).ToArray());
                         }
-                        else { Log($"RestoreState: dropped {kind} id={id} — no matching live object in doc.Objects.", flush: false); arr.RemoveAt(i); }
+                        else { Log($"RestoreState: dropped {kind} id={id} — no matching live object in doc.Objects."); arr.RemoveAt(i); }
                     }
                     else if (kind == "colourPicker")
                     {
@@ -1875,7 +2032,7 @@ public class SlateWindow : Form
                             s["value"] = ColorToHex(cp.SwatchColour);
                             s["name"]  = cp.NickName;
                         }
-                        else { Log($"RestoreState: dropped {kind} id={id} — no matching live object in doc.Objects.", flush: false); arr.RemoveAt(i); }
+                        else { Log($"RestoreState: dropped {kind} id={id} — no matching live object in doc.Objects."); arr.RemoveAt(i); }
                     }
                     else if (kind == "pancakeButton")
                     {
@@ -1885,7 +2042,7 @@ public class SlateWindow : Form
                             s["value"] = GetPancakeButtonDown(pbtn) ? 1 : 0;
                             s["name"]  = pbtn.NickName;
                         }
-                        else { Log($"RestoreState: dropped {kind} id={id} — no matching live object in doc.Objects.", flush: false); arr.RemoveAt(i); }
+                        else { Log($"RestoreState: dropped {kind} id={id} — no matching live object in doc.Objects."); arr.RemoveAt(i); }
                     }
                     else if (kind == "trigger")
                     {
@@ -1897,7 +2054,7 @@ public class SlateWindow : Form
                             s["lockTargets"]    = tr.LockTargets;
                             s["name"]           = tr.NickName;
                         }
-                        else { Log($"RestoreState: dropped {kind} id={id} — no matching live object in doc.Objects.", flush: false); arr.RemoveAt(i); }
+                        else { Log($"RestoreState: dropped {kind} id={id} — no matching live object in doc.Objects."); arr.RemoveAt(i); }
                     }
                     else if (docSliders.TryGetValue(id, out var gh))
                     {
@@ -1908,7 +2065,7 @@ public class SlateWindow : Form
                         s["decimalPlaces"]  = EffectiveDecimalPlaces(gh.Slider);
                         s["name"]           = gh.ImpliedNickName;
                     }
-                    else { Log($"RestoreState: dropped slider id={id} — no matching live object in doc.Objects.", flush: false); arr.RemoveAt(i); }
+                    else { Log($"RestoreState: dropped slider id={id} — no matching live object in doc.Objects."); arr.RemoveAt(i); }
                 }
             }
 
@@ -1961,18 +2118,23 @@ public class SlateWindow : Form
             state["winW"] = Width;
             state["winH"] = Height;
 
+            // The size this geometry cycle was actually requested at, before
+            // ApplyGeometry's screen-fit clamp (if any) shrank it — lets the
+            // JS side tell "reopened on a smaller screen" apart from "reopened
+            // at the same size" and rescale pane sizeA only when it actually
+            // needs to. See ApplyGeometry's own comment.
+            if (_lastRequestedWindowSize is Size requested)
+            {
+                state["savedWinW"] = requested.Width;
+                state["savedWinH"] = requested.Height;
+            }
+
             state["type"] = "restore_state";
             PostToJs(state.ToJsonString());
             var savedAt = state["savedAt"]?.GetValue<string>();
-            // flush:false — this runs on every file open with captured Slate
-            // state (deferred via BeginInvoke past GH's own post-Open
-            // Modified=false reset, same as SyncToDocument's deferIfRestoring
-            // path), so a forced recompute here re-dirtied every file the
-            // instant it was opened, same bug as the post-save "Saved: ..."
-            // line above.
-            Log($"State restored{(savedAt != null ? $" (file saved {savedAt})" : " (no save timestamp — older file)")}: {_sliders.Count} slider(s), {_toggles.Count} toggle(s), {_buttons.Count} button(s), {_valueLists.Count} value list(s), {_panels.Count} panel(s), {_itemPickers.Count} item picker(s), {_humanValueLists.Count} item selector(s), {_colourPickers.Count} colour picker(s), {_pancakeTrueOnlyButtons.Count} true-only button(s).", flush: false);
+            Log($"State restored{(savedAt != null ? $" (file saved {savedAt})" : " (no save timestamp — older file)")}: {_sliders.Count} slider(s), {_toggles.Count} toggle(s), {_buttons.Count} button(s), {_valueLists.Count} value list(s), {_panels.Count} panel(s), {_itemPickers.Count} item picker(s), {_humanValueLists.Count} item selector(s), {_colourPickers.Count} colour picker(s), {_pancakeTrueOnlyButtons.Count} true-only button(s).");
         }
-        catch (Exception ex) { Log($"RestoreState error: {ex.Message}", flush: false); }
+        catch (Exception ex) { Log($"RestoreState error: {ex.Message}"); }
     }
 
     // ── embedded resource helper ─────────────────────────────────────────────
