@@ -42,6 +42,7 @@ public class SlatePanel : GH_Component
     private string? _savedUiState;
     private System.Drawing.Size?  _savedWinSize;
     private System.Drawing.Point? _savedWinLocation;
+    private bool?                 _savedWinMaximized;
 
     // Last "Show" input value seen in SolveInstance — read by
     // SlateWindow.OnActiveDocumentChanged to decide whether to show/hide the
@@ -56,8 +57,9 @@ public class SlatePanel : GH_Component
         SlateWindow.LogWriteSummary(doc, state); // dedup fingerprint must see the unstamped content
         if (state != null) writer.SetString("ui_state", SlateWindow.StampSavedAt(doc, state)!); // non-null: state is non-null here
 
-        var size = SlateWindow.GetWindowSize(OnPingDocument());
-        var loc  = SlateWindow.GetWindowLocation(OnPingDocument());
+        var size      = SlateWindow.GetWindowSize(OnPingDocument());
+        var loc       = SlateWindow.GetWindowLocation(OnPingDocument());
+        var maximized = SlateWindow.GetWindowMaximized(OnPingDocument());
         if (size is System.Drawing.Size sz)
         {
             writer.SetInt32("win_w", sz.Width);
@@ -68,7 +70,8 @@ public class SlatePanel : GH_Component
             writer.SetInt32("win_x", pt.X);
             writer.SetInt32("win_y", pt.Y);
         }
-        SlateWindow.DebugLogGeometry($"Write: doc={doc?.DisplayName} saving size={size} loc={loc}");
+        writer.SetBoolean("win_maximized", maximized);
+        SlateWindow.DebugLogGeometry($"Write: doc={doc?.DisplayName} saving size={size} loc={loc} maximized={maximized}");
 
         return base.Write(writer);
     }
@@ -91,14 +94,19 @@ public class SlatePanel : GH_Component
             _savedWinLocation = new System.Drawing.Point(reader.GetInt32("win_x"), reader.GetInt32("win_y"));
             SlateWindow.PendingWindowLocation = _savedWinLocation;
         }
-        SlateWindow.DebugLogGeometry($"Read: file had size={_savedWinSize} loc={_savedWinLocation}");
+        if (reader.ItemExists("win_maximized"))
+        {
+            _savedWinMaximized = reader.GetBoolean("win_maximized");
+            SlateWindow.PendingWindowMaximized = _savedWinMaximized;
+        }
+        SlateWindow.DebugLogGeometry($"Read: file had size={_savedWinSize} loc={_savedWinLocation} maximized={_savedWinMaximized}");
         return base.Read(reader);
     }
 
     public override void AddedToDocument(GH_Document document)
     {
         SlateWindow.SeedDocumentState(document, _savedUiState);
-        SlateWindow.SeedDocumentGeometry(document, _savedWinSize, _savedWinLocation);
+        SlateWindow.SeedDocumentGeometry(document, _savedWinSize, _savedWinLocation, _savedWinMaximized);
         SlateWindow.HostComponent = this;
         SlateWindow.SyncToDocument(document, deferIfRestoring: true);
         base.AddedToDocument(document);

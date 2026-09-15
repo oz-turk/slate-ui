@@ -567,8 +567,9 @@ public class SlateWindow : Form
     }
 
     // ── window geometry persistence ─────────────────────────────────────────
-    public static Size?  PendingWindowSize     { get; set; }
-    public static Point? PendingWindowLocation { get; set; }
+    public static Size?  PendingWindowSize      { get; set; }
+    public static Point? PendingWindowLocation  { get; set; }
+    public static bool?  PendingWindowMaximized { get; set; }
 
     // Static, not GH_IO-serialized: survives a Show/Hide toggle recreating
     // _instance (GetOrCreate() builds a fresh SlateWindow — and thus a fresh
@@ -585,8 +586,9 @@ public class SlateWindow : Form
     // like. Kept updated live by the Resize/Move handlers in the constructor
     // (stamped against whichever document is HostDocument at the time) and
     // seeded from a file's persisted win_w/h/x/y on Read (SeedDocumentGeometry).
-    private static readonly Dictionary<Grasshopper.Kernel.GH_Document, Size>  _sizeByDoc     = new();
-    private static readonly Dictionary<Grasshopper.Kernel.GH_Document, Point> _locationByDoc = new();
+    private static readonly Dictionary<Grasshopper.Kernel.GH_Document, Size>  _sizeByDoc      = new();
+    private static readonly Dictionary<Grasshopper.Kernel.GH_Document, Point> _locationByDoc  = new();
+    private static readonly Dictionary<Grasshopper.Kernel.GH_Document, bool>  _maximizedByDoc = new();
 
     // While WindowState is Maximized (or Minimized), Form.Size/Location report
     // OS-level maximized bounds — on Windows 10/11 these include an invisible
@@ -596,27 +598,26 @@ public class SlateWindow : Form
     // what left the window opening oversized and pinned near the top-left on
     // the next file open.
     //
-    // Deliberately NOT using RestoreBounds (WinForms' tracked pre-maximize
-    // bounds) here either — an earlier version did, plus a separate
-    // win_maximized flag applied via FormWindowState.Maximized on restore.
-    // Dropped 2026-09-15: the user doesn't want maximize tracked as a
-    // distinct state at all ("tam ekran mı değil mi pek umrumda değil, tam
-    // ekransa loc/genişlik/yükseklik değeri bellidir zaten") — if the window
-    // was filling the screen when saved, what should come back is a plain
-    // window sized to that screen's actual usable pixels, nothing more. So
-    // when maximized, this reads the CURRENT screen's WorkingArea (excludes
-    // the taskbar, matching what a real maximize visually fills) and hands
-    // that back as if it were an ordinary Normal size/location — restoring
-    // it later is then just the same plain Size/Location assignment as any
-    // other saved geometry, never touching WindowState. That also sidesteps
-    // the singleton-hidden-window unreliability explored in
-    // pencere-boyutu-maximize.md for actually applying FormWindowState.
+    // Not using RestoreBounds (WinForms' tracked pre-maximize bounds) either
+    // — this reads the CURRENT screen's WorkingArea (excludes the taskbar,
+    // matching what a real maximize visually fills) and hands that back as
+    // if it were an ordinary Normal size/location. Size/Location alone don't
+    // carry WHICH screen they were measured on, though, so this flattened
+    // value only round-trips correctly when reopened on the same-resolution
+    // screen — see GetWindowMaximized below for the actual maximized/not bit
+    // that makes a 1920→2560 reopen (or any other screen change) restore
+    // correctly too (added 2026-09-15 after exactly that case surfaced live;
+    // an earlier version of this fix tried dropping the bit entirely and
+    // re-deriving "was it maximized" purely from these px matching a screen
+    // exactly on restore — works only on the same screen it was saved on).
     public static Size?  GetCurrentWindowSize()     => _instance != null && !_instance.IsDisposed
         ? (_instance.WindowState == FormWindowState.Normal ? _instance.Size     : Screen.FromControl(_instance).WorkingArea.Size)
         : (Size?)null;
     public static Point? GetCurrentWindowLocation()  => _instance != null && !_instance.IsDisposed
         ? (_instance.WindowState == FormWindowState.Normal ? _instance.Location : Screen.FromControl(_instance).WorkingArea.Location)
         : (Point?)null;
+    public static bool   GetCurrentWindowMaximized() =>
+        _instance != null && !_instance.IsDisposed && _instance.WindowState == FormWindowState.Maximized;
 
     // Used by SlatePanel.Write() so a document's saved geometry reflects ITS
     // OWN last-known size/position, not whatever the window currently looks
@@ -635,11 +636,14 @@ public class SlateWindow : Form
         doc != null && doc != HostDocument && _sizeByDoc.TryGetValue(doc, out var s) ? s : GetCurrentWindowSize();
     public static Point? GetWindowLocation(Grasshopper.Kernel.GH_Document? doc) =>
         doc != null && doc != HostDocument && _locationByDoc.TryGetValue(doc, out var p) ? p : GetCurrentWindowLocation();
+    public static bool   GetWindowMaximized(Grasshopper.Kernel.GH_Document? doc) =>
+        doc != null && doc != HostDocument && _maximizedByDoc.TryGetValue(doc, out var m) ? m : GetCurrentWindowMaximized();
 
-    public static void SeedDocumentGeometry(Grasshopper.Kernel.GH_Document doc, Size? size, Point? location)
+    public static void SeedDocumentGeometry(Grasshopper.Kernel.GH_Document doc, Size? size, Point? location, bool? maximized)
     {
-        if (size     is Size  sz && !_sizeByDoc.ContainsKey(doc))     _sizeByDoc[doc]     = sz;
-        if (location is Point pt && !_locationByDoc.ContainsKey(doc)) _locationByDoc[doc] = pt;
+        if (size      is Size  sz && !_sizeByDoc.ContainsKey(doc))      _sizeByDoc[doc]      = sz;
+        if (location  is Point pt && !_locationByDoc.ContainsKey(doc))  _locationByDoc[doc]  = pt;
+        if (maximized is bool  mx && !_maximizedByDoc.ContainsKey(doc)) _maximizedByDoc[doc] = mx;
     }
 
     const int MinWinW = 320, MinWinH = 480, MaxWinW = 3000, MaxWinH = 2000;
@@ -663,24 +667,29 @@ public class SlateWindow : Form
     // size and position to THAT screen's working area — not just the fixed
     // Min/MaxWin* bounds, which say nothing about what the current screen
     // can actually show.
-    private static void ApplyGeometry(SlateWindow w, Size size, Point loc)
+    private static void ApplyGeometry(SlateWindow w, Size size, Point loc, bool maximized)
     {
         // The window is a singleton reused across every document (see
-        // GetOrCreate/_sizeByDoc above) — WindowState is never part of what's
-        // persisted (see GetCurrentWindowSize/Location above for why: a
-        // maximized save is flattened into plain screen-filling px, never a
-        // distinct state), but it's also never reset here on its own, so a
-        // window left Maximized from a previous document/file stays
-        // VISUALLY maximized no matter what Size/Location this call goes on
-        // to set: while Maximized, those setters only update RestoreBounds
-        // (what the window snaps back to once un-maximized), not what's on
-        // screen. Confirmed live 2026-09-14: a file saved perfectly normal
-        // still opened full-screen because the singleton was left maximized
-        // by whichever file was tested right before it. So Size/Location are
-        // always computed and applied in Normal state first (forcing it if
-        // needed) — the block below may switch back to Maximized afterward,
-        // but only once these are the real Bounds it's switching FROM, not
-        // whatever stale RestoreBounds Maximized would otherwise keep.
+        // GetOrCreate/_sizeByDoc above) — a window left Maximized from a
+        // previous document/file stays VISUALLY maximized no matter what
+        // Size/Location this call goes on to set: while Maximized, those
+        // setters only update RestoreBounds (what the window snaps back to
+        // once un-maximized), not what's on screen. Confirmed live
+        // 2026-09-14: a file saved perfectly normal still opened full-screen
+        // because the singleton was left maximized by whichever file was
+        // tested right before it. So Size/Location are always computed and
+        // applied in Normal state first (forcing it if needed) — the block
+        // below may switch back to Maximized afterward, but only once these
+        // are the real Bounds it's switching FROM, not whatever stale
+        // RestoreBounds Maximized would otherwise keep.
+        //
+        // NOTE (2026-09-15): closing a maximized doc and landing back on a
+        // previously-Normal one can still show maximized — tried forcing
+        // this unconditionally through Minimized (guessing the managed
+        // WindowState property was reporting Normal without the native
+        // window actually settling) but that changed nothing live, so the
+        // guess was wrong. Reverted to the plain conditional below pending
+        // an actual diagnosed root cause — see pencere-boyutu-maximize.md.
         if (w.WindowState != FormWindowState.Normal) w.WindowState = FormWindowState.Normal;
 
         _lastRequestedWindowSize = size;
@@ -697,24 +706,27 @@ public class SlateWindow : Form
         int y = Math.Max(wa.Top,  Math.Min(loc.Y, wa.Bottom - height));
         w.Location = new Point(x, y);
 
-        // A request that exactly fills this screen's working area is what
-        // GetCurrentWindowSize/Location produce when the window really WAS
-        // Maximized at save time (flattened into plain px above, not a
-        // separate persisted state — see those methods). But leaving the
-        // window merely Normal-sized to match doesn't look the same:
+        // Two ways to land on a real Maximized here — and it matters that we
+        // do, rather than leaving the window merely Normal-sized to match:
         // Windows only compensates for a top-level window's invisible resize
         // border (the same border behind the maximized-bounds inflation
-        // noted above) when the window is ACTUALLY Maximized. A Normal
+        // noted above) when the window is ACTUALLY Maximized, so a Normal
         // window sized to the working area keeps that border baked inside
-        // its Bounds instead, so its visible edge sits a few px short of the
-        // screen edge on the sides/bottom — reads as "almost but not quite"
-        // fullscreen. So when the numbers land exactly on a full working-
-        // area fill, hand it to a real Maximized state and let Windows do
-        // its own border math, instead of trying to replicate it by hand.
-        if (width == wa.Width && height == wa.Height && x == wa.Left && y == wa.Top)
+        // its Bounds instead — its visible edge sits a few px short of the
+        // screen edge, reads as "almost but not quite" fullscreen.
+        //
+        // `maximized` is the authoritative signal (the persisted win_maximized
+        // bit, see GetWindowMaximized) — needed because Size/Location alone
+        // don't say WHICH screen they were measured on, so a maximized save
+        // reopened on a different-resolution screen (confirmed live
+        // 2026-09-15: 1920→2560) would never satisfy the px-match fallback
+        // below. That fallback stays for old saves from before this bit
+        // existed, where the saved px happens to still exactly fill whatever
+        // screen it's reopened on.
+        if (maximized || (width == wa.Width && height == wa.Height && x == wa.Left && y == wa.Top))
             w.WindowState = FormWindowState.Maximized;
 
-        DebugLog($"ApplyGeometry: requested size={size} loc={loc} -> screen={screen.DeviceName} wa={wa} -> applied size={w.Size} loc={w.Location} state={w.WindowState}");
+        DebugLog($"ApplyGeometry: requested size={size} loc={loc} maximized={maximized} -> screen={screen.DeviceName} wa={wa} -> applied size={w.Size} loc={w.Location} state={w.WindowState}");
     }
 
     // Called when OnActiveDocumentChanged switches HostDocument to a document
@@ -730,9 +742,10 @@ public class SlateWindow : Form
         // for geometry. Fall back to the same defaults the constructor uses
         // for a session's very first window.
         var w = GetOrCreate();
-        var size     = _sizeByDoc.TryGetValue(doc, out var sz) ? sz : DefaultWindowSize;
-        var location = _locationByDoc.TryGetValue(doc, out var loc) ? loc : DefaultWindowLocation;
-        ApplyGeometry(w, size, location);
+        var size      = _sizeByDoc.TryGetValue(doc, out var sz) ? sz : DefaultWindowSize;
+        var location  = _locationByDoc.TryGetValue(doc, out var loc) ? loc : DefaultWindowLocation;
+        var maximized = _maximizedByDoc.TryGetValue(doc, out var mx) && mx;
+        ApplyGeometry(w, size, location, maximized);
     }
 
     // Every write to HostDocument must go through here (the null-out in
@@ -1218,18 +1231,21 @@ public class SlateWindow : Form
         // (brand new document, never saved).
         if (!wasVisible || HostDocument != _lastGeometrySyncedDoc)
         {
-            var size     = PendingWindowSize     ?? (HostDocument != null && _sizeByDoc.TryGetValue(HostDocument, out var sz)     ? sz : DefaultWindowSize);
-            var location = PendingWindowLocation ?? (HostDocument != null && _locationByDoc.TryGetValue(HostDocument, out var loc) ? loc : DefaultWindowLocation);
+            var size      = PendingWindowSize      ?? (HostDocument != null && _sizeByDoc.TryGetValue(HostDocument, out var sz)     ? sz : DefaultWindowSize);
+            var location  = PendingWindowLocation  ?? (HostDocument != null && _locationByDoc.TryGetValue(HostDocument, out var loc) ? loc : DefaultWindowLocation);
+            var maximized = PendingWindowMaximized ?? (HostDocument != null && _maximizedByDoc.TryGetValue(HostDocument, out var mx) && mx);
 
-            ApplyGeometry(w, size, location);
+            ApplyGeometry(w, size, location, maximized);
             if (HostDocument != null)
             {
-                _sizeByDoc[HostDocument]     = w.Size;
-                _locationByDoc[HostDocument] = w.Location;
+                _sizeByDoc[HostDocument]      = w.Size;
+                _locationByDoc[HostDocument]  = w.Location;
+                _maximizedByDoc[HostDocument] = maximized;
             }
-            _lastGeometrySyncedDoc = HostDocument;
-            PendingWindowSize     = null;
-            PendingWindowLocation = null;
+            _lastGeometrySyncedDoc  = HostDocument;
+            PendingWindowSize      = null;
+            PendingWindowLocation  = null;
+            PendingWindowMaximized = null;
         }
 
         // WinForms re-asserts its own (unset/default) Form.Icon at various
@@ -1298,6 +1314,7 @@ public class SlateWindow : Form
         _uiStateByDoc.Remove(doc);
         _sizeByDoc.Remove(doc);
         _locationByDoc.Remove(doc);
+        _maximizedByDoc.Remove(doc);
         if (_lastActiveDoc == doc) _lastActiveDoc = null;
         if (_lastGeometrySyncedDoc == doc) _lastGeometrySyncedDoc = null;
         if (HostComponent != null && HostComponent.OnPingDocument() == doc) HostComponent = null;
@@ -1357,6 +1374,11 @@ public class SlateWindow : Form
         {
             DebugLog($"Resize event: WindowState={WindowState} Size={Size} (doc={HostDocument?.DisplayName})");
             if (WindowState == FormWindowState.Normal) { _lastKnownSize     = Size;     if (HostDocument != null) _sizeByDoc[HostDocument]     = Size; }
+            // Minimized is neither Normal nor Maximized and isn't a state
+            // worth remembering/restoring into — leave whatever Normal/
+            // Maximized distinction was last recorded alone while minimized.
+            if (WindowState != FormWindowState.Minimized && HostDocument != null)
+                _maximizedByDoc[HostDocument] = WindowState == FormWindowState.Maximized;
         };
         Move   += (_, _) =>
         {
