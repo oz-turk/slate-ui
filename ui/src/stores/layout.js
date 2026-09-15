@@ -152,7 +152,7 @@ function doInsertTab(node, paneId, tab) {
   }))
 }
 
-const MIN_PANE_SIZE = 40
+export const MIN_PANE_SIZE = 40
 
 // Trims `amount` off whatever pane(s) sit at the top/left edge along `dir`,
 // leaving every other pane's own pixel size exactly as it was — 'a' is

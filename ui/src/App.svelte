@@ -9,7 +9,7 @@
   import {
     layout, workspaces, activeWorkspaceId, allLeaves, restoreLayout, restoreWorkspaces,
     updatePane, syncControl, clearAllWorkspaces, resetToDefault, makeLeaf, setActiveWorkspace,
-    posAppend, applyWindowEdgeResize, orderedItems, reorderTabTopLevel
+    posAppend, applyWindowEdgeResize, orderedItems, reorderTabTopLevel, MIN_PANE_SIZE
   } from './stores/layout.js'
   import { mode, pinned, theme, deleteRequest, captureRequest, settingsOpen, clearSelectionTick, groupSelectionTick, hoverHint, altHeld, ctrlHeld } from './stores/uiState.js'
   import { undo, suppressDuring } from './stores/history.js'
@@ -462,14 +462,26 @@
       // Loading a file is not a user action — suppress it so it doesn't land
       // on the undo stack (undoing past it would blow away the loaded layout).
       const winW = msg.winW ?? 900, winH = msg.winH ?? 600
+      // savedWinW/savedWinH (from C#) is the window size the layout was LAST
+      // SAVED against, before this open's screen-fit clamp (see
+      // SlateWindow.ApplyGeometry) possibly shrank it for a smaller screen —
+      // e.g. a layout authored on a 5K monitor, reopened on a 4K one. When
+      // that differs from the actual (winW/winH) size, every existing sizeA
+      // is rescaled per axis so panes keep their proportions instead of the
+      // trailing ~20% landing off-screen. A ~1 ratio (same-resolution reopen,
+      // the common case) is left alone rather than nudged by rounding.
+      const rawScaleX = msg.savedWinW ? winW / msg.savedWinW : 1
+      const rawScaleY = msg.savedWinH ? winH / msg.savedWinH : 1
+      const scaleX = Math.abs(rawScaleX - 1) < 0.01 ? 1 : rawScaleX
+      const scaleY = Math.abs(rawScaleY - 1) < 0.01 ? 1 : rawScaleY
       suppressDuring(() => {
         if (msg.workspaces) {
           restoreWorkspaces(
-            msg.workspaces.map(w => ({ ...w, layout: reconcileLayout(w.layout, winW, winH) })),
+            msg.workspaces.map(w => ({ ...w, layout: reconcileLayout(w.layout, winW, winH, scaleX, scaleY) })),
             msg.activeWorkspaceId
           )
         } else if (msg.layout) {
-          restoreLayout(reconcileLayout(msg.layout, winW, winH))
+          restoreLayout(reconcileLayout(msg.layout, winW, winH, scaleX, scaleY))
         } else if (msg.tabs) {
           // legacy: single pane
           const leaf = makeLeaf(msg.tabs, msg.activeTabId)
@@ -490,14 +502,22 @@
   // (winW/winH, sent alongside restore_state — the window size the ratio was
   // set against) and shrinks going down the tree as ancestor splits carve it
   // up, so each split's ratio is read against the space it really had.
-  function reconcileLayout(node, w, h) {
+  //
+  // scaleX/scaleY (default 1, i.e. no-op): applied to an already-pixel sizeA
+  // instead of the legacy ratio conversion above — see the restore_state
+  // handler's comment on savedWinW/savedWinH for why this is separate from
+  // the ratio migration path (different screen/resolution than last save,
+  // not an old file format).
+  function reconcileLayout(node, w, h, scaleX = 1, scaleY = 1) {
     if (node.type === 'leaf') return node
-    let sizeA = node.sizeA ?? (node.ratio != null ? Math.round(node.ratio * (node.dir === 'h' ? w : h)) : 260)
+    let sizeA = node.sizeA != null
+      ? Math.max(MIN_PANE_SIZE, Math.round(node.sizeA * (node.dir === 'h' ? scaleX : scaleY)))
+      : (node.ratio != null ? Math.round(node.ratio * (node.dir === 'h' ? w : h)) : 260)
     const aw = node.dir === 'h' ? sizeA : w
     const ah = node.dir === 'h' ? h : sizeA
     const bw = node.dir === 'h' ? Math.max(0, w - sizeA) : w
     const bh = node.dir === 'h' ? h : Math.max(0, h - sizeA)
-    return { ...node, sizeA, a: reconcileLayout(node.a, aw, ah), b: reconcileLayout(node.b, bw, bh) }
+    return { ...node, sizeA, a: reconcileLayout(node.a, aw, ah, scaleX, scaleY), b: reconcileLayout(node.b, bw, bh, scaleX, scaleY) }
   }
 </script>
 
