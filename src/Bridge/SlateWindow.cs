@@ -658,6 +658,20 @@ public class SlateWindow : Form
     // resizing every pane).
     private static Size? _lastRequestedWindowSize;
 
+    // Guards the Resize/Move handlers below against stamping _sizeByDoc/
+    // _locationByDoc/_maximizedByDoc from a transient state change WE caused
+    // (ApplyGeometry's own WindowState/Size/Location assignments, and the
+    // Show() call in EnsureVisible that can momentarily resurface a stale
+    // native WS_MAXIMIZE style left over from the singleton's previous
+    // document) rather than a real user resize/maximize. Without this,
+    // closing a maximized doc and switching back to a previously-Normal one
+    // could observe a transient Maximized Resize event mid-transition, write
+    // that into the INCOMING doc's _maximizedByDoc entry, and have
+    // EnsureVisible's own post-Show reconcile read that corrupted value right
+    // back and re-maximize the window it had just correctly restored to
+    // Normal a moment earlier (see pencere-boyutu-maximize.md).
+    private static bool _applyingGeometry;
+
     // Single choke point for applying window geometry — used both for a
     // freshly opened file's saved win_w/h/x/y and for switching back to an
     // already-open document's remembered size/position. Picks whichever
@@ -669,6 +683,45 @@ public class SlateWindow : Form
     // can actually show.
     private static void ApplyGeometry(SlateWindow w, Size size, Point loc, bool maximized)
     {
+        _applyingGeometry = true;
+        try { ApplyGeometryCore(w, size, loc, maximized); }
+        finally { _applyingGeometry = false; }
+    }
+
+    private static void ApplyGeometryCore(SlateWindow w, Size size, Point loc, bool maximized)
+    {
+        _lastRequestedWindowSize = size;
+
+        var screen = Screen.AllScreens.FirstOrDefault(s => s.WorkingArea.Contains(loc.X + 20, loc.Y + 20))
+                     ?? Screen.FromPoint(loc);
+        var wa = screen.WorkingArea;
+
+        int width  = Math.Max(MinWinW, Math.Min(Math.Min(MaxWinW, size.Width),  wa.Width));
+        int height = Math.Max(MinWinH, Math.Min(Math.Min(MaxWinH, size.Height), wa.Height));
+        int x = Math.Max(wa.Left, Math.Min(loc.X, wa.Right  - width));
+        int y = Math.Max(wa.Top,  Math.Min(loc.Y, wa.Bottom - height));
+
+        // Already visually exactly where this call would leave it: maximized,
+        // on the target screen. Skip the Normal round-trip below entirely —
+        // it's a real, necessary transition when the window's bounds need to
+        // change (see its own comment), but forcing it here anyway (when
+        // there's genuinely nothing to change on screen) produced a purely
+        // cosmetic maximize -> normal -> maximize flash, confirmed live
+        // opening an already-maximized-saved file while another maximized
+        // doc's window was already showing on the same screen.
+        //
+        // Size/Location are still written (silently redirected to
+        // RestoreBounds while Maximized, per the comment below — no visible
+        // effect) so a later manual un-maximize snaps to THIS document's
+        // normal bounds instead of whatever doc last set them.
+        if (maximized && w.WindowState == FormWindowState.Maximized && Screen.FromControl(w).Equals(screen))
+        {
+            w.Size     = new Size(width, height);
+            w.Location = new Point(x, y);
+            DebugLog($"ApplyGeometry: already maximized on target screen={screen.DeviceName} — skipped no-op reapply, refreshed RestoreBounds to size={w.Size} loc={w.Location}.");
+            return;
+        }
+
         // The window is a singleton reused across every document (see
         // GetOrCreate/_sizeByDoc above) — a window left Maximized from a
         // previous document/file stays VISUALLY maximized no matter what
@@ -692,18 +745,7 @@ public class SlateWindow : Form
         // an actual diagnosed root cause — see pencere-boyutu-maximize.md.
         if (w.WindowState != FormWindowState.Normal) w.WindowState = FormWindowState.Normal;
 
-        _lastRequestedWindowSize = size;
-
-        var screen = Screen.AllScreens.FirstOrDefault(s => s.WorkingArea.Contains(loc.X + 20, loc.Y + 20))
-                     ?? Screen.FromPoint(loc);
-        var wa = screen.WorkingArea;
-
-        int width  = Math.Max(MinWinW, Math.Min(Math.Min(MaxWinW, size.Width),  wa.Width));
-        int height = Math.Max(MinWinH, Math.Min(Math.Min(MaxWinH, size.Height), wa.Height));
         w.Size = new Size(width, height);
-
-        int x = Math.Max(wa.Left, Math.Min(loc.X, wa.Right  - width));
-        int y = Math.Max(wa.Top,  Math.Min(loc.Y, wa.Bottom - height));
         w.Location = new Point(x, y);
 
         // Two ways to land on a real Maximized here — and it matters that we
@@ -788,6 +830,28 @@ public class SlateWindow : Form
         if (doc == HostDocument) return;
         HostDocument = doc;
         ApplyGeometryForDocument(doc);
+
+        // Applying to an already-visible window (see ApplyGeometry's own
+        // comment) reliably sticks — so if that's what just happened, tell
+        // EnsureVisible's reconcile below (or whenever it next runs for this
+        // doc) it doesn't need to redo it. Without this, a doc switch that
+        // never hides the window (a plain tab switch, or a freshly-opened
+        // file's AddedToDocument firing this mid-load while the previous
+        // doc's UI is still on screen) applies geometry here correctly, then
+        // EnsureVisible reapplies it AGAIN moments later purely because
+        // _lastGeometrySyncedDoc was never told about this call. For a
+        // maximized target, ApplyGeometry's forced Normal-then-Maximized
+        // round trip (needed once, to escape a stale Maximized left over
+        // from the previous document — see its own comment) then visibly
+        // repeats a second time on a window that was already correctly
+        // maximized: confirmed live as a maximize -> flash to normal -> back
+        // to maximize flicker when opening an already-maximized-saved file.
+        // Only applies when the window was already visible: a hidden window
+        // still needs EnsureVisible's post-Show reapply, per the same
+        // "doesn't reliably stick while hidden" finding — that path is
+        // untouched (its `!wasVisible` check still forces a reconcile).
+        if (_instance != null && !_instance.IsDisposed && _instance.Visible)
+            _lastGeometrySyncedDoc = doc;
 
         bool hasCachedState = _uiStateByDoc.ContainsKey(doc);
 
@@ -1210,7 +1274,13 @@ public class SlateWindow : Form
         var w = GetOrCreate();
 
         bool wasVisible = w.Visible;
-        if (!wasVisible) w.Show();
+        // Guarded: Show()-ing a singleton whose native window still carries a
+        // stale WS_MAXIMIZE style from a previous document can transiently
+        // report Maximized to the Resize handler before settling — see
+        // _applyingGeometry's own comment above.
+        _applyingGeometry = true;
+        try { if (!wasVisible) w.Show(); }
+        finally { _applyingGeometry = false; }
         w.BringToFront();
 
         // Reconcile whenever the window is being (re)shown for a document it
@@ -1318,11 +1388,48 @@ public class SlateWindow : Form
         if (_lastActiveDoc == doc) _lastActiveDoc = null;
         if (_lastGeometrySyncedDoc == doc) _lastGeometrySyncedDoc = null;
         if (HostComponent != null && HostComponent.OnPingDocument() == doc) HostComponent = null;
-        if (HostDocument == doc)
+        if (HostDocument == doc) DeferHide(doc);
+    }
+
+    // Closing a .gh tab that has an open Slate window fires DocumentRemoved
+    // (-> EvictDocument) and the panel's own RemovedFromDocument
+    // independently and in no guaranteed order — both used to Hide()
+    // synchronously and null HostDocument the instant they saw themselves as
+    // the currently-shown document. If GH's canvas ALSO switches the active
+    // tab back to another already-open document with its own Slate panel
+    // (canvas.DocumentChanged -> OnActiveDocumentChanged), that hand-off
+    // normally happens synchronously right after, in the same call stack —
+    // so the immediate Hide() was pure visual noise: the window would
+    // disappear and then reappear (correctly resized) a moment later,
+    // reading as a jarring flicker/shake rather than a smooth transition.
+    //
+    // Deferring the actual Hide()+null through BeginInvoke lets that
+    // same-stack OnActiveDocumentChanged run FIRST: it reassigns HostDocument
+    // to the new document and applies its geometry directly to the
+    // still-visible window (SyncToDocument's `doc == HostDocument` early-out
+    // no longer trips, since HostDocument hasn't been nulled out yet), so by
+    // the time this deferred check runs, HostDocument no longer equals the
+    // evicted document and it's a no-op — no hide, no flicker, no gap. Only
+    // when nothing claims the window in the meantime (closing the last tab,
+    // or switching to a document with no Slate panel of its own) does the
+    // deferred callback actually hide it, one message-loop tick later —
+    // imperceptible, and still correct.
+    internal static void DeferHide(Grasshopper.Kernel.GH_Document evictedDoc)
+    {
+        var w = _instance;
+        if (w == null || w.IsDisposed)
         {
-            HideIfOpen();
-            HostDocument = null;
+            if (HostDocument == evictedDoc) HostDocument = null;
+            return;
         }
+        w.BeginInvoke(new Action(() =>
+        {
+            if (HostDocument == evictedDoc)
+            {
+                HideIfOpen();
+                HostDocument = null;
+            }
+        }));
     }
 
     public static void OnActiveDocumentChanged(Grasshopper.Kernel.GH_Document? newDoc)
@@ -1372,7 +1479,12 @@ public class SlateWindow : Form
         // catch it live instead of guessing further.
         Resize += (_, _) =>
         {
-            DebugLog($"Resize event: WindowState={WindowState} Size={Size} (doc={HostDocument?.DisplayName})");
+            DebugLog($"Resize event: WindowState={WindowState} Size={Size} (doc={HostDocument?.DisplayName}) applyingGeometry={_applyingGeometry}");
+            // Skip while WE'RE the ones driving this transition (ApplyGeometry
+            // / EnsureVisible's Show()) — a transient state reported mid-
+            // transition here isn't a real user resize/maximize and must not
+            // get baked into the doc's cache. See _applyingGeometry's comment.
+            if (_applyingGeometry) return;
             if (WindowState == FormWindowState.Normal) { _lastKnownSize     = Size;     if (HostDocument != null) _sizeByDoc[HostDocument]     = Size; }
             // Minimized is neither Normal nor Maximized and isn't a state
             // worth remembering/restoring into — leave whatever Normal/
@@ -1382,7 +1494,8 @@ public class SlateWindow : Form
         };
         Move   += (_, _) =>
         {
-            DebugLog($"Move event: WindowState={WindowState} Location={Location} (doc={HostDocument?.DisplayName})");
+            DebugLog($"Move event: WindowState={WindowState} Location={Location} (doc={HostDocument?.DisplayName}) applyingGeometry={_applyingGeometry}");
+            if (_applyingGeometry) return;
             if (WindowState == FormWindowState.Normal) { _lastKnownLocation = Location; if (HostDocument != null) _locationByDoc[HostDocument] = Location; }
         };
 

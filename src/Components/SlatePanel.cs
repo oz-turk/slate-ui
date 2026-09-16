@@ -123,8 +123,11 @@ public class SlatePanel : GH_Component
         // was just correctly shown for a DIFFERENT document.
         if (SlateWindow.HostDocument != document) { base.RemovedFromDocument(document); return; }
 
-        SlateWindow.HideIfOpen();
-        SlateWindow.HostDocument  = null;
+        // Deferred (not an immediate Hide()) — see SlateWindow.DeferHide's own
+        // comment: lets a same-stack OnActiveDocumentChanged (switching back
+        // to another open tab) claim the window first, so a closed tab's
+        // teardown doesn't cause a visible hide/reshow flicker.
+        SlateWindow.DeferHide(document);
         SlateWindow.HostComponent = null;
         base.RemovedFromDocument(document);
     }
