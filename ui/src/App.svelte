@@ -34,6 +34,14 @@
       try { handleMessage(JSON.parse(e.data)) } catch {}
     })
     postToCs({ type: 'ui_ready' })
+    // A document with its own saved ui_state gets this from the restore_state
+    // handler below once C# restores it — but a document with none (new/
+    // unsaved file, no Slate history yet) never triggers that path, so C#'s
+    // native-side theme default file (see SlateWindow's WriteThemeDefaultFile)
+    // would otherwise only get populated by incidental later interaction
+    // (resize, a settings change...). Reporting the theme we're actually
+    // opened with here, unconditionally, closes that gap on every load.
+    postStateSnapshot()
   })
 
   // ── window-edge resize ───────────────────────────────────────────────────────

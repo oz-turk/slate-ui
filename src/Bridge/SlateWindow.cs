@@ -152,6 +152,16 @@ public class SlateWindow : Form
 
     string _lastAppliedTheme = "dark";
 
+    // Cross-file default, mirroring uiState.js's own localStorage fallback
+    // (readDefaultTheme) but on the native side: a plain text file next to
+    // (not inside) the WebView2 profile folder, since that profile's actual
+    // localStorage lives in a Chromium leveldb store that isn't meant to be
+    // read from outside the browser — parsing it directly would be fragile
+    // and break across WebView2 runtime updates. This file is our own,
+    // written below whenever a real theme is known.
+    static readonly string _themeDefaultFile = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Slate", "theme.txt");
+
     // Hardcoding "dark" here and waiting for the async WebView2 → JS → JS-sends-
     // state_snapshot round trip to correct it (via OnMessageFromJs) meant the
     // titlebar/icon only ever matched a persisted "light" theme once that whole
@@ -161,18 +171,41 @@ public class SlateWindow : Form
     // Reading the theme straight out of already-available state (reopened-in-
     // session snapshot, or the file's persisted ui_state) makes the correct
     // theme apply synchronously, with no dependency on WebView2 ever loading.
+    // A file with no ui_state of its own (first Slate session, or a document
+    // that predates the theme feature) used to fall straight back to "dark"
+    // here regardless of what the user had actually last picked — falling
+    // back to _themeDefaultFile instead keeps that case in sync with JS's
+    // own cross-file default.
     static string PeekPendingTheme()
     {
         string? json = (HostDocument != null && _uiStateByDoc.TryGetValue(HostDocument, out var s)) ? s : PendingFileState;
-        if (json == null) return "dark";
+        if (json != null)
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(json);
+                if (doc.RootElement.TryGetProperty("theme", out var th))
+                    return th.GetString() ?? ReadThemeDefaultFile();
+            }
+            catch { /* malformed/legacy state — fall through to the cross-file default */ }
+        }
+        return ReadThemeDefaultFile();
+    }
+
+    static string ReadThemeDefaultFile()
+    {
+        try { return File.ReadAllText(_themeDefaultFile).Trim() == "light" ? "light" : "dark"; }
+        catch { return "dark"; }
+    }
+
+    static void WriteThemeDefaultFile(string theme)
+    {
         try
         {
-            using var doc = JsonDocument.Parse(json);
-            if (doc.RootElement.TryGetProperty("theme", out var th))
-                return th.GetString() ?? "dark";
+            Directory.CreateDirectory(Path.GetDirectoryName(_themeDefaultFile)!);
+            File.WriteAllText(_themeDefaultFile, theme);
         }
-        catch { /* malformed/legacy state — fall back to dark */ }
-        return "dark";
+        catch { /* best-effort — worst case is next session's flash comes back */ }
     }
 
     protected override void OnHandleCreated(EventArgs e)
@@ -1896,6 +1929,14 @@ public class SlateWindow : Form
                     DebugLog($"state_snapshot accepted for doc={HostDocument?.DisplayName ?? "null"}: {SummarizeStateCounts(e.WebMessageAsJson)}.");
                     if (HostDocument != null) _uiStateByDoc[HostDocument] = e.WebMessageAsJson;
                     string themeName = root.TryGetProperty("theme", out var th) ? th.GetString() ?? "dark" : "dark";
+                    // Written on every snapshot, not just when it differs from
+                    // _lastAppliedTheme: a document whose own ui_state already
+                    // carries the right theme applies it at OnHandleCreated, so
+                    // this snapshot never looks like a "change" and the file
+                    // fallback below would otherwise stay empty forever — which
+                    // is exactly what happened before this fix (verified via an
+                    // empty %LocalAppData%\Slate\theme.txt after normal use).
+                    WriteThemeDefaultFile(themeName);
                     if (themeName != _lastAppliedTheme)
                     {
                         _lastAppliedTheme = themeName;
