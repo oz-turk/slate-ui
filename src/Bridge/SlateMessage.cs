@@ -40,6 +40,22 @@ public static class SlateEvent
     public static string HumanValueListAdded(string tabId, string id, string name, IEnumerable<string> options, object value, bool multiSelect, bool cycle, bool loop, string? groupId = null) =>
         JsonSerializer.Serialize(new { type = "humanValueList_added", tabId, id, name, options, value, multiSelect, cycle, loop, groupId });
 
+    // Native geometry-holding param (Point/Curve/Brep/Mesh/Surface/SubD/Box/
+    // generic Geometry) — geomKind is the wire "kind" string SlateWindow's
+    // TryGetGeometryParamKind maps concrete Param_* classes to. "internalize"
+    // is deliberately absent here — it's a pure UI preference with no live GH
+    // counterpart, so JS defaults it itself and owns it from then on.
+    public static string GeometryParamAdded(string tabId, string id, string name, string geomKind, int count, string? groupId = null) =>
+        JsonSerializer.Serialize(new { type = "geometryParam_added", tabId, id, name, geomKind, count, groupId });
+
+    // Sent after a "geometry_pick"/"geometry_internalize_change" round trip,
+    // and on every solve for a captured param (catches deletion/rename made
+    // directly on the canvas, same reasoning as PushTriggerUpdates). geomKind
+    // can't change from any of these; internalize is JS-owned and never
+    // echoed back.
+    public static string GeometryParamUpdated(string id, string name, int count) =>
+        JsonSerializer.Serialize(new { type = "geometryParam_updated", id, name, count });
+
     // Reply to Pane's "sort_positions_request" (right-click Sort: Canvas
     // Position) — live GH pivot per requested id, as [x, y]. Computed fresh
     // for this one round trip; never stored on the C# or JS side.

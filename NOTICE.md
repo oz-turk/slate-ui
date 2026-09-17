@@ -12,6 +12,22 @@ Icons used:
   custom composite: body shape based on Lucide's `mouse` icon, with an added
   filled rect highlighting the left button (Lucide has no dedicated
   left-click icon)
+- `lock` / `lock-open` — Trigger's target-lock toggle
+  (`ui/src/lib/TriggerRow.svelte`), used as-is
+- `refresh-cw` — Trigger's manual/cyclic mode toggle
+  (`ui/src/lib/TriggerRow.svelte`), used as-is
+- `play` — Trigger's fire button (`ui/src/lib/TriggerRow.svelte`), used as-is
+- `link-2` — geometry param's "live Rhino reference" state
+  (`ui/src/lib/GeometryParamRow.svelte`), used as-is
+- "lock-pin" — geometry param's "internalized" state
+  (`ui/src/lib/GeometryParamRow.svelte`), a custom composite: Lucide's `lock`
+  icon body with an added keyhole slot (Lucide has no dedicated
+  baked/internalized-geometry icon)
+- `x` — geometry param's "Clear captured values" button
+  (`ui/src/lib/GeometryParamRow.svelte`), used as-is
+- `egg-fried` — geometry param's "Bake to Rhino" button
+  (`ui/src/lib/GeometryParamRow.svelte`), used as-is, standing in for "bake"
+  (Lucide has no dedicated bake icon)
 
 ## Lucide — ISC License
 

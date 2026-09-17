@@ -1,8 +1,13 @@
 using Grasshopper.GUI.Base;
 using Grasshopper.Kernel;
+using Grasshopper.Kernel.Parameters;
 using Grasshopper.Kernel.Special;
+using Grasshopper.Kernel.Types;
 using Microsoft.Web.WebView2.WinForms;
 using Microsoft.Web.WebView2.Core;
+using Rhino.Input;
+using ObjectType = Rhino.DocObjects.ObjectType;
+using ObjRef = Rhino.DocObjects.ObjRef;
 using System.Drawing;
 using System.Reflection;
 using System.Runtime.InteropServices;
@@ -204,6 +209,13 @@ public class SlateWindow : Form
     // wired targets).
     private readonly Dictionary<string, GH_Timer> _triggers = new();
 
+    // Native geometry-holding params (Point/Curve/Brep/Mesh/Surface/SubD/Box/
+    // generic Geometry) — IGH_Param like sliders, but only captured when
+    // freestanding (SourceCount == 0): a wired one is driven by its own
+    // upstream source, so "Set Geometry" from Rhino would just be overwritten
+    // on the next solve. See TryGetGeometryParamKind for the type→kind map.
+    private readonly Dictionary<string, IGH_Param> _geometryParams = new();
+
     // Live GH canvas position for an already-captured id — checks every
     // per-type registry above (same set RestoreState re-attaches from). Used
     // only for the ephemeral "sort_positions_request" round trip; never
@@ -220,8 +232,82 @@ public class SlateWindow : Form
         if (_colourPickers.TryGetValue(id, out var cp))     { pivot = cp.Attributes.Pivot;  return true; }
         if (_pancakeTrueOnlyButtons.TryGetValue(id, out var pb)) { pivot = pb.Attributes.Pivot; return true; }
         if (_triggers.TryGetValue(id, out var tr))          { pivot = tr.Attributes.Pivot;  return true; }
+        if (_geometryParams.TryGetValue(id, out var gp))    { pivot = gp.Attributes.Pivot;  return true; }
         pivot = default;
         return false;
+    }
+
+    // Concrete Param_* class → our wire "kind" string. Only these 8 —
+    // everything else (Vector/Plane/Transform/Field/...) is out of scope, see
+    // _barika/.../geometry-param-capture.md.
+    public static bool TryGetGeometryParamKind(object obj, out string kind)
+    {
+        switch (obj)
+        {
+            case Param_Point:    kind = "point";    return true;
+            case Param_Curve:    kind = "curve";    return true;
+            case Param_Brep:     kind = "brep";     return true;
+            case Param_Mesh:     kind = "mesh";     return true;
+            case Param_Surface:  kind = "surface";  return true;
+            case Param_SubD:     kind = "subd";     return true;
+            case Param_Box:      kind = "box";      return true;
+            case Param_Geometry: kind = "geometry"; return true;
+        }
+
+        // Extended (Rhino 8-only) kinds — Param_Extrusion, the dimension/
+        // annotation family, etc. Not referenced at compile time (Slate
+        // builds against Rhino 7's Grasshopper.dll so the same .gha loads on
+        // both — see Slate.csproj), so these are discovered by name against
+        // whichever Grasshopper.dll is actually loaded at runtime, same
+        // reflection pattern as IsHumanValueList/IsPancakeTrueOnlyButton use
+        // for third-party plugins. Silently absent (never matches, never
+        // captured) on an actual Rhino 7 host.
+        EnsureExtendedGeometryReflection();
+        foreach (var kv in _extendedGeometryParamTypes)
+        {
+            if (kv.Value.IsInstanceOfType(obj)) { kind = kv.Key; return true; }
+        }
+
+        kind = "";
+        return false;
+    }
+
+    private static readonly Dictionary<string, Type> _extendedGeometryParamTypes = new();
+    private static bool _extendedGeometryReflectionChecked;
+
+    private static void EnsureExtendedGeometryReflection()
+    {
+        if (_extendedGeometryReflectionChecked) return;
+        _extendedGeometryReflectionChecked = true;
+        try
+        {
+            // Whichever Grasshopper.dll is actually loaded in this process —
+            // Rhino 7's (compiled-against) or Rhino 8's (newer, has these
+            // types) — found via a type already referenced at compile time,
+            // not by assembly name/version.
+            var asm = typeof(GH_Document).Assembly;
+            void Reg(string kind, string paramTypeName, string gooTypeName)
+            {
+                var paramType = asm.GetType($"Grasshopper.Kernel.Parameters.{paramTypeName}");
+                var gooType   = asm.GetType($"Grasshopper.Kernel.Types.{gooTypeName}");
+                if (paramType == null || gooType == null) return; // Rhino 7 host — leave unsupported
+                _extendedGeometryParamTypes[kind] = paramType;
+                _geometryGooTypes[kind] = gooType;
+            }
+            Reg("extrusion",         "Param_Extrusion",         "GH_Extrusion");
+            Reg("pointcloud",        "Param_PointCloud",        "GH_PointCloud");
+            Reg("hatch",             "Param_Hatch",             "GH_Hatch");
+            Reg("textentity",        "Param_TextEntity",        "GH_TextEntity");
+            Reg("centermark",        "Param_Centermark",        "GH_Centermark");
+            Reg("leader",            "Param_Leader",            "GH_Leader");
+            Reg("light",             "Param_Light",             "GH_Light");
+            Reg("blockinstance",     "Param_InstanceReference", "GH_InstanceReference");
+            Reg("lineardimension",   "Param_LinearDimension",   "GH_LinearDimension");
+            Reg("angulardimension",  "Param_AngularDimension",  "GH_AngularDimension");
+            Reg("ordinatedimension", "Param_OrdinateDimension", "GH_OrdinateDimension");
+            Reg("radialdimension",   "Param_RadialDimension",   "GH_RadialDimension");
+        }
+        catch { /* leave whatever got registered before the failure */ }
     }
 
     // 8-digit hex (#RRGGBBAA) so alpha round-trips through the wire alongside RGB.
@@ -912,6 +998,7 @@ public class SlateWindow : Form
             PushHumanValueListUpdates();
             PushColourPickerUpdates();
             PushTriggerUpdates();
+            PushGeometryParamUpdates();
         }));
     }
 
@@ -987,6 +1074,28 @@ public class SlateWindow : Form
         }
     }
 
+    // Catches count changes made outside a Slate pick — most importantly, a
+    // referenced object deleted/undone in Rhino, which leaves the item in
+    // PersistentData but breaks its live geometry (see InternalizeExistingData's
+    // comment for why toggling internalize as soon as it happens is the real
+    // fix; this just keeps the displayed count honest for whatever's live).
+    // Also catches a NickName rename or a manual canvas-side "Set/Internalize".
+    private static void PushGeometryParamUpdates()
+    {
+        var win = _instance;
+        if (win == null) return;
+        foreach (var kv in win._geometryParams)
+        {
+            var name  = kv.Value.NickName;
+            var count = kv.Value.VolatileDataCount;
+            var fingerprint = name + "" + count;
+            if (_lastPushedGeometryParams.TryGetValue(kv.Key, out var last) && last == fingerprint) continue;
+            _lastPushedGeometryParams[kv.Key] = fingerprint;
+
+            win.PostToJs(SlateEvent.GeometryParamUpdated(kv.Key, name, count));
+        }
+    }
+
     // These pushes run on EVERY document solve — anywhere in the canvas,
     // not just Slate-related changes — across every tracked object, over every
     // workspace. Left unguarded that's O(tracked objects) wasted messages (each
@@ -999,6 +1108,7 @@ public class SlateWindow : Form
     private static readonly Dictionary<string, string> _lastPushedHumanLists = new();
     private static readonly Dictionary<string, string> _lastPushedColours = new();
     private static readonly Dictionary<string, string> _lastPushedTriggers = new();
+    private static readonly Dictionary<string, string> _lastPushedGeometryParams = new();
 
     private static void ClearPushCaches()
     {
@@ -1008,6 +1118,7 @@ public class SlateWindow : Form
         _lastPushedColours.Clear();
         _lastPushedPickers.Clear();
         _lastPushedTriggers.Clear();
+        _lastPushedGeometryParams.Clear();
     }
 
     private static void PushSliderNameUpdates()
@@ -1688,6 +1799,38 @@ public class SlateWindow : Form
                     }
                     break;
 
+                // Opens Rhino's own object picker (modal, blocks this thread
+                // until the user finishes/cancels — same as any native Rhino
+                // command) via Invoke, same as every other GH-canvas-thread
+                // operation here.
+                case "geometry_pick":
+                    string gpid = root.GetProperty("id").GetString() ?? "";
+                    bool internalize = root.TryGetProperty("internalize", out var gi) && gi.GetBoolean();
+                    Invoke(() => PickGeometryForParam(gpid, internalize));
+                    break;
+
+                // Only fires when the toggle switches to ON (see
+                // onGeometryParamChange in Pane.svelte) — bakes whatever's
+                // currently captured right away instead of waiting for the
+                // next pick.
+                case "geometry_internalize_change":
+                    string gicid = root.GetProperty("id").GetString() ?? "";
+                    Invoke(() => InternalizeExistingData(gicid));
+                    break;
+
+                case "geometry_clear":
+                    string gcid = root.GetProperty("id").GetString() ?? "";
+                    Invoke(() => ClearGeometryParamData(gcid));
+                    break;
+
+                // Opens GH's own native bake dialog (layer picker) — see
+                // BakeGeometryParam. Modal, so this blocks the UI thread
+                // until the user finishes/cancels, same as geometry_pick.
+                case "geometry_bake":
+                    string gbid = root.GetProperty("id").GetString() ?? "";
+                    Invoke(() => BakeGeometryParam(gbid));
+                    break;
+
                 case "pin":
                     bool pinned = root.GetProperty("value").GetBoolean();
                     Invoke(() => SetPin(pinned));
@@ -1818,7 +1961,257 @@ public class SlateWindow : Form
         foreach (var tr in triggers)
             AddTrigger(tabId, groupId, tr);
 
-        Log($"Captured {sliders.Count} slider(s), {toggles.Count} toggle(s), {buttons.Count} button(s), {valueLists.Count} value list(s), {panels.Count} panel(s), {itemPickers.Count} item picker(s), {humanLists.Count} item selector(s), {colourPickers.Count} colour picker(s), {pancakeButtons.Count} true-only button(s), {triggers.Count} trigger(s).");
+        var geometryParams = selected.OfType<IGH_Param>()
+            .Where(p => p.SourceCount == 0 && TryGetGeometryParamKind(p, out _))
+            .ToList();
+        foreach (var gp in geometryParams)
+            if (TryGetGeometryParamKind(gp, out var gpKind)) AddGeometryParam(tabId, groupId, gp, gpKind);
+
+        Log($"Captured {sliders.Count} slider(s), {toggles.Count} toggle(s), {buttons.Count} button(s), {valueLists.Count} value list(s), {panels.Count} panel(s), {itemPickers.Count} item picker(s), {humanLists.Count} item selector(s), {colourPickers.Count} colour picker(s), {pancakeButtons.Count} true-only button(s), {triggers.Count} trigger(s), {geometryParams.Count} geometry param(s).");
+    }
+
+    // ── Geometry param "Set Geometry" pick ──────────────────────────────────
+
+    // ObjectType filter per kind — best-effort, not exhaustive: "brep"/
+    // "surface"/"box" all accept Brep/Surface/Extrusion since most real Rhino
+    // surfaces are stored as single-face Breps, and each kind's Guid-
+    // referencing Goo constructor (see BuildReferencedGoo) resolves whatever
+    // actually gets picked. "geometry" accepts anything.
+    private static ObjectType PickFilterFor(string kind) => kind switch
+    {
+        "point"   => ObjectType.Point,
+        "curve"   => ObjectType.Curve,
+        "brep"    => ObjectType.Brep | ObjectType.Extrusion,
+        "mesh"    => ObjectType.Mesh,
+        "surface" => ObjectType.Surface | ObjectType.Brep | ObjectType.Extrusion,
+        "subd"    => ObjectType.SubD,
+        "box"     => ObjectType.Brep | ObjectType.Extrusion | ObjectType.Surface,
+        // Extended (Rhino 8-only) kinds — see EnsureExtendedGeometryReflection.
+        "extrusion"         => ObjectType.Extrusion,
+        "pointcloud"        => ObjectType.PointSet,
+        "hatch"             => ObjectType.Hatch,
+        "light"             => ObjectType.Light,
+        "blockinstance"     => ObjectType.InstanceReference,
+        // Rhino has one umbrella object type for every annotation kind —
+        // which concrete GH_X wrapper results is resolved by the Guid-ctor
+        // itself (BuildReferencedGoo), same as "geometry"'s ResolveKindFromObjectType.
+        "textentity" or "centermark" or "leader"
+            or "lineardimension" or "angulardimension"
+            or "ordinatedimension" or "radialdimension" => ObjectType.Annotation,
+        _         => ObjectType.AnyObject,   // "geometry"
+    };
+
+    // A picked Rhino object's own type → our kind string — used only to
+    // resolve Param_Geometry (generic) picks to a concrete Goo wrapper; the
+    // 7 typed params already know their kind from PickFilterFor above.
+    private static string? ResolveKindFromObjectType(ObjectType t)
+    {
+        if (t == ObjectType.Point)   return "point";
+        if (t == ObjectType.Curve)   return "curve";
+        if (t == ObjectType.Mesh)    return "mesh";
+        if (t == ObjectType.SubD)    return "subd";
+        if (t == ObjectType.Surface) return "surface";
+        if (t == ObjectType.Brep || t == ObjectType.Extrusion) return "brep";
+        return null;
+    }
+
+    // Referenced (live Rhino-doc-linked) Goo for the picked object — every
+    // supported type has a Guid constructor that resolves its geometry from
+    // the Rhino document lazily. This is exactly how native GH's own "Set
+    // one X" commands build their reference, confirmed via reflection
+    // against Grasshopper.dll (see geometry-param-capture research notes).
+    private static IGH_GeometricGoo? BuildReferencedGoo(ObjRef objRef, string kind)
+    {
+        if (kind == "geometry")
+            kind = ResolveKindFromObjectType(objRef.Object()?.ObjectType ?? ObjectType.None) ?? "brep";
+
+        var id = objRef.ObjectId;
+        switch (kind)
+        {
+            case "point":   return new GH_Point(id);
+            case "curve":   return new GH_Curve(id);
+            case "brep":    return new GH_Brep(id);
+            case "mesh":    return new GH_Mesh(id);
+            case "surface": return new GH_Surface(id);
+            case "subd":    return new GH_SubD(id);
+            case "box":     return new GH_Box(id);
+        }
+
+        // Extended (Rhino 8-only) kinds — same Guid-ctor convention,
+        // confirmed via reflection against Rhino 8's Grasshopper.dll, but
+        // the Goo type itself is only known at runtime (see
+        // EnsureExtendedGeometryReflection), so this builds via Activator
+        // instead of a compile-time `new`.
+        if (_geometryGooTypes.TryGetValue(kind, out var gooType))
+            return Activator.CreateInstance(gooType, id) as IGH_GeometricGoo;
+
+        return null;
+    }
+
+    private void PickGeometryForParam(string id, bool internalize)
+    {
+        if (!_geometryParams.TryGetValue(id, out var param) || !TryGetGeometryParamKind(param, out var kind))
+            return;
+
+        var filterResult = RhinoGet.GetMultipleObjects($"Select {kind} for \"{param.NickName}\"", false, PickFilterFor(kind), out var objRefs);
+        if (filterResult != Rhino.Commands.Result.Success || objRefs == null || objRefs.Length == 0)
+            return;
+
+        var goos = new List<IGH_GeometricGoo>();
+        foreach (var objRef in objRefs)
+        {
+            var referenced = BuildReferencedGoo(objRef, kind);
+            if (referenced == null) continue;
+            referenced.LoadGeometry();
+            // Internalizing bakes a detached copy (matches native GH's own
+            // "Internalize data" — the referenced goo's DuplicateGeometry()
+            // is documented to strip the Rhino-doc reference); otherwise the
+            // live-referenced goo itself is kept, so moving/deleting the
+            // Rhino object updates this param on the next solve.
+            goos.Add(internalize ? referenced.DuplicateGeometry() : referenced);
+        }
+        if (goos.Count == 0) return;
+
+        // Each pick replaces the current selection rather than adding to it
+        // — matches native GH's own "Set one X"/"Set Multiple X" (repeating
+        // either always overwrites, never accumulates). Explicit clear first
+        // rather than trusting SetPersistentData alone to replace, since that
+        // assumption turned out wrong for the Internalize/Clear buttons too
+        // (see GetPersistentParamMenuMethod's comment) — this is the same
+        // confirmed-working native handler, not a fresh assumption.
+        GetPersistentParamMenuMethod(kind, "Menu_DestroyPersistentData")?.Invoke(param, new object?[] { null, EventArgs.Empty });
+        SetGeometryParamData(param, kind, goos);
+        param.ExpireSolution(true);
+
+        PostToJs(SlateEvent.GeometryParamUpdated(id, param.NickName, param.VolatileDataCount));
+    }
+
+    // GH_PersistentParam<T>'s own private menu-click handlers — invoking them
+    // directly reproduces the exact native "Internalise data"/"Clear"
+    // behavior instead of reimplementing PersistentData manipulation
+    // ourselves (same reasoning as BakeGeometryParam's Menu_BakeItemClick).
+    //
+    // Unlike Menu_BakeItemClick (declared on the non-generic GH_ActiveObject),
+    // these are declared on the generic GH_PersistentParam<T> base. A
+    // MethodInfo fetched from GH_PersistentParam<>'s OPEN generic type
+    // definition LOOKS valid but throws InvalidOperationException
+    // ("late bound operations cannot be performed on types or methods for
+    // which ContainsGenericParameters is true") the moment you .Invoke() it —
+    // confirmed by reproducing it via reflection. It must come from the
+    // CLOSED generic type instead (GH_PersistentParam<GH_Point>, etc. — one
+    // per kind's actual Goo type), which is what this builds and caches.
+    private static readonly Dictionary<string, Type> _geometryGooTypes = new()
+    {
+        ["point"]    = typeof(GH_Point),
+        ["curve"]    = typeof(GH_Curve),
+        ["brep"]     = typeof(GH_Brep),
+        ["mesh"]     = typeof(GH_Mesh),
+        ["surface"]  = typeof(GH_Surface),
+        ["subd"]     = typeof(GH_SubD),
+        ["box"]      = typeof(GH_Box),
+        ["geometry"] = typeof(IGH_GeometricGoo),
+    };
+    private static readonly Dictionary<(string kind, string method), MethodInfo?> _persistentParamMenuMethods = new();
+
+    private static MethodInfo? GetPersistentParamMenuMethod(string kind, string methodName)
+    {
+        var key = (kind, methodName);
+        if (_persistentParamMenuMethods.TryGetValue(key, out var cached)) return cached;
+
+        MethodInfo? found = null;
+        if (_geometryGooTypes.TryGetValue(kind, out var gooType))
+        {
+            var closedType = typeof(GH_PersistentParam<>).MakeGenericType(gooType);
+            found = closedType.GetMethod(methodName, BindingFlags.NonPublic | BindingFlags.Instance);
+        }
+        _persistentParamMenuMethods[key] = found;
+        return found;
+    }
+
+    // Toggling internalize ON must apply immediately to whatever's already
+    // captured, not just the next pick — otherwise a user who picks, then
+    // internalizes, then deletes the Rhino object still loses the data (the
+    // param was still holding a live reference the whole time). Toggling OFF
+    // is a no-op on existing data: baked-in geometry has no Guid left to
+    // resolve a live reference back from, so it only changes the next pick.
+    private void InternalizeExistingData(string id)
+    {
+        if (!_geometryParams.TryGetValue(id, out var param) || !TryGetGeometryParamKind(param, out var kind))
+            return;
+        GetPersistentParamMenuMethod(kind, "Menu_InternaliseDataClicked")?.Invoke(param, new object?[] { null, EventArgs.Empty });
+        param.ExpireSolution(true);
+
+        PostToJs(SlateEvent.GeometryParamUpdated(id, param.NickName, param.VolatileDataCount));
+    }
+
+    // GH_ActiveObject.Menu_BakeItemClick is the exact private click handler
+    // the native right-click "Bake..." menu item wires up — invoking it
+    // directly reproduces the real flow (GH's own layer-picker dialog and
+    // all) instead of reimplementing bake/layer-selection ourselves.
+    // Confirmed via reflection against the referenced Grasshopper.dll: an
+    // instance method, sender/EventArgs unused by the handler itself.
+    private static readonly MethodInfo? _bakeClickMethod =
+        typeof(GH_ActiveObject).GetMethod("Menu_BakeItemClick", BindingFlags.NonPublic | BindingFlags.Instance);
+
+    private void BakeGeometryParam(string id)
+    {
+        if (!_geometryParams.TryGetValue(id, out var param) || param is not GH_ActiveObject activeObj)
+            return;
+        _bakeClickMethod?.Invoke(activeObj, new object?[] { null, EventArgs.Empty });
+    }
+
+    private void ClearGeometryParamData(string id)
+    {
+        if (!_geometryParams.TryGetValue(id, out var param) || !TryGetGeometryParamKind(param, out var kind))
+            return;
+        GetPersistentParamMenuMethod(kind, "Menu_DestroyPersistentData")?.Invoke(param, new object?[] { null, EventArgs.Empty });
+        param.ExpireSolution(true);
+
+        PostToJs(SlateEvent.GeometryParamUpdated(id, param.NickName, param.VolatileDataCount));
+    }
+
+    // GH_PersistentParam<T>.SetPersistentData(IEnumerable<T>) is strongly
+    // typed per concrete param class with no shared non-generic base to call
+    // it through, so this switches once here instead of duplicating the pick
+    // flow above per kind.
+    private static void SetGeometryParamData(IGH_Param param, string kind, List<IGH_GeometricGoo> goos)
+    {
+        switch (kind)
+        {
+            case "point":    ((Param_Point)param).SetPersistentData(goos.Cast<GH_Point>());     return;
+            case "curve":    ((Param_Curve)param).SetPersistentData(goos.Cast<GH_Curve>());     return;
+            case "brep":     ((Param_Brep)param).SetPersistentData(goos.Cast<GH_Brep>());       return;
+            case "mesh":     ((Param_Mesh)param).SetPersistentData(goos.Cast<GH_Mesh>());       return;
+            case "surface":  ((Param_Surface)param).SetPersistentData(goos.Cast<GH_Surface>()); return;
+            case "subd":     ((Param_SubD)param).SetPersistentData(goos.Cast<GH_SubD>());       return;
+            case "box":      ((Param_Box)param).SetPersistentData(goos.Cast<GH_Box>());         return;
+            case "geometry": ((Param_Geometry)param).SetPersistentData(goos);                    return;
+        }
+
+        // Extended (Rhino 8-only) kinds — no compile-time param/Goo type to
+        // switch on, so this goes fully through reflection:
+        // SetPersistentData(IEnumerable<T>) fetched from the CLOSED generic
+        // GH_PersistentParam<T> (an open-generic MethodInfo throws on
+        // Invoke — see GetPersistentParamMenuMethod's comment), called with
+        // a reflectively-built List<T> since `goos` is only List<IGH_GeometricGoo>.
+        if (!_geometryGooTypes.TryGetValue(kind, out var gooType)) return;
+
+        var closedParamType = typeof(GH_PersistentParam<>).MakeGenericType(gooType);
+        var enumerableType  = typeof(IEnumerable<>).MakeGenericType(gooType);
+        var setMethod = closedParamType.GetMethods(BindingFlags.Public | BindingFlags.Instance)
+            .FirstOrDefault(m =>
+            {
+                if (m.Name != "SetPersistentData") return false;
+                var ps = m.GetParameters();
+                return ps.Length == 1 && ps[0].ParameterType == enumerableType;
+            });
+        if (setMethod == null) return;
+
+        var typedList = Activator.CreateInstance(typeof(List<>).MakeGenericType(gooType))!;
+        var addMethod = typedList.GetType().GetMethod("Add")!;
+        foreach (var g in goos) addMethod.Invoke(typedList, new object?[] { g });
+
+        setMethod.Invoke(param, new object?[] { typedList });
     }
 
     // ── C# → JS ──────────────────────────────────────────────────────────────
@@ -1978,6 +2371,18 @@ public class SlateWindow : Form
         PostToJs(SlateEvent.TriggerAdded(tabId, id, timer.NickName, timer.Interval, timer.IntervalString, timer.LockTargets, groupId));
     }
 
+    public void AddGeometryParam(string tabId, string? groupId, IGH_Param param, string kind)
+    {
+        string id = param.InstanceGuid.ToString();
+        _geometryParams[id] = param;
+
+        // internalize starts false (native GH parity — "Set one X" keeps a
+        // live Rhino reference by default, internalizing is opt-in). It's a
+        // pure UI preference with no live GH counterpart, so JS owns it from
+        // here on — RestoreState never overwrites it, only count/name/kind.
+        PostToJs(SlateEvent.GeometryParamAdded(tabId, id, param.NickName, kind, param.VolatileDataCount, groupId));
+    }
+
     public void ClearAll()
     {
         ClearDicts();
@@ -2020,6 +2425,7 @@ public class SlateWindow : Form
         _colourPickers.Clear();
         _pancakeTrueOnlyButtons.Clear();
         _triggers.Clear();
+        _geometryParams.Clear();
         ClearPushCaches();
     }
 
@@ -2063,6 +2469,10 @@ public class SlateWindow : Form
             var docTriggers = doc.Objects
                 .OfType<GH_Timer>()
                 .ToDictionary(t => t.InstanceGuid.ToString(), t => t);
+            var docGeometryParams = doc.Objects
+                .OfType<IGH_Param>()
+                .Where(p => TryGetGeometryParamKind(p, out _) && p.SourceCount == 0)
+                .ToDictionary(p => p.InstanceGuid.ToString(), p => p);
 
             _sliders.Clear();
             _toggles.Clear();
@@ -2074,6 +2484,7 @@ public class SlateWindow : Form
             _colourPickers.Clear();
             _pancakeTrueOnlyButtons.Clear();
             _triggers.Clear();
+            _geometryParams.Clear();
 
             void ProcessItems(JsonArray arr)
             {
@@ -2188,6 +2599,19 @@ public class SlateWindow : Form
                             s["intervalString"] = tr.IntervalString;
                             s["lockTargets"]    = tr.LockTargets;
                             s["name"]           = tr.NickName;
+                        }
+                        else { Log($"RestoreState: dropped {kind} id={id} — no matching live object in doc.Objects."); arr.RemoveAt(i); }
+                    }
+                    else if (kind == "geometryParam")
+                    {
+                        if (docGeometryParams.TryGetValue(id, out var gpm) && TryGetGeometryParamKind(gpm, out var gpKind))
+                        {
+                            _geometryParams[id] = gpm;
+                            s["name"]     = gpm.NickName;
+                            s["geomKind"] = gpKind;
+                            s["count"]    = gpm.VolatileDataCount;
+                            // "internalize" is left untouched — pure UI preference,
+                            // no live GH counterpart to refresh it from.
                         }
                         else { Log($"RestoreState: dropped {kind} id={id} — no matching live object in doc.Objects."); arr.RemoveAt(i); }
                     }

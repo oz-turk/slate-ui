@@ -192,7 +192,8 @@ public class SlatePanel : GH_Component
                     .ToList() ?? new List<IGH_DocumentObject>();
 
                 int sliderCount = 0, toggleCount = 0, buttonCount = 0, valueListCount = 0, panelCount = 0,
-                    itemPickerCount = 0, humanListCount = 0, colourPickerCount = 0, pancakeButtonCount = 0, triggerCount = 0;
+                    itemPickerCount = 0, humanListCount = 0, colourPickerCount = 0, pancakeButtonCount = 0, triggerCount = 0,
+                    geometryParamCount = 0;
 
                 if (selected.Count == 0)
                     log += "Nothing selected.";
@@ -211,12 +212,14 @@ public class SlatePanel : GH_Component
                         else if (o is GH_ColourSwatch c)        { win.AddColourPicker(tab, null, c); colourPickerCount++; }
                         else if (SlateWindow.IsPancakeTrueOnlyButton(o) && o is IGH_Param pb)  { win.AddPancakeTrueOnlyButton(tab, null, pb); pancakeButtonCount++; }
                         else if (o is GH_Timer tr)              { win.AddTrigger(tab, null, tr); triggerCount++; }
+                        else if (o is IGH_Param gp && gp.SourceCount == 0 && SlateWindow.TryGetGeometryParamKind(gp, out var gpKind))
+                                                                 { win.AddGeometryParam(tab, null, gp, gpKind); geometryParamCount++; }
                     }
 
-                    if (sliderCount == 0 && toggleCount == 0 && buttonCount == 0 && valueListCount == 0 && panelCount == 0 && itemPickerCount == 0 && humanListCount == 0 && colourPickerCount == 0 && pancakeButtonCount == 0 && triggerCount == 0)
+                    if (sliderCount == 0 && toggleCount == 0 && buttonCount == 0 && valueListCount == 0 && panelCount == 0 && itemPickerCount == 0 && humanListCount == 0 && colourPickerCount == 0 && pancakeButtonCount == 0 && triggerCount == 0 && geometryParamCount == 0)
                         log += "Nothing selected.";
                     else
-                        log += $"Captured {sliderCount} slider(s), {toggleCount} toggle(s), {buttonCount} button(s), {valueListCount} value list(s), {panelCount} panel(s), {itemPickerCount} item picker(s), {humanListCount} item selector(s), {colourPickerCount} colour picker(s), {pancakeButtonCount} true-only button(s), {triggerCount} trigger(s) → \"{tab}\".";
+                        log += $"Captured {sliderCount} slider(s), {toggleCount} toggle(s), {buttonCount} button(s), {valueListCount} value list(s), {panelCount} panel(s), {itemPickerCount} item picker(s), {humanListCount} item selector(s), {colourPickerCount} colour picker(s), {pancakeButtonCount} true-only button(s), {triggerCount} trigger(s), {geometryParamCount} geometry param(s) → \"{tab}\".";
                 }
             }
 

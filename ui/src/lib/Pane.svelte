@@ -7,6 +7,7 @@
   import PanelRow     from './PanelRow.svelte'
   import ColourPickerRow from './ColourPickerRow.svelte'
   import TriggerRow   from './TriggerRow.svelte'
+  import GeometryParamRow from './GeometryParamRow.svelte'
   import GroupSection from './GroupSection.svelte'
   import ActionBar    from './ActionBar.svelte'
   import CornerHandle from './CornerHandle.svelte'
@@ -26,12 +27,12 @@
   // itemPicker reuses ValueListRow — same "pick one from a list" UI, the only
   // difference (candidate list from a wired input vs manually authored) lives
   // entirely on the C# side.
-  const ROW_COMPONENTS = { toggle: ToggleRow, button: ButtonRow, valueList: ValueListRow, panel: PanelRow, itemPicker: ValueListRow, humanValueList: ValueListRow, colourPicker: ColourPickerRow, pancakeButton: ButtonRow, trigger: TriggerRow }
+  const ROW_COMPONENTS = { toggle: ToggleRow, button: ButtonRow, valueList: ValueListRow, panel: PanelRow, itemPicker: ValueListRow, humanValueList: ValueListRow, colourPicker: ColourPickerRow, pancakeButton: ButtonRow, trigger: TriggerRow, geometryParam: GeometryParamRow }
 
   // Fixed type order for the pane's manual "Sort: Type" menu item — same
   // priority SlatePanel.cs's capture loop checks types in, just reused here
   // as an explicit ranking rather than a type-check chain.
-  const TYPE_ORDER = ['slider', 'toggle', 'button', 'valueList', 'panel', 'itemPicker', 'humanValueList', 'colourPicker', 'pancakeButton', 'trigger']
+  const TYPE_ORDER = ['slider', 'toggle', 'button', 'valueList', 'panel', 'itemPicker', 'humanValueList', 'colourPicker', 'pancakeButton', 'trigger', 'geometryParam']
 
   // ── derive pane state reactively (not derived() — paneId must stay live) ─────
   $: pane        = findLeaf($layout, paneId)
@@ -55,10 +56,11 @@
   // a longer name elsewhere still fits. Rough char-count estimate, not a
   // measured width — biased wide (not tight) since a little extra slack costs
   // nothing but an under-estimate clips into the ellipsis.
-  // Trigger also grid-aligns its name column to this width (see
-  // TriggerRow.svelte), so its names count toward the measurement too — every
-  // other typed row (toggle/button/...) stays right-anchored and excluded.
-  function isSliderRowType(s) { return !ROW_COMPONENTS[s.type] || s.type === 'trigger' }
+  // Trigger and GeometryParam also grid-align their name column to this
+  // width (see TriggerRow.svelte / GeometryParamRow.svelte), so their names
+  // count toward the measurement too — every other typed row (toggle/
+  // button/...) stays right-anchored and excluded.
+  function isSliderRowType(s) { return !ROW_COMPONENTS[s.type] || s.type === 'trigger' || s.type === 'geometryParam' }
   function maxSliderNameLen(sliders, groups) {
     let max = 0
     for (const s of sliders ?? []) if (isSliderRowType(s)) max = Math.max(max, (s.name ?? '').length)
@@ -296,6 +298,10 @@
       onTriggerChange(sliderId, value)
       return
     }
+    if (controlType === 'geometryParam') {
+      onGeometryParamChange(sliderId, value)
+      return
+    }
     if (multiSelect) {
       updateSliderValue(sliderId, prev => {
         const arr = Array.isArray(prev) ? prev : []
@@ -331,6 +337,36 @@
     if (detail.kind === 'interval') {
       patchSlider(sliderId, { interval: detail.interval, intervalString: detail.intervalString })
       postToCs({ type: 'trigger_interval_change', id: sliderId, value: detail.interval })
+    }
+  }
+
+  // GeometryParamRow dispatches either a pick request (opens Rhino's object
+  // picker in C#, response comes back as geometryParam_updated) or a local
+  // internalize-toggle (pure UI preference, no live GH counterpart — see
+  // SlateEvent.GeometryParamAdded — so it's persisted here explicitly rather
+  // than relying on the next RestoreState to refresh it from live state).
+  function onGeometryParamChange(sliderId, detail) {
+    if (detail.kind === 'pick') {
+      postToCs({ type: 'geometry_pick', id: sliderId, internalize: !!detail.internalize })
+      return
+    }
+    if (detail.kind === 'clear') {
+      postToCs({ type: 'geometry_clear', id: sliderId })
+      return
+    }
+    if (detail.kind === 'bake') {
+      postToCs({ type: 'geometry_bake', id: sliderId })
+      return
+    }
+    if (detail.kind === 'internalize') {
+      patchSlider(sliderId, { internalize: detail.value })
+      postStateSnapshot()
+      // Turning it ON bakes whatever's already captured right away (see
+      // InternalizeExistingData in SlateWindow.cs) — otherwise a user who
+      // picks, then internalizes, then deletes the Rhino object still loses
+      // the data, since the param would still be holding a live reference.
+      // Turning it OFF is a no-op on existing data (nothing to send).
+      if (detail.value) postToCs({ type: 'geometry_internalize_change', id: sliderId })
     }
   }
   function onSliderCommit(sliderId, value, controlType) {
