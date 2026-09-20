@@ -431,6 +431,13 @@
       syncControl(msg.id, { name: msg.name, options: msg.options, value: msg.value, multiSelect: msg.multiSelect, cycle: msg.cycle, loop: msg.loop })
     }
 
+    // Native Value List's items are hand-edited on the canvas, not wired —
+    // but still need the same live sync once they've already been added to
+    // a Slate tab (see PushValueListUpdates in SlateWindow.cs).
+    if (msg.type === 'valueList_update') {
+      syncControl(msg.id, { name: msg.name, options: msg.options, value: msg.value, multiSelect: msg.multiSelect, cycle: msg.cycle, loop: msg.loop })
+    }
+
     if (msg.type === 'colourPicker_update') {
       syncControl(msg.id, { name: msg.name, value: msg.value })
     }

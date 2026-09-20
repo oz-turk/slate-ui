@@ -1029,6 +1029,7 @@ public class SlateWindow : Form
             PushPanelTextUpdates();
             PushItemPickerUpdates();
             PushHumanValueListUpdates();
+            PushValueListUpdates();
             PushColourPickerUpdates();
             PushTriggerUpdates();
             PushGeometryParamUpdates();
@@ -1139,6 +1140,7 @@ public class SlateWindow : Form
     private static readonly Dictionary<string, string> _lastPushedPanels = new();
     private static readonly Dictionary<string, string> _lastPushedPickers = new();
     private static readonly Dictionary<string, string> _lastPushedHumanLists = new();
+    private static readonly Dictionary<string, string> _lastPushedValueLists = new();
     private static readonly Dictionary<string, string> _lastPushedColours = new();
     private static readonly Dictionary<string, string> _lastPushedTriggers = new();
     private static readonly Dictionary<string, string> _lastPushedGeometryParams = new();
@@ -1148,6 +1150,7 @@ public class SlateWindow : Form
         _lastPushedNames.Clear();
         _lastPushedPanels.Clear();
         _lastPushedHumanLists.Clear();
+        _lastPushedValueLists.Clear();
         _lastPushedColours.Clear();
         _lastPushedPickers.Clear();
         _lastPushedTriggers.Clear();
@@ -1175,10 +1178,12 @@ public class SlateWindow : Form
             }));
         }
 
+        // _valueLists is excluded here — its name is folded into
+        // PushValueListUpdates' own fingerprint below, alongside options/value,
+        // so it isn't pushed twice.
         foreach (var kv in win._sliders)    PushIfChanged(kv.Key, kv.Value.ImpliedNickName);
         foreach (var kv in win._toggles)    PushIfChanged(kv.Key, kv.Value.NickName, allowEmpty: true);
         foreach (var kv in win._buttons)    PushIfChanged(kv.Key, kv.Value.NickName, allowEmpty: true);
-        foreach (var kv in win._valueLists) PushIfChanged(kv.Key, kv.Value.NickName, allowEmpty: true);
         foreach (var kv in win._pancakeTrueOnlyButtons) PushIfChanged(kv.Key, kv.Value.NickName, allowEmpty: true);
     }
 
@@ -1275,6 +1280,41 @@ public class SlateWindow : Form
 
             win.PostToJs(System.Text.Json.JsonSerializer.Serialize(new {
                 type = "humanValueList_update",
+                id = kv.Key,
+                name,
+                options,
+                value,
+                multiSelect = multi,
+                cycle,
+                loop
+            }));
+        }
+    }
+
+    // Native Value List's items are edited by hand on the canvas ("List,
+    // item" / double-click), not fed by a wired input like item pickers or
+    // Human's selector — but they can still change after the Value List was
+    // already added to a Slate tab, and until now nothing re-pushed them
+    // (only NickName was kept live via PushSliderNameUpdates). Same
+    // reasoning/shape as PushHumanValueListUpdates, just for GH_ValueList.
+    private static void PushValueListUpdates()
+    {
+        var win = _instance;
+        if (win == null) return;
+        foreach (var kv in win._valueLists)
+        {
+            var valueList = kv.Value;
+            var options = valueList.ListItems.Select(li => li.Name).ToList();
+            var (value, multi) = GetValueListSelection(valueList);
+            var name = valueList.NickName;
+            var cycle = IsCycleMode(valueList.ListMode);
+            var loop = IsLoopMode(valueList.ListMode);
+            var fingerprint = name + "" + multi + "" + cycle + "" + loop + "" + System.Text.Json.JsonSerializer.Serialize(value) + "" + string.Join("", options);
+            if (_lastPushedValueLists.TryGetValue(kv.Key, out var last) && last == fingerprint) continue;
+            _lastPushedValueLists[kv.Key] = fingerprint;
+
+            win.PostToJs(System.Text.Json.JsonSerializer.Serialize(new {
+                type = "valueList_update",
                 id = kv.Key,
                 name,
                 options,

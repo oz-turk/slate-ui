@@ -458,6 +458,13 @@
     color: rgba(var(--text-rgb), 0.65);
     cursor: pointer;
     transition: background 0.1s, color 0.1s;
+    /* .checklist's overflow-y:auto (once capped, see below) resets flex
+       items' automatic min-height to 0 — without this, a shrunk checklist
+       squishes every row instead of just scrolling past the ones that don't
+       fit. .check-item barely showed it (the checkbox's own fixed size
+       already resisted collapse) but .check-header had nothing holding it
+       up and would visibly compress away before it should. */
+    flex-shrink: 0;
   }
   .check-item:hover { background: rgba(var(--accent-rgb), 0.1); color: var(--text); }
   .check-item input {
@@ -481,6 +488,7 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     cursor: default;
+    flex-shrink: 0;
   }
   .check-header.level-1 {
     font-weight: 700;
