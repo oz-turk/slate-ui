@@ -144,6 +144,21 @@
     dispatch('change', i)
   }
 
+  // Checklist header lines: an option starting with `#`/`##`/`###` (level 1-3)
+  // or a bare `-` (kept for the existing convention some users already have —
+  // treated as level 1) renders as a section label instead of a checkbox.
+  // Row height must stay identical to a normal .check-item (see itemHeight/
+  // fitChecklistHeight above) so header lines vary only in font weight/size,
+  // never padding — otherwise the height-fitting math per item breaks.
+  function parseChecklistHeader(opt) {
+    const text = String(opt)
+    const hash = text.match(/^(#{1,3})\s+(.*)$/)
+    if (hash) return { level: hash[1].length, text: hash[2] }
+    const dash = text.match(/^-\s+(.*)$/)
+    if (dash) return { level: 1, text: dash[1] }
+    return null
+  }
+
 </script>
 
 <!-- svelte-ignore a11y-no-static-element-interactions -->
@@ -159,9 +174,31 @@
     on:dragleave={e => rowDragLeave(e, dispatch)}
     on:drop|preventDefault={e => rowDrop(e, dispatch)}
 >
+  {#if mode === 'edit' && slider.multiSelect}
+    <!-- svelte-ignore a11y-no-static-element-interactions -->
+    <!-- Checklist mode: handle lives outside the header (which is skipped
+         entirely when the checklist is unnamed, see showHeader) so it never
+         disappears — absolutely positioned to span the whole row (header +
+         body), same idiom as PanelRow's own side handle. Doesn't touch the
+         checklist's own height math, only where the handle sits visually. -->
+    <div class="handle side"
+        draggable="true"
+        on:click|stopPropagation
+        on:dragstart={e => { e.dataTransfer.effectAllowed = 'move'; rowDragging = true; dispatch('dragStart') }}
+        on:drag={onHandleDrag}
+        on:dragend={() => { rowDragging = false; dragTranslateY = 0; dispatch('dragEnd') }}
+    >
+      <svg width="8" height="12" viewBox="0 0 8 12" fill="currentColor">
+        <circle cx="2" cy="2"  r="1.2"/><circle cx="6" cy="2"  r="1.2"/>
+        <circle cx="2" cy="6"  r="1.2"/><circle cx="6" cy="6"  r="1.2"/>
+        <circle cx="2" cy="10" r="1.2"/><circle cx="6" cy="10" r="1.2"/>
+      </svg>
+    </div>
+  {/if}
+
   {#if showHeader}
   <div class="header">
-    {#if mode === 'edit'}
+    {#if mode === 'edit' && !slider.multiSelect}
       <!-- svelte-ignore a11y-no-static-element-interactions -->
       <div class="handle"
           draggable="true"
@@ -212,10 +249,15 @@
         style={slider.height != null ? `height: ${slider.height}px` : `min-height: ${fitChecklistHeight}px`}
         on:click|stopPropagation>
       {#each options as opt, i (i)}
-        <label class="check-item">
-          <input type="checkbox" checked={selectedSet.has(i)} on:change={() => onToggle(i)} />
-          <span>{opt}</span>
-        </label>
+        {@const header = parseChecklistHeader(opt)}
+        {#if header}
+          <div class="check-header level-{header.level}">{header.text}</div>
+        {:else}
+          <label class="check-item">
+            <input type="checkbox" checked={selectedSet.has(i)} on:change={() => onToggle(i)} />
+            <span>{opt}</span>
+          </label>
+        {/if}
       {/each}
     </div>
 
@@ -269,7 +311,10 @@
     height: auto;
     padding: 0 12px 10px;
   }
-  .row.multi.edit { padding: 0 8px 10px 6px; }
+  /* 26px = 6px base + 20px handle width — same reserve as the side handle
+     below, so the header/checklist content never sits under it regardless
+     of whether the checklist is named (see .handle.side). */
+  .row.multi.edit { padding: 0 8px 10px 26px; }
   /* Without a header, the checklist is the row's very first thing — flush
      against the divider line above it (the previous row's .row::after).
      Matches PanelRow's own .headerless treatment for the same reason. */
@@ -295,6 +340,23 @@
   }
   .handle:hover  { color: rgba(var(--text-rgb), 0.43); }
   .handle:active { cursor: grabbing; }
+
+  /* Checklist-only variant (see the row-level {#if} above): absolutely
+     positioned so it spans the row's full height (header + body) instead of
+     just the 44px header band, and survives the header being skipped when
+     the checklist is unnamed. Mirrors PanelRow's own .handle exactly. */
+  .handle.side {
+    position: absolute;
+    left: 6px;
+    top: 0;
+    bottom: 0;
+    width: 20px;
+    height: auto;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding-top: 16px;
+  }
 
   .name {
     font-size: 12px;
@@ -407,6 +469,31 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  /* Same box (padding/line-height) as .check-item so it doesn't disturb the
+     per-item height math above — only weight/size/color vary, no checkbox
+     gap since there's nothing to align to. */
+  .check-header {
+    padding: 3px 4px;
+    font-size: 11px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    cursor: default;
+  }
+  .check-header.level-1 {
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    color: rgba(var(--text-rgb), 0.85);
+  }
+  .check-header.level-2 {
+    font-weight: 600;
+    color: rgba(var(--text-rgb), 0.7);
+  }
+  .check-header.level-3 {
+    font-weight: 500;
+    color: rgba(var(--text-rgb), 0.5);
   }
 
   .del {
