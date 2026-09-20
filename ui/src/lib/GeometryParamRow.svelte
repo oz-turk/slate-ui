@@ -45,6 +45,15 @@
   function bake() {
     dispatch('change', { kind: 'bake' })
   }
+
+  // Per-item "always show on GH canvas" — see PreviewPinConduit. Only actually
+  // draws when the enclosing group (if any) isn't itself hidden — a group's
+  // own eye toggle (GroupSection.svelte) is a gate over this, same as a
+  // Blender collection's visibility gates its objects': group hidden → nothing
+  // under it shows regardless of this flag; group visible → this flag decides.
+  function togglePin() {
+    dispatch('change', { kind: 'pin', value: !slider.previewPinned })
+  }
 </script>
 
 <!-- svelte-ignore a11y-no-static-element-interactions -->
@@ -87,18 +96,35 @@
     {pickLabel}
   </button>
 
-  <!-- Lucide "x" icon (ISC license) — https://lucide.dev/icons/x — same grid
-       slot as TriggerRow's single mode icon-btn (4th column). -->
-  <button class="icon-btn" disabled={count === 0} on:click|stopPropagation={clearValues} title="Clear captured values">
-    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M18 6 6 18" />
-      <path d="m6 6 12 12" />
-    </svg>
-  </button>
+  <!-- TriggerRow spends its own 4th column (44px) on one icon-btn and its 5th
+       (68px) on a 2-icon flex pair; this row needs 4 icons total, so instead
+       of following that same 44/68 split (which is what produced the visible
+       gap here before — Clear alone in the 44px slot, then a gap before the
+       pair) both columns are merged below into one 112px slot holding all 4
+       contiguously. Combined pixel width is unchanged (44+68 == 112px), so
+       the 1fr pick/track column before it stays exactly as wide as
+       SliderRow's/TriggerRow's — only the internal split of the trailing
+       fixed space changes, not the shared track alignment. -->
+  <div class="icon-cluster">
+    <!-- Lucide "x" icon (ISC license) — https://lucide.dev/icons/x -->
+    <button class="icon-btn" disabled={count === 0} on:click|stopPropagation={clearValues} title="Clear captured values">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M18 6 6 18" />
+        <path d="m6 6 12 12" />
+      </svg>
+    </button>
 
-  <!-- Same trailing icon-pair slot as TriggerRow's (5th column, 68px) — left
-       to right: Internalize, then Bake (see NOTICE.md for icon sourcing). -->
-  <div class="icon-pair">
+    <!-- Lucide "eye"/"eye-off" (ISC license) — https://lucide.dev/icons/eye,
+         https://lucide.dev/icons/eye-off. Mirrors the group-level pin icon
+         in GroupSection.svelte, same meaning at the individual-item level. -->
+    <button class="icon-btn" class:active={slider.previewPinned} on:click|stopPropagation={togglePin}
+        title={slider.previewPinned ? 'Always shown on GH canvas — click to unpin' : 'Always show this on the GH canvas, even when GH is set to only preview selected objects'}>
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8Z" />
+        <circle cx="12" cy="12" r="3" />
+      </svg>
+    </button>
+
     <!-- Live-reference state: Lucide "link-2" (ISC license), used as-is —
          https://lucide.dev/icons/link-2. Internalized state: a custom
          composite ("lock-pin" in NOTICE.md) — Lucide's "lock" body with an
@@ -134,12 +160,15 @@
 </div>
 
 <style>
-  /* Same column widths as SliderRow's grid (name / lo-bound / track / hi-bound
-     / value) so this row's pick button lines up with every SliderRow's track
-     above/below it in the same tab — same convention as TriggerRow. */
+  /* First 3 columns (name / gutter / pick) match SliderRow's/TriggerRow's own
+     (name / lo-bound / track) pixel-for-pixel so this row's pick button lines
+     up with every SliderRow's track above/below it in the same tab. The
+     trailing column deliberately does NOT split 44px/68px like those two —
+     see the icon-cluster comment above — but its combined width (112px) is
+     identical, so the 1fr column ends up exactly as wide either way. */
   .row {
     display: grid;
-    grid-template-columns: var(--name-col-w, 110px) 44px 1fr 44px 68px;
+    grid-template-columns: var(--name-col-w, 110px) 44px 1fr 112px;
     align-items: center;
     gap: 0;
     padding: 0 12px;
@@ -157,7 +186,7 @@
     background: var(--edge-tint);
     pointer-events: none;
   }
-  .row.edit { grid-template-columns: 20px var(--name-col-w, 110px) 44px 1fr 44px 68px 24px; padding: 0 8px 0 6px; }
+  .row.edit { grid-template-columns: 20px var(--name-col-w, 110px) 44px 1fr 112px 24px; padding: 0 8px 0 6px; }
   .row:hover          { background: var(--bg); }
   .row.selected       { background: rgba(var(--accent-rgb), 0.15); }
   .row.selected:hover { background: rgba(var(--accent-rgb), 0.22); }
@@ -203,15 +232,19 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    justify-self: end;
-    width: 100%;
   }
   .pick:hover { color: var(--text); border-color: var(--border); }
 
-  .icon-pair {
+  .icon-cluster {
     display: flex;
     align-items: center;
-    justify-content: flex-end;
+    /* flex-start, not flex-end — TriggerRow's own icon-cluster (3 icons, this
+       row has 4) needs its first icon flush at the same x regardless of how
+       many follow, or the two rows' leading icons drift apart by however much
+       slack space right-alignment would leave in the shorter one. Trailing
+       edge is allowed to differ between row types (fewer icons just leaves
+       a bit of visible space before the row's edit-mode del button). */
+    justify-content: flex-start;
     gap: 6px;
   }
 
@@ -228,7 +261,6 @@
     cursor: pointer;
     flex-shrink: 0;
     padding: 0;
-    justify-self: center;
   }
   .icon-btn:hover  { color: rgba(var(--text-rgb), 0.85); border-color: var(--border); }
   .icon-btn.active { background: rgba(var(--accent-rgb), 0.4); border-color: var(--accent); color: var(--text); }

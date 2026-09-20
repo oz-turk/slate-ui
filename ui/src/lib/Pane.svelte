@@ -367,6 +367,13 @@
       // the data, since the param would still be holding a live reference.
       // Turning it OFF is a no-op on existing data (nothing to send).
       if (detail.value) postToCs({ type: 'geometry_internalize_change', id: sliderId })
+      return
+    }
+    if (detail.kind === 'pin') {
+      // Pure UI preference, same as internalize above — C# recomputes the
+      // pinned set from the next state_snapshot (see ApplyPreviewPins).
+      patchSlider(sliderId, { previewPinned: detail.value })
+      postStateSnapshot()
     }
   }
   function onSliderCommit(sliderId, value, controlType) {
@@ -689,11 +696,11 @@
       const [stripped, items] = extractSlidersByIds(t, idSet)
       if (targetGroupId) {
         const groups = mapGroupTree(stripped.groups, targetGroupId, g => ({
-          groups: [...(g.groups ?? []), { id: 'g_' + Date.now(), label: 'Group', collapsed: false, sliders: items, groups: [], pos: posAppend(g) }]
+          groups: [...(g.groups ?? []), { id: 'g_' + Date.now(), label: 'Group', collapsed: false, previewShow: true, sliders: items, groups: [], pos: posAppend(g) }]
         }))
         return { ...stripped, groups }
       }
-      const newGroup = { id: 'g_' + Date.now(), label: 'Group', collapsed: false, sliders: items, groups: [], pos: posAppend(stripped) }
+      const newGroup = { id: 'g_' + Date.now(), label: 'Group', collapsed: false, previewShow: true, sliders: items, groups: [], pos: posAppend(stripped) }
       return { ...stripped, groups: [...stripped.groups, newGroup] }
     }))
     selectedIds = new Set()
@@ -704,6 +711,19 @@
     mutateTabs(tabs => tabs.map(t => ({
       ...t,
       groups: mapGroupTree(t.groups, groupId, g => ({ collapsed: !g.collapsed }))
+    })))
+  }
+  // Group-level "show" is a gate over its (possibly nested) items' own
+  // previewPinned flags, not a force-on — Blender collection-visibility
+  // model per user request: group hidden → nothing under it shows regardless
+  // of item flags; group shown (the default — missing/undefined counts as
+  // shown, so existing groups from before this feature aren't silently
+  // hidden) → items decide for themselves. See ApplyPreviewPins in
+  // SlateWindow.cs for the matching AND-gate walk.
+  function togglePreviewPin(groupId) {
+    mutateTabs(tabs => tabs.map(t => ({
+      ...t,
+      groups: mapGroupTree(t.groups, groupId, g => ({ previewShow: !(g.previewShow ?? true) }))
     })))
   }
   function renameGroup(groupId, label) {
@@ -1041,6 +1061,7 @@
               dropAfterMe={dropTarget?.type === 'group-header' && dropTarget.id === group.id && dropTarget.pos === 'after' && activeDrag?.type === 'group'}
               on:toggle={e              => toggleGroup(e.detail)}
               on:rename={e              => renameGroup(e.detail.id, e.detail.label)}
+              on:togglePreviewPin={e     => togglePreviewPin(e.detail)}
               on:remove={e              => removeGroup(e.detail)}
               on:sliderChange={e        => onSliderChange(e.detail.id, e.detail.value, e.detail.type, e.detail.multiSelect)}
               on:sliderCommit={e        => onSliderCommit(e.detail.id, e.detail.value, e.detail.type)}

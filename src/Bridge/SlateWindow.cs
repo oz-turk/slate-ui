@@ -1533,6 +1533,7 @@ public class SlateWindow : Form
         if (_lastGeometrySyncedDoc == doc) _lastGeometrySyncedDoc = null;
         if (HostComponent != null && HostComponent.OnPingDocument() == doc) HostComponent = null;
         if (HostDocument == doc) DeferHide(doc);
+        PreviewPinConduit.ClearPins(doc);
     }
 
     // Closing a .gh tab that has an open Slate window fires DocumentRemoved
@@ -1928,6 +1929,8 @@ public class SlateWindow : Form
                     // HostDocument currently is.
                     DebugLog($"state_snapshot accepted for doc={HostDocument?.DisplayName ?? "null"}: {SummarizeStateCounts(e.WebMessageAsJson)}.");
                     if (HostDocument != null) _uiStateByDoc[HostDocument] = e.WebMessageAsJson;
+                    if (HostDocument != null)
+                        ApplyPreviewPins(JsonNode.Parse(e.WebMessageAsJson)!.AsObject(), HostDocument);
                     string themeName = root.TryGetProperty("theme", out var th) ? th.GetString() ?? "dark" : "dark";
                     // Written on every snapshot, not just when it differs from
                     // _lastAppliedTheme: a document whose own ui_state already
@@ -2729,12 +2732,105 @@ public class SlateWindow : Form
                 state["savedWinH"] = requested.Height;
             }
 
+            ApplyPreviewPins(state, doc);
+
             state["type"] = "restore_state";
             PostToJs(state.ToJsonString());
             var savedAt = state["savedAt"]?.GetValue<string>();
             Log($"State restored{(savedAt != null ? $" (file saved {savedAt})" : " (no save timestamp — older file)")}: {_sliders.Count} slider(s), {_toggles.Count} toggle(s), {_buttons.Count} button(s), {_valueLists.Count} value list(s), {_panels.Count} panel(s), {_itemPickers.Count} item picker(s), {_humanValueLists.Count} item selector(s), {_colourPickers.Count} colour picker(s), {_pancakeTrueOnlyButtons.Count} true-only button(s).");
         }
         catch (Exception ex) { Log($"RestoreState error: {ex.Message}"); }
+    }
+
+    // ── preview pin resolution ───────────────────────────────────────────────
+    // Blender collection/object visibility model (per user request): each
+    // geometryParam item has its own "previewPinned" opt-in (drawn regardless
+    // of GH's own PreviewFilter/PreviewMode/PreviewBoundary — see
+    // PreviewPinConduit), and each group has a "previewShow" gate over its
+    // (possibly nested) items — group gate closed → nothing under it draws
+    // regardless of item flags; gate open (the default — missing/undefined
+    // counts as open, so groups saved before this feature existed aren't
+    // silently hidden) → items decide for themselves. Called from both
+    // RestoreState (doc load/switch) and the "state_snapshot" IPC case (every
+    // structural UI change), so a toggle click takes effect immediately
+    // instead of waiting for the next doc switch.
+    private static void ApplyPreviewPins(JsonObject state, Grasshopper.Kernel.GH_Document doc)
+    {
+        var pinnedIds = new HashSet<string>();
+
+        void CollectPinnedItems(JsonArray? sliders)
+        {
+            if (sliders == null) return;
+            foreach (var s in sliders)
+            {
+                var so = s!.AsObject();
+                if (so["previewPinned"]?.GetValue<bool>() ?? false)
+                    pinnedIds.Add(so["id"]!.GetValue<string>());
+            }
+        }
+        void CollectFromGroup(JsonObject group, bool ancestorsVisible)
+        {
+            bool visible = ancestorsVisible && (group["previewShow"]?.GetValue<bool>() ?? true);
+            if (visible) CollectPinnedItems(group["sliders"] as JsonArray);
+            if (group["groups"] is JsonArray subgroups)
+                foreach (var g in subgroups)
+                    CollectFromGroup(g!.AsObject(), visible);
+        }
+        void CollectFromTab(JsonObject tab)
+        {
+            // Top-level (ungrouped) items have no gate above them.
+            CollectPinnedItems(tab["sliders"] as JsonArray);
+            if (tab["groups"] is JsonArray groups)
+                foreach (var g in groups)
+                    CollectFromGroup(g!.AsObject(), true);
+        }
+        void CollectFromNode(JsonObject node)
+        {
+            var type = node["type"]?.GetValue<string>();
+            if (type == "leaf")
+            {
+                foreach (var t in node["tabs"]!.AsArray()) CollectFromTab(t!.AsObject());
+            }
+            else if (type == "split")
+            {
+                CollectFromNode(node["a"]!.AsObject());
+                CollectFromNode(node["b"]!.AsObject());
+            }
+            else if (node["tabs"] is JsonArray legacyTabs)
+            {
+                foreach (var t in legacyTabs) CollectFromTab(t!.AsObject());
+            }
+        }
+
+        if (state["workspaces"] is JsonArray workspacesArr)
+            foreach (var w in workspacesArr)
+                if (w!.AsObject()["layout"] is JsonObject wLayout) CollectFromNode(wLayout);
+        else if (state["layout"] is JsonObject layoutNode) CollectFromNode(layoutNode);
+        else CollectFromNode(state);
+
+        if (pinnedIds.Count == 0)
+        {
+            PreviewPinConduit.ClearPins(doc);
+            Rhino.RhinoDoc.ActiveDoc?.Views.Redraw();
+            return;
+        }
+
+        var docObjectsById = doc.Objects
+            .OfType<Grasshopper.Kernel.IGH_DocumentObject>()
+            .ToDictionary(o => o.InstanceGuid.ToString(), o => o);
+
+        var pinnedObjects = pinnedIds
+            .Select(id => docObjectsById.TryGetValue(id, out var o) ? o : null)
+            .OfType<Grasshopper.Kernel.IGH_PreviewObject>()
+            .Where(o => o.IsPreviewCapable)
+            .ToList();
+
+        PreviewPinConduit.SetPins(doc, pinnedObjects);
+        // The conduit's own state changing isn't something Rhino watches for —
+        // it only repaints on camera moves/other invalidation, which is why a
+        // toggle click didn't visibly do anything until the next pan. Forcing
+        // a redraw here closes that gap.
+        Rhino.RhinoDoc.ActiveDoc?.Views.Redraw();
     }
 
     // ── embedded resource helper ─────────────────────────────────────────────

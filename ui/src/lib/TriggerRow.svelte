@@ -106,18 +106,24 @@
     {slider.intervalString ?? '----------'}
   </button>
 
-  <!-- Lucide "refresh-cw" icon (ISC license) — https://lucide.dev/icons/refresh-cw -->
-  <button class="icon-btn" class:active={!isManual} on:click|stopPropagation={toggleMode}
-      title={isManual ? 'Manual mode (click for cyclic)' : 'Cyclic mode (click for manual)'}>
-    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
-      <path d="M3 3v5h5" />
-      <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />
-      <path d="M16 16h5v5" />
-    </svg>
-  </button>
+  <!-- Merged trailing slot, same pattern as GeometryParamRow's icon-cluster
+       (see its own comment) — mode/lock/play packed flush-left in one 112px
+       column instead of mode alone centered in a 44px column then a separate
+       68px pair, so this row's first icon (mode) lands at the exact same x as
+       GeometryParamRow's first icon (Clear) regardless of how many icons
+       either row has. -->
+  <div class="icon-cluster">
+    <!-- Lucide "refresh-cw" icon (ISC license) — https://lucide.dev/icons/refresh-cw -->
+    <button class="icon-btn" class:active={!isManual} on:click|stopPropagation={toggleMode}
+        title={isManual ? 'Manual mode (click for cyclic)' : 'Cyclic mode (click for manual)'}>
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+        <path d="M3 3v5h5" />
+        <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />
+        <path d="M16 16h5v5" />
+      </svg>
+    </button>
 
-  <div class="icon-pair">
     <!-- Lucide "lock"/"lock-open" icons (ISC license) — https://lucide.dev/icons/lock -->
     <button class="icon-btn" class:active={slider.lockTargets} on:click|stopPropagation={toggleLock}
         title={slider.lockTargets ? 'Targets locked (click to free)' : 'Free target objects (click to lock)'}>
@@ -152,13 +158,15 @@
 {/if}
 
 <style>
-  /* Same column widths as SliderRow's grid (name / lo-bound / track / hi-bound
-     / value) so a Trigger row's interval box lines up with every SliderRow's
-     track above/below it in the same tab, and the icons after it land where
-     SliderRow's hi-bound + value columns are. */
+  /* First 3 columns (name / lo-bound / track) match SliderRow's own pixel-for-
+     pixel so this row's interval box lines up with every SliderRow's track
+     above/below it in the same tab. Trailing column is a single merged 112px
+     slot (see icon-cluster below) rather than SliderRow's separate 44px/68px
+     split — combined width is identical (44+68 == 112) so the 1fr column
+     ends up exactly as wide either way. */
   .row {
     display: grid;
-    grid-template-columns: var(--name-col-w, 110px) 44px 1fr 44px 68px;
+    grid-template-columns: var(--name-col-w, 110px) 44px 1fr 112px;
     align-items: center;
     gap: 0;
     padding: 0 12px;
@@ -176,7 +184,7 @@
     background: var(--edge-tint);
     pointer-events: none;
   }
-  .row.edit { grid-template-columns: 20px var(--name-col-w, 110px) 44px 1fr 44px 68px 24px; padding: 0 8px 0 6px; }
+  .row.edit { grid-template-columns: 20px var(--name-col-w, 110px) 44px 1fr 112px 24px; padding: 0 8px 0 6px; }
   .row:hover          { background: var(--bg); }
   .row.selected       { background: rgba(var(--accent-rgb), 0.15); }
   .row.selected:hover { background: rgba(var(--accent-rgb), 0.22); }
@@ -225,10 +233,13 @@
   }
   .interval:hover { color: var(--text); border-color: var(--border); }
 
-  .icon-pair {
+  .icon-cluster {
     display: flex;
     align-items: center;
-    justify-content: flex-end;
+    /* flex-start, not flex-end — see GeometryParamRow's identical comment:
+       keeps this row's first icon (mode) flush at the same x as that row's
+       first icon (Clear) regardless of icon count on either side. */
+    justify-content: flex-start;
     gap: 6px;
   }
 
@@ -245,7 +256,6 @@
     cursor: pointer;
     flex-shrink: 0;
     padding: 0;
-    justify-self: center;
   }
   .icon-btn:hover  { color: rgba(var(--text-rgb), 0.85); border-color: var(--border); }
   .icon-btn.active { background: rgba(var(--accent-rgb), 0.4); border-color: var(--accent); color: var(--text); }

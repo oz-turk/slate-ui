@@ -39,6 +39,18 @@
 
   $: items = orderedItems(group)
 
+  // Preview-pin only means anything for geometryParam captures (the only
+  // type with actual 3D viewport preview — sliders/toggles/etc. are canvas-only
+  // UI, IGH_PreviewObject-filtered out on the C# side anyway) — hiding the
+  // toggle on groups that don't have one avoids a control that visibly does
+  // nothing. Recurses into subgroups too, same reasoning as the pin itself
+  // applying recursively (see PreviewPinConduit).
+  function containsGeometryParam(g) {
+    if ((g.sliders ?? []).some(s => s.type === 'geometryParam')) return true
+    return (g.groups ?? []).some(containsGeometryParam)
+  }
+  $: showPreviewPin = containsGeometryParam(group)
+
   let editingLabel = false
   let labelValue   = ''
 
@@ -131,6 +143,35 @@
       <span class="label" on:click|stopPropagation on:dblclick|stopPropagation={startRename}>{group.label ?? 'Group'}</span>
     {/if}
 
+    <!-- Always drawn on the GH canvas, regardless of GH's own preview filter/mode/boundary
+         (see PreviewPinConduit) — a canvas-display concern, not a Slate editing one, so
+         it's shown in both edit and preview mode, unlike capture/delete below. Only shown
+         at all when the group actually has a geometryParam in it (see showPreviewPin). -->
+    {#if showPreviewPin}
+      <!-- Gate over this group's items' own preview-pin flags (see
+           GeometryParamRow's identical eye icon) — Blender collection-
+           visibility model: default (missing/true) = open, items decide for
+           themselves; explicitly closed = nothing under it shows regardless
+           of item flags. "active" highlights the unusual (closed) state,
+           not the default open one — an always-lit icon on every group with
+           a geometry param would just be visual noise. -->
+      <button class="icon-btn pin-btn" class:active={group.previewShow === false}
+          on:click|stopPropagation={() => dispatch('togglePreviewPin', group.id)}
+          title={group.previewShow === false ? 'Group hidden — pinned items inside are suppressed, click to show them again' : 'Group visible — pinned items inside show on the GH canvas, click to hide them all'}>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          {#if group.previewShow === false}
+            <path d="M10.733 5.076a10.744 10.744 0 0 1 11.205 6.575 1 1 0 0 1 0 .696 10.747 10.747 0 0 1-1.444 2.49" />
+            <path d="M14.084 14.158a3 3 0 0 1-4.242-4.242" />
+            <path d="M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 10.75 10.75 0 0 1 4.446-5.143" />
+            <path d="m2 2 20 20" />
+          {:else}
+            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8Z" />
+            <circle cx="12" cy="12" r="3" />
+          {/if}
+        </svg>
+      </button>
+    {/if}
+
     {#if mode === 'edit'}
       <button class="capture-btn" on:click|stopPropagation={() => dispatch('capture', { groupId: group.id })} title="Capture selected sliders into group">
         + Capture
@@ -186,6 +227,7 @@
               dropAfterMe={dropTarget?.type === 'group-header' && dropTarget.id === subGroup.id && dropTarget.pos === 'after' && activeDrag?.type === 'group'}
               on:toggle
               on:rename
+              on:togglePreviewPin
               on:remove
               on:sliderChange
               on:sliderCommit
@@ -328,6 +370,24 @@
     padding: 1px 5px;
     outline: none;
   }
+
+  .icon-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    border-radius: 4px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: rgba(var(--text-rgb), 0.21);
+    cursor: pointer;
+    flex-shrink: 0;
+    padding: 0;
+    transition: background 0.1s, color 0.1s, border-color 0.1s;
+  }
+  .icon-btn:hover  { background: var(--grid); color: rgba(var(--text-rgb), 0.58); }
+  .icon-btn.active { background: rgba(var(--accent-rgb), 0.4); border-color: var(--accent); color: var(--text); }
 
   .capture-btn {
     padding: 2px 6px;
