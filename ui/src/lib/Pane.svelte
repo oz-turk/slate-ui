@@ -12,7 +12,7 @@
   import ActionBar    from './ActionBar.svelte'
   import CornerHandle from './CornerHandle.svelte'
   import ContextMenu  from './ContextMenu.svelte'
-  import { layout, activeWorkspaceId, updatePane, findLeaf, newTabId, splitPane, splitPaneSpanning, newSplitId, setSplitSize, collapsePane, findNeighborPane, moveCrossPaneItem, extractSlidersByIds, orderedItems, flattenSliderIds, posBetween, posAppend, withAppendedPositions, reorderTabTopLevel } from '../stores/layout.js'
+  import { layout, activeWorkspaceId, updatePane, findLeaf, newTabId, splitPane, splitPaneSpanning, newSplitId, setSplitSize, collapsePane, findNeighborPane, moveCrossPaneItem, extractSlidersByIds, orderedItems, posBetween, posAppend, withAppendedPositions, reorderTabTopLevel } from '../stores/layout.js'
   import { tabDrag, itemDrag } from '../stores/dragState.js'
   import { computeAlignedSnapTargets, snapRaw } from './splitSnap.js'
   import { mode, deleteRequest, captureRequest, clearSelectionTick, groupSelectionTick, hoverHint, theme } from '../stores/uiState.js'
@@ -635,21 +635,19 @@
   // ── selection ─────────────────────────────────────────────────────────────────
   // ctrl toggles a single row in/out of the selection. shift selects the
   // whole run between the anchor (lastClickedId) and this row — resolved via
-  // flattenSliderIds, so it follows visual order through nested groups. The
-  // anchor only ever comes from the active tab's own flatten, so a range
-  // can't reach across tabs. Falls through to a plain single-select if shift
-  // has no usable anchor yet (nothing clicked before, or same row).
+  // rangeIds, so it follows visual order through nested groups AND expands
+  // any group caught in the range to its full contents (see rangeIds above;
+  // shared with onGroupSelect so the anchor can be a slider or a group
+  // either way round). The anchor only ever comes from the active tab's own
+  // order, so a range can't reach across tabs. Falls through to a plain
+  // single-select if shift has no usable anchor yet (nothing clicked before,
+  // or same row).
   function onSliderSelect(sliderId, shift, ctrl) {
     if ($mode !== 'edit') return
     if (shift && lastClickedId && lastClickedId !== sliderId) {
-      const order = flattenSliderIds(activeTab)
-      const iFrom = order.indexOf(lastClickedId)
-      const iTo   = order.indexOf(sliderId)
-      if (iFrom !== -1 && iTo !== -1) {
-        const [lo, hi] = iFrom < iTo ? [iFrom, iTo] : [iTo, iFrom]
-        const next = new Set(selectedIds)
-        for (let i = lo; i <= hi; i++) next.add(order[i])
-        selectedIds = next
+      const ids = rangeIds(lastClickedId, sliderId)
+      if (ids) {
+        selectedIds = new Set([...selectedIds, ...ids])
         lastClickedId = sliderId
         return
       }
@@ -668,17 +666,34 @@
 
   // ── ActionBar ─────────────────────────────────────────────────────────────────
   function moveSelectedTo(targetTabId) {
-    if (!selectedIds.size) return
-    moveSlidersToTab([...selectedIds], activeTab.id, targetTabId)
+    if (!selectedIds.size || !activeTab) return
+    // Root sliders only — a selected whole group's cascaded-in descendants
+    // (see onGroupSelect) shouldn't get shredded out of it by a cross-tab
+    // move the group itself doesn't support yet, so those ids are dropped.
+    const info = itemInfo(activeTab, null, new Map())
+    const sliderIds = [...selectedIds].filter(id => {
+      const meta = info.get(id)
+      return meta && meta.kind === 'slider' && !selectedIds.has(meta.parentId)
+    })
+    if (!sliderIds.length) return
+    moveSlidersToTab(sliderIds, activeTab.id, targetTabId)
     selectedIds = new Set()
   }
 
-  // Maps every slider id in a tab to the id of the group directly containing
-  // it (null for top-level) — lets groupSelected land the new group next to
-  // where the selection actually lives instead of always at the tab's top.
-  function sliderParentIds(container, parentId, map) {
-    for (const s of container.sliders) map.set(s.id, parentId)
-    for (const g of container.groups ?? []) sliderParentIds(g, g.id, map)
+  // Maps every slider AND group id in a tab to {parentId, pos, kind} —
+  // parentId is the id of whichever group directly contains it (null for
+  // top-level). Feeds groupSelected's "roots" filter below: a selected id
+  // whose parent is ITSELF selected doesn't get extracted on its own — it
+  // rides along inside its already-selected-whole parent group instead
+  // (see onGroupSelect's cascade). Also used by moveSelectedTo to keep a
+  // cross-tab move to root sliders only, instead of shredding sliders out
+  // of an intact selected group.
+  function itemInfo(container, parentId, map) {
+    for (const s of container.sliders) map.set(s.id, { parentId, pos: s.pos ?? 0, kind: 'slider' })
+    for (const g of container.groups ?? []) {
+      map.set(g.id, { parentId, pos: g.pos ?? 0, kind: 'group' })
+      itemInfo(g, g.id, map)
+    }
     return map
   }
 
@@ -687,23 +702,123 @@
     const idSet = selectedIds
     mutateTabs(tabs => tabs.map(t => {
       if (t.id !== activeTab.id) return t
-      // Selection shares one parent (a specific group, or top-level) → nest
-      // the new group there. A selection spanning multiple containers has no
-      // single sensible home, so it falls back to the tab's top level.
-      const parentMap = sliderParentIds(t, null, new Map())
-      const parents = new Set([...idSet].map(id => parentMap.get(id)))
+      const info = itemInfo(t, null, new Map())
+      // Roots = selected ids with no selected ancestor — a whole selected
+      // group is one root (its cascaded-in descendants are skipped here,
+      // they move as part of it), a lone selected slider is its own root.
+      const roots = [...idSet].filter(id => info.has(id) && !idSet.has(info.get(id).parentId))
+      if (!roots.length) return t
+      const rootSliderIds = new Set(roots.filter(id => info.get(id).kind === 'slider'))
+      const rootGroupIds  = roots.filter(id => info.get(id).kind === 'group')
+      // Roots sharing one parent (a specific group, or top-level) → nest the
+      // new group there. Roots spanning multiple containers have no single
+      // sensible home, so it falls back to the tab's top level.
+      const parents = new Set(roots.map(id => info.get(id).parentId))
       const targetGroupId = parents.size === 1 ? [...parents][0] : null
-      const [stripped, items] = extractSlidersByIds(t, idSet)
+      const newPos = Math.min(...roots.map(id => info.get(id).pos))
+      // Pull each selected whole group out intact (as a unit, not flattened)
+      // before stripping sliders, so a group-of-groups nests groups inside
+      // groups rather than merging everyone's sliders into one flat list.
+      let working = t
+      const extractedGroups = []
+      for (const gid of rootGroupIds) {
+        const [remaining, removed] = extractGroupFromTree(working.groups, gid)
+        working = { ...working, groups: remaining }
+        if (removed) extractedGroups.push(removed)
+      }
+      const [stripped, extractedSliders] = extractSlidersByIds(working, rootSliderIds)
+      const newGroup = { id: 'g_' + Date.now(), label: 'Group', collapsed: false, previewShow: true, sliders: extractedSliders, groups: extractedGroups, pos: newPos }
       if (targetGroupId) {
         const groups = mapGroupTree(stripped.groups, targetGroupId, g => ({
-          groups: [...(g.groups ?? []), { id: 'g_' + Date.now(), label: 'Group', collapsed: false, previewShow: true, sliders: items, groups: [], pos: posAppend(g) }]
+          groups: [...(g.groups ?? []), newGroup]
         }))
         return { ...stripped, groups }
       }
-      const newGroup = { id: 'g_' + Date.now(), label: 'Group', collapsed: false, previewShow: true, sliders: items, groups: [], pos: posAppend(stripped) }
       return { ...stripped, groups: [...stripped.groups, newGroup] }
     }))
     selectedIds = new Set()
+    lastClickedId = null
+  }
+
+  // Depth-first, top-to-bottom {id, kind} order for a tab — same walk as
+  // flattenSliderIds but keeping group entries too (each immediately
+  // followed by its own contents), so a ctrl+shift range can land on a
+  // group and know to pull in everything below it.
+  function flattenItemIds(container) {
+    const out = []
+    for (const item of orderedItems(container)) {
+      out.push({ id: item.id, kind: item.kind })
+      if (item.kind === 'group') out.push(...flattenItemIds(item.data))
+    }
+    return out
+  }
+
+  function findGroupNode(groups, groupId) {
+    for (const g of groups) {
+      if (g.id === groupId) return g
+      const found = findGroupNode(g.groups ?? [], groupId)
+      if (found) return found
+    }
+    return null
+  }
+
+  // A group's own id plus every id nested inside it (sliders and subgroups,
+  // all depths) — what a ctrl-click on the group marks selected together,
+  // since the group is chosen as one whole unit, not just its header row.
+  function groupAndDescendantIds(g) {
+    const ids = [g.id]
+    for (const s of g.sliders) ids.push(s.id)
+    for (const sub of g.groups ?? []) ids.push(...groupAndDescendantIds(sub))
+    return ids
+  }
+
+  // Shared by slider- and group- ctrl+shift range-select: walks the tab's
+  // full visual order between fromId and toId. A slider entry contributes
+  // its own id; a group entry pulls in its own id plus its entire subtree,
+  // same as a direct ctrl-click on that group would — so a group anywhere
+  // in the range comes in whole rather than being cut off wherever the
+  // range boundary happens to land inside it.
+  function rangeIds(fromId, toId) {
+    const order = flattenItemIds(activeTab)
+    const iFrom = order.findIndex(e => e.id === fromId)
+    const iTo   = order.findIndex(e => e.id === toId)
+    if (iFrom === -1 || iTo === -1) return null
+    const [lo, hi] = iFrom < iTo ? [iFrom, iTo] : [iTo, iFrom]
+    const ids = new Set()
+    for (let i = lo; i <= hi; i++) {
+      const entry = order[i]
+      if (entry.kind === 'group') {
+        const gNode = findGroupNode(activeTab.groups, entry.id)
+        if (gNode) groupAndDescendantIds(gNode).forEach(id => ids.add(id))
+      } else {
+        ids.add(entry.id)
+      }
+    }
+    return ids
+  }
+
+  // Ctrl-click toggles the whole group (itself + everything inside it) in or
+  // out of the selection as one unit. Ctrl+shift-click range-selects from
+  // the last clicked id (slider or group) through this group, via rangeIds.
+  function onGroupSelect(groupId, shift) {
+    if ($mode !== 'edit') return
+    if (shift && lastClickedId && lastClickedId !== groupId) {
+      const ids = rangeIds(lastClickedId, groupId)
+      if (ids) {
+        selectedIds = new Set([...selectedIds, ...ids])
+        lastClickedId = groupId
+        return
+      }
+    }
+    const node = findGroupNode(activeTab.groups, groupId)
+    if (!node) return
+    const ids = groupAndDescendantIds(node)
+    const allSelected = ids.every(id => selectedIds.has(id))
+    const next = new Set(selectedIds)
+    if (allSelected) ids.forEach(id => next.delete(id))
+    else ids.forEach(id => next.add(id))
+    selectedIds = next
+    lastClickedId = groupId
   }
 
   // ── group helpers (recursive for nested groups) ───────────────────────────────
@@ -1060,6 +1175,7 @@
               dropBeforeMe={dropTarget?.type === 'group-header' && dropTarget.id === group.id && dropTarget.pos === 'before' && activeDrag?.type === 'group'}
               dropAfterMe={dropTarget?.type === 'group-header' && dropTarget.id === group.id && dropTarget.pos === 'after' && activeDrag?.type === 'group'}
               on:toggle={e              => toggleGroup(e.detail)}
+              on:groupSelect={e         => onGroupSelect(e.detail.id, e.detail.shift)}
               on:rename={e              => renameGroup(e.detail.id, e.detail.label)}
               on:togglePreviewPin={e     => togglePreviewPin(e.detail)}
               on:remove={e              => removeGroup(e.detail)}

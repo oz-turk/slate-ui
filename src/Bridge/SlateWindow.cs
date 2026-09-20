@@ -1159,9 +1159,13 @@ public class SlateWindow : Form
         var win = _instance;
         if (win == null) return;
 
-        void PushIfChanged(string id, string name)
+        // allowEmpty: ImpliedNickName (sliders) falls back automatically and never
+        // comes back truly empty, but a real NickName does once the user clears
+        // it in GH — that "cleared" state has to reach JS too, or it keeps
+        // showing the last cached (non-empty) name.
+        void PushIfChanged(string id, string name, bool allowEmpty = false)
         {
-            if (string.IsNullOrWhiteSpace(name)) return;
+            if (!allowEmpty && string.IsNullOrWhiteSpace(name)) return;
             if (_lastPushedNames.TryGetValue(id, out var last) && last == name) return;
             _lastPushedNames[id] = name;
             win.PostToJs(System.Text.Json.JsonSerializer.Serialize(new {
@@ -1172,10 +1176,10 @@ public class SlateWindow : Form
         }
 
         foreach (var kv in win._sliders)    PushIfChanged(kv.Key, kv.Value.ImpliedNickName);
-        foreach (var kv in win._toggles)    PushIfChanged(kv.Key, kv.Value.NickName);
-        foreach (var kv in win._buttons)    PushIfChanged(kv.Key, kv.Value.NickName);
-        foreach (var kv in win._valueLists) PushIfChanged(kv.Key, kv.Value.NickName);
-        foreach (var kv in win._pancakeTrueOnlyButtons) PushIfChanged(kv.Key, kv.Value.NickName);
+        foreach (var kv in win._toggles)    PushIfChanged(kv.Key, kv.Value.NickName, allowEmpty: true);
+        foreach (var kv in win._buttons)    PushIfChanged(kv.Key, kv.Value.NickName, allowEmpty: true);
+        foreach (var kv in win._valueLists) PushIfChanged(kv.Key, kv.Value.NickName, allowEmpty: true);
+        foreach (var kv in win._pancakeTrueOnlyButtons) PushIfChanged(kv.Key, kv.Value.NickName, allowEmpty: true);
     }
 
     // GH_Panel.UserText is only the typed-in source text for an unwired panel

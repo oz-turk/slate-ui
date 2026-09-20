@@ -15,6 +15,13 @@
   $: options     = slider.options ?? []
   $: selectedSet = new Set(slider.multiSelect && Array.isArray(slider.value) ? slider.value : [])
 
+  // Checklist mode's header only carries the name — no picker lives there
+  // (see the {#if !slider.multiSelect} block below) — so an unnamed
+  // checklist would otherwise waste a full 44px+margin module on a blank
+  // bar. Non-checklist rows always need the header (it's the row itself:
+  // name + picker + del), so this only applies to slider.multiSelect.
+  $: showHeader = !slider.multiSelect || !!slider.name
+
   const MODULE = 44   // one slider row's height — the app's base sizing unit
 
   // ── row drag (reorder) — see rowDrag.js ────────────────────────────────────────
@@ -143,6 +150,7 @@
 <!-- svelte-ignore a11y-click-events-have-key-events -->
 <div class="row" data-slider-id={slider.id} class:edit={mode === 'edit'} class:selected class:multi={slider.multiSelect}
     class:row-dragging={rowDragging} class:row-last={isLast}
+    class:headerless={!showHeader}
     bind:this={rowEl}
     style={dragTranslateY ? `transform: translateY(${dragTranslateY}px)` : ''}
     on:click={e => mode === 'edit' && dispatch('select', { shift: e.shiftKey, ctrl: e.ctrlKey })}
@@ -151,6 +159,7 @@
     on:dragleave={e => rowDragLeave(e, dispatch)}
     on:drop|preventDefault={e => rowDrop(e, dispatch)}
 >
+  {#if showHeader}
   <div class="header">
     {#if mode === 'edit'}
       <!-- svelte-ignore a11y-no-static-element-interactions -->
@@ -195,6 +204,7 @@
       <button class="del" on:click|stopPropagation={() => dispatch('remove')} title="Remove">×</button>
     {/if}
   </div>
+  {/if}
 
   {#if slider.multiSelect}
     <!-- svelte-ignore a11y-no-static-element-interactions -->
@@ -260,6 +270,10 @@
     padding: 0 12px 10px;
   }
   .row.multi.edit { padding: 0 8px 10px 6px; }
+  /* Without a header, the checklist is the row's very first thing — flush
+     against the divider line above it (the previous row's .row::after).
+     Matches PanelRow's own .headerless treatment for the same reason. */
+  .row.multi.headerless { padding-top: 3px; }
 
   .header {
     display: flex;

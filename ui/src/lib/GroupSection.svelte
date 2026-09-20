@@ -102,6 +102,34 @@
   // header AND everything inside (child sliders, nested subgroups) as one
   // unit, for free, via plain CSS opacity inheritance.
   let groupDragging = false
+
+  // Plain click keeps toggling (expand/collapse) exactly like before —
+  // ctrl/cmd-click switches to selecting the group instead, same modifier
+  // SliderRow uses for its own selection. Pane.svelte resolves shift (range
+  // vs single) once it also knows the rest of the tab's selection state.
+  function performHeaderClick(ctrl, shift) {
+    if (mode === 'edit' && ctrl) dispatch('groupSelect', { id: group.id, shift })
+    else dispatch('toggle', group.id)
+  }
+  function onHeaderClick(e) {
+    performHeaderClick(e.ctrlKey || e.metaKey, e.shiftKey)
+  }
+
+  // The label sits on flex:1, so it covers most of the header's width —
+  // visually it IS "the rest of the header", not just the text. It still
+  // needs its own click to stopPropagation (so the header underneath
+  // doesn't ALSO fire and double up), but that means it has to run the same
+  // toggle/select itself rather than just swallowing the click. The wrinkle
+  // is dblclick-to-rename: a real double-click fires click, click, dblclick
+  // in that order, so a naive immediate toggle/select on every click would
+  // flash it twice before the rename lands. e.detail is the browser's own
+  // click count (1 on the first click, 2 on the second click of the same
+  // double-click) — skipping anything past 1 avoids that flash with zero
+  // added latency, no timer needed, unlike a debounce.
+  function onLabelClick(e) {
+    if (e.detail > 1) return
+    performHeaderClick(e.ctrlKey || e.metaKey, e.shiftKey)
+  }
 </script>
 
 <!-- svelte-ignore a11y-no-static-element-interactions -->
@@ -110,8 +138,9 @@
   <div class="group-header"
       class:drop-highlight={dropHighlight}
       class:drop-nest={dropNest}
-      on:click={() => dispatch('toggle', group.id)}
-      on:mouseenter={() => hoverHint.set('Double-click: rename  ·  Drag items onto the header to add them, drag the group itself to reorder (top/bottom edge) or nest it (middle)')}
+      class:selected={selectedIds.has(group.id)}
+      on:click={onHeaderClick}
+      on:mouseenter={() => hoverHint.set('Double-click: rename  ·  Ctrl-click: select (with contents) — Ctrl+Shift-click: range  ·  Drag items onto the header to add them, drag the group itself to reorder (top/bottom edge) or nest it (middle)')}
       on:mouseleave={() => hoverHint.set(null)}
       on:dragover|preventDefault={headerDragOver}
       on:dragleave={headerDragLeave}
@@ -140,7 +169,7 @@
         on:blur={commitRename} on:keydown={onKeydown} on:click|stopPropagation />
     {:else}
       <!-- svelte-ignore a11y-no-static-element-interactions -->
-      <span class="label" on:click|stopPropagation on:dblclick|stopPropagation={startRename}>{group.label ?? 'Group'}</span>
+      <span class="label" on:click|stopPropagation={onLabelClick} on:dblclick|stopPropagation={startRename}>{group.label ?? 'Group'}</span>
     {/if}
 
     <!-- Always drawn on the GH canvas, regardless of GH's own preview filter/mode/boundary
@@ -226,6 +255,7 @@
               dropBeforeMe={dropTarget?.type === 'group-header' && dropTarget.id === subGroup.id && dropTarget.pos === 'before' && activeDrag?.type === 'group'}
               dropAfterMe={dropTarget?.type === 'group-header' && dropTarget.id === subGroup.id && dropTarget.pos === 'after' && activeDrag?.type === 'group'}
               on:toggle
+              on:groupSelect
               on:rename
               on:togglePreviewPin
               on:remove
@@ -317,6 +347,11 @@
 
   .group-header:hover          { background: var(--grid) !important; }
   .group-header.drop-highlight { background: rgba(var(--accent-rgb), 0.25); outline: 1px solid rgba(var(--accent-rgb), 0.6); }
+  /* Mirrors SliderRow's .row.selected — ctrl-click marks the group itself
+     (this) AND its contents (their own rows pick up `selected` the same way,
+     via the selectedIds prop threaded down to them). */
+  .group-header.selected       { background: rgba(var(--accent-rgb), 0.15); }
+  .group-header.selected:hover { background: rgba(var(--accent-rgb), 0.22) !important; }
 
   .handle {
     display: flex;
