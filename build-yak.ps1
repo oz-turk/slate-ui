@@ -8,6 +8,16 @@ $root   = $PSScriptRoot
 $yakDir = "$root\yak"
 $outDir = "$root\src\bin\Release\net48"
 
+# Slate.csproj's <Version> is the single source of truth (the status bar
+# reads it too, via vite.config.js's readCsprojVersion()). Sync manifest.yml
+# to it here so a release bump never has to be repeated by hand in two
+# places - that's exactly how F4R once shipped 0.2.0 while the panel still
+# displayed 0.1.4.
+$csprojVersion = ([regex]::Match((Get-Content "$root\src\Slate.csproj" -Raw), '<Version>(.*?)</Version>')).Groups[1].Value
+if (-not $csprojVersion) { Write-Host "Could not read <Version> from Slate.csproj."; exit 1 }
+(Get-Content "$yakDir\manifest.yml") -replace '^version:.*', "version: $csprojVersion" | Set-Content "$yakDir\manifest.yml"
+Write-Host "Synced yak/manifest.yml version to $csprojVersion"
+
 Write-Host "Building Slate.gha (Release)..."
 # Ignore exit code: the csproj's own DeployToGrasshopper copy step fails with
 # a lock error whenever Rhino is open, which is unrelated to compilation.
