@@ -4,6 +4,8 @@ Notable user-facing changes, newest first. Internal refactors and pure repo main
 
 ## Unreleased
 
+## 0.2.0 - 2026-09-21
+
 - Fix Aero Snap windows not landing flush against a screen edge/corner, and window resize occasionally squeezing the nearest pane after a snap or similar OS-driven window jump.
 - Sort by canvas position now reorders a group's own contents too, not just the top level.
 - Pin/unpin toggle uses distinct eye/eye-off icons instead of a colour swap.
