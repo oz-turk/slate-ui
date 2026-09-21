@@ -25,7 +25,9 @@ Grasshopper definitions often need a clean control surface for clients or teamma
 
 ![Entering edit mode](media/02-edit-mode.gif)
 
-**Capturing controls.** Select sliders, toggles, buttons, panels and other controls on the GH canvas, then pull them into a tab with the capture button. Wide control coverage: sliders, boolean toggles, buttons, value lists (dropdown/checklist/sequence), text panels, item pickers, colour swatches. Also read via reflection, with no compile-time dependency on either plugin: [Human UI](https://www.food4rhino.com/en/app/human-ui)'s Item Selector and [Pancake](https://www.food4rhino.com/en/app/pancake)'s True Only Button.
+**Capturing controls.** Select sliders, toggles, buttons, panels and other controls on the GH canvas, then pull them into a tab with the capture button. Wide control coverage: sliders, boolean toggles, buttons, value lists (dropdown/checklist/sequence — checklist mode also supports markdown-style header lines to group items), text panels, item pickers, colour swatches, freestanding geometry params (Point, Curve, Brep, Mesh, Surface, SubD, Box, and more — Set/Clear/Internalize/Bake), and the native Trigger (GH_Timer) component. Also read via reflection, with no compile-time dependency on either plugin: [Human UI](https://www.food4rhino.com/en/app/human-ui)'s Item Selector and [Pancake](https://www.food4rhino.com/en/app/pancake)'s True Only Button.
+
+**Preview pin.** Pin any captured geometry param — or a whole group at once — to always draw on the GH canvas, regardless of GH's own preview filter or mode. Useful for keeping key geometry visible while a client clicks through a panel that never touches GH's native selection.
 
 ![Capturing Grasshopper controls into the panel](media/06-add-to-ui.gif)
 
@@ -77,6 +79,10 @@ dotnet build Slate.csproj
 ```
 
 Or run `.\build.ps1` from the repo root, which does both steps, closes/reopens Rhino, and deploys the built `.gha` to `%APPDATA%\Grasshopper\Libraries` automatically.
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for a running list of notable changes.
 
 ## License
 
