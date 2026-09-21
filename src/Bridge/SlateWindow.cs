@@ -767,6 +767,19 @@ public class SlateWindow : Form
 
     const int MinWinW = 320, MinWinH = 480, MaxWinW = 3000, MaxWinH = 2000;
 
+    // Windows 10/11 bake an invisible resize border into a Normal-state
+    // window's Bounds — when Aero Snap flushes an edge to the screen
+    // boundary, it deliberately overshoots the working area on that side by
+    // the border's width (confirmed live 2026-09-21: a left-snapped window
+    // saved as loc.X=-7, Height=1447 on a 2560x1440-working-area screen) so
+    // the VISIBLE edge lands exactly flush. The clamp below used to treat
+    // that overshoot as "off-screen" and correct it straight back to 0/1440
+    // — undoing the compensation and leaving the restored window a few px
+    // short of the corner. This tolerance lets border-sized overshoot
+    // through untouched while still clamping anything actually excessive
+    // (e.g. a different/disconnected monitor's saved geometry).
+    const int EdgeBorderTolerance = 12;
+
     // Size actually requested (e.g. from a file's saved win_w/win_h) before
     // the screen-fit clamp below potentially shrinks it — RestoreState
     // compares this against the window's live (possibly now-smaller) size to
@@ -814,11 +827,12 @@ public class SlateWindow : Form
         var screen = Screen.AllScreens.FirstOrDefault(s => s.WorkingArea.Contains(loc.X + 20, loc.Y + 20))
                      ?? Screen.FromPoint(loc);
         var wa = screen.WorkingArea;
+        var waClamp = Rectangle.Inflate(wa, EdgeBorderTolerance, EdgeBorderTolerance);
 
-        int width  = Math.Max(MinWinW, Math.Min(Math.Min(MaxWinW, size.Width),  wa.Width));
-        int height = Math.Max(MinWinH, Math.Min(Math.Min(MaxWinH, size.Height), wa.Height));
-        int x = Math.Max(wa.Left, Math.Min(loc.X, wa.Right  - width));
-        int y = Math.Max(wa.Top,  Math.Min(loc.Y, wa.Bottom - height));
+        int width  = Math.Max(MinWinW, Math.Min(Math.Min(MaxWinW, size.Width),  waClamp.Width));
+        int height = Math.Max(MinWinH, Math.Min(Math.Min(MaxWinH, size.Height), waClamp.Height));
+        int x = Math.Max(waClamp.Left, Math.Min(loc.X, waClamp.Right  - width));
+        int y = Math.Max(waClamp.Top,  Math.Min(loc.Y, waClamp.Bottom - height));
 
         // Already visually exactly where this call would leave it: maximized,
         // on the target screen. Skip the Normal round-trip below entirely —

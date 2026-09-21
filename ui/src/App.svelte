@@ -59,12 +59,26 @@
   let prevScreenY = window.screenY
   let resizeSettleTimer = null
 
+  // A real mouse drag on a window edge fires many resize ticks, each only a
+  // few px (however fast the pointer moves between browser paint frames) —
+  // well under this. Aero Snap (also Win+Arrow, maximize/restore, a
+  // monitor/DPI change) instead relocates+resizes the window in one native
+  // jump, hundreds of px at once. shrinkTopLeftEdge below subtracts
+  // deltaX/deltaY as raw px from whichever pane sits on that edge, so
+  // treating a jump this size as a drag tick yanked that pane straight
+  // toward MIN_PANE_SIZE in one shot (confirmed live 2026-09-21 snapping the
+  // window to a screen's left edge — see pencere-snap-tab-boyutu.md). Above
+  // this threshold, treat it as an OS-driven jump instead and skip the pane
+  // math entirely rather than misapplying it.
+  const EDGE_DRAG_MAX_TICK_PX = 100
+
   function onWindowResize() {
     const deltaX = window.screenX - prevScreenX
     const deltaY = window.screenY - prevScreenY
     prevScreenX = window.screenX
     prevScreenY = window.screenY
-    applyWindowEdgeResize(deltaX, deltaY)
+    if (Math.abs(deltaX) <= EDGE_DRAG_MAX_TICK_PX && Math.abs(deltaY) <= EDGE_DRAG_MAX_TICK_PX)
+      applyWindowEdgeResize(deltaX, deltaY)
 
     // No native "drag ended" event to hook (unlike C#'s ResizeEnd), so commit
     // to C#/.gh persistence after a short quiet period instead — mirrors
