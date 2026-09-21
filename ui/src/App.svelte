@@ -441,11 +441,11 @@
     // see SlateEvent.GeometryParamAdded) and is never touched by C# again;
     // only "count" changes after a pick (geometryParam_updated below).
     if (msg.type === 'geometryParam_added') {
-      addCapturedControl({ id: msg.id, type: 'geometryParam', name: msg.name, geomKind: msg.geomKind, count: msg.count, internalize: false }, msg)
+      addCapturedControl({ id: msg.id, type: 'geometryParam', name: msg.name, geomKind: msg.geomKind, count: msg.count, wired: msg.wired, internalize: false }, msg)
     }
 
     if (msg.type === 'geometryParam_updated') {
-      syncControl(msg.id, { name: msg.name, count: msg.count })
+      syncControl(msg.id, { name: msg.name, count: msg.count, wired: msg.wired })
     }
 
     if (msg.type === 'slider_name_update') {

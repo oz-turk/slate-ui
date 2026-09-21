@@ -34,6 +34,26 @@ internal sealed class PreviewPinConduit : DisplayConduit
 
     public static void ClearPins(GH_Document doc) => _pinsByDoc.Remove(doc);
 
+    // Rhino derives a perspective viewport's near/far clipping planes from the
+    // scene's bounding box each frame — normally GH's own preview loop feeds
+    // that box via ClippingBox for every object it draws. Objects we draw
+    // ourselves in PostDrawObjects (because GH's PreviewFilter/PreviewMode
+    // skipped them) never reach that box unless we contribute it here too, so
+    // pinned objects outside GH's own filter got clipped in perspective views
+    // (parallel views like Top aren't distance-clipped the same way, so they
+    // looked fine) — reported recurring 2026-09-21.
+    protected override void CalculateBoundingBox(CalculateBoundingBoxEventArgs e)
+    {
+        var canvasDoc = Grasshopper.Instances.ActiveCanvas?.Document;
+        if (canvasDoc == null || !_pinsByDoc.TryGetValue(canvasDoc, out var pins)) return;
+
+        foreach (var obj in pins)
+        {
+            if (!obj.IsPreviewCapable) continue;
+            e.IncludeBoundingBox(obj.ClippingBox);
+        }
+    }
+
     protected override void PostDrawObjects(DrawEventArgs e)
     {
         // Only draw for whichever document GH's own canvas currently shows —

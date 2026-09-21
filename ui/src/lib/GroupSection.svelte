@@ -196,10 +196,9 @@
            GeometryParamRow's identical eye icon) — Blender collection-
            visibility model: default (missing/true) = open, items decide for
            themselves; explicitly closed = nothing under it shows regardless
-           of item flags. "active" highlights the unusual (closed) state,
-           not the default open one — an always-lit icon on every group with
-           a geometry param would just be visual noise. -->
-      <button class="icon-btn pin-btn" class:active={group.previewShow === false}
+           of item flags. "active" mirrors GeometryParamRow's own pin icon —
+           lit (blue) while visible, dim while hidden. -->
+      <button class="icon-btn pin-btn" class:active={group.previewShow !== false}
           on:click|stopPropagation={() => dispatch('togglePreviewPin', group.id)}
           title={group.previewShow === false ? 'Group hidden — pinned items inside are suppressed, click to show them again' : 'Group visible — pinned items inside show on the GH canvas, click to hide them all'}>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">

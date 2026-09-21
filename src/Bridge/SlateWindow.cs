@@ -243,10 +243,15 @@ public class SlateWindow : Form
     private readonly Dictionary<string, GH_Timer> _triggers = new();
 
     // Native geometry-holding params (Point/Curve/Brep/Mesh/Surface/SubD/Box/
-    // generic Geometry) — IGH_Param like sliders, but only captured when
-    // freestanding (SourceCount == 0): a wired one is driven by its own
-    // upstream source, so "Set Geometry" from Rhino would just be overwritten
-    // on the next solve. See TryGetGeometryParamKind for the type→kind map.
+    // generic Geometry) — IGH_Param like sliders. A wired one (SourceCount > 0)
+    // is still captured (so it can be viewed/pinned/baked from Slate) but its
+    // "Set Geometry" pick is disabled JS-side (see the "wired" flag on
+    // GeometryParamAdded/Updated) since it's driven by its own upstream
+    // source — a pick would just be overwritten on the next solve. Internalize
+    // (native GH "Internalise data") disconnects the source and bakes the
+    // current data in, which drops SourceCount back to 0 and re-enables the
+    // pick on the next solve's GeometryParamUpdated. See TryGetGeometryParamKind
+    // for the type→kind map.
     private readonly Dictionary<string, IGH_Param> _geometryParams = new();
 
     // Live GH canvas position for an already-captured id — checks every
@@ -1136,11 +1141,12 @@ public class SlateWindow : Form
         {
             var name  = kv.Value.NickName;
             var count = kv.Value.VolatileDataCount;
-            var fingerprint = name + "" + count;
+            var wired = kv.Value.SourceCount > 0;
+            var fingerprint = name + "" + count + "" + wired;
             if (_lastPushedGeometryParams.TryGetValue(kv.Key, out var last) && last == fingerprint) continue;
             _lastPushedGeometryParams[kv.Key] = fingerprint;
 
-            win.PostToJs(SlateEvent.GeometryParamUpdated(kv.Key, name, count));
+            win.PostToJs(SlateEvent.GeometryParamUpdated(kv.Key, name, count, wired));
         }
     }
 
@@ -2064,7 +2070,7 @@ public class SlateWindow : Form
             AddTrigger(tabId, groupId, tr);
 
         var geometryParams = selected.OfType<IGH_Param>()
-            .Where(p => p.SourceCount == 0 && TryGetGeometryParamKind(p, out _))
+            .Where(p => TryGetGeometryParamKind(p, out _))
             .ToList();
         foreach (var gp in geometryParams)
             if (TryGetGeometryParamKind(gp, out var gpKind)) AddGeometryParam(tabId, groupId, gp, gpKind);
@@ -2154,6 +2160,9 @@ public class SlateWindow : Form
     {
         if (!_geometryParams.TryGetValue(id, out var param) || !TryGetGeometryParamKind(param, out var kind))
             return;
+        // JS disables the Pick button while wired; this mirrors that guard
+        // server-side in case a stale click still lands mid-round-trip.
+        if (param.SourceCount > 0) return;
 
         var filterResult = RhinoGet.GetMultipleObjects($"Select {kind} for \"{param.NickName}\"", false, PickFilterFor(kind), out var objRefs);
         if (filterResult != Rhino.Commands.Result.Success || objRefs == null || objRefs.Length == 0)
@@ -2185,7 +2194,7 @@ public class SlateWindow : Form
         SetGeometryParamData(param, kind, goos);
         param.ExpireSolution(true);
 
-        PostToJs(SlateEvent.GeometryParamUpdated(id, param.NickName, param.VolatileDataCount));
+        PostToJs(SlateEvent.GeometryParamUpdated(id, param.NickName, param.VolatileDataCount, param.SourceCount > 0));
     }
 
     // GH_PersistentParam<T>'s own private menu-click handlers — invoking them
@@ -2243,7 +2252,7 @@ public class SlateWindow : Form
         GetPersistentParamMenuMethod(kind, "Menu_InternaliseDataClicked")?.Invoke(param, new object?[] { null, EventArgs.Empty });
         param.ExpireSolution(true);
 
-        PostToJs(SlateEvent.GeometryParamUpdated(id, param.NickName, param.VolatileDataCount));
+        PostToJs(SlateEvent.GeometryParamUpdated(id, param.NickName, param.VolatileDataCount, param.SourceCount > 0));
     }
 
     // GH_ActiveObject.Menu_BakeItemClick is the exact private click handler
@@ -2269,7 +2278,7 @@ public class SlateWindow : Form
         GetPersistentParamMenuMethod(kind, "Menu_DestroyPersistentData")?.Invoke(param, new object?[] { null, EventArgs.Empty });
         param.ExpireSolution(true);
 
-        PostToJs(SlateEvent.GeometryParamUpdated(id, param.NickName, param.VolatileDataCount));
+        PostToJs(SlateEvent.GeometryParamUpdated(id, param.NickName, param.VolatileDataCount, param.SourceCount > 0));
     }
 
     // GH_PersistentParam<T>.SetPersistentData(IEnumerable<T>) is strongly
@@ -2482,7 +2491,7 @@ public class SlateWindow : Form
         // live Rhino reference by default, internalizing is opt-in). It's a
         // pure UI preference with no live GH counterpart, so JS owns it from
         // here on — RestoreState never overwrites it, only count/name/kind.
-        PostToJs(SlateEvent.GeometryParamAdded(tabId, id, param.NickName, kind, param.VolatileDataCount, groupId));
+        PostToJs(SlateEvent.GeometryParamAdded(tabId, id, param.NickName, kind, param.VolatileDataCount, param.SourceCount > 0, groupId));
     }
 
     public void ClearAll()
@@ -2573,7 +2582,7 @@ public class SlateWindow : Form
                 .ToDictionary(t => t.InstanceGuid.ToString(), t => t);
             var docGeometryParams = doc.Objects
                 .OfType<IGH_Param>()
-                .Where(p => TryGetGeometryParamKind(p, out _) && p.SourceCount == 0)
+                .Where(p => TryGetGeometryParamKind(p, out _))
                 .ToDictionary(p => p.InstanceGuid.ToString(), p => p);
 
             _sliders.Clear();
@@ -2712,6 +2721,7 @@ public class SlateWindow : Form
                             s["name"]     = gpm.NickName;
                             s["geomKind"] = gpKind;
                             s["count"]    = gpm.VolatileDataCount;
+                            s["wired"]    = gpm.SourceCount > 0;
                             // "internalize" is left untouched — pure UI preference,
                             // no live GH counterpart to refresh it from.
                         }

@@ -28,9 +28,11 @@
   }
   $: kindLabel = KIND_LABELS[slider.geomKind] ?? 'Geometry'
   $: count     = slider.count ?? 0
-  $: pickLabel = count > 0 ? `${count} object${count === 1 ? '' : 's'}` : `Set ${kindLabel}`
+  $: wired     = !!slider.wired
+  $: pickLabel = wired ? `${kindLabel} (wired)` : count > 0 ? `${count} object${count === 1 ? '' : 's'}` : `Set ${kindLabel}`
 
   function pick() {
+    if (wired) return
     dispatch('change', { kind: 'pick', internalize: !!slider.internalize })
   }
 
@@ -92,7 +94,8 @@
        SliderRow's track above/below it in the same tab. -->
   <span class="gutter"></span>
 
-  <button class="pick" on:click|stopPropagation={pick} title={`Pick ${kindLabel.toLowerCase()} geometry from Rhino`}>
+  <button class="pick" disabled={wired} on:click|stopPropagation={pick}
+      title={wired ? 'Driven by a wired input — internalize to disconnect it and pick from Rhino instead' : `Pick ${kindLabel.toLowerCase()} geometry from Rhino`}>
     {pickLabel}
   </button>
 
@@ -139,7 +142,7 @@
          composite ("lock-pin" in NOTICE.md) — Lucide's "lock" body with an
          added keyhole slot, Lucide has no dedicated baked-geometry icon. -->
     <button class="icon-btn" class:active={slider.internalize} on:click|stopPropagation={toggleInternalize}
-        title={slider.internalize ? 'Internalized — baked into file (click to keep a live Rhino reference)' : 'Live Rhino reference (click to internalize — bake into file)'}>
+        title={slider.internalize ? 'Internalized — baked into file (click to keep a live Rhino reference)' : wired ? 'Driven by a wired input (click to disconnect it and bake the current data in — re-enables Pick)' : 'Live Rhino reference (click to internalize — bake into file)'}>
       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         {#if slider.internalize}
           <rect width="18" height="11" x="3" y="11" rx="2" ry="2" />
@@ -243,6 +246,8 @@
     white-space: nowrap;
   }
   .pick:hover { color: var(--text); border-color: var(--border); }
+  .pick:disabled { opacity: 0.5; cursor: default; }
+  .pick:disabled:hover { color: rgba(var(--text-rgb), 0.65); border-color: var(--grid); }
 
   .icon-cluster {
     display: flex;

@@ -4,6 +4,13 @@ Notable user-facing changes, newest first. Internal refactors and pure repo main
 
 ## Unreleased
 
+## 0.2.1 - 2026-09-21 (hotfix)
+
+- Fix pinned preview geometry clipping in perspective viewports (Top and other parallel views were unaffected) — the pin conduit now contributes its objects' bounds to Rhino's per-frame clipping-plane calculation.
+- Geometry param capture now allows a wired param too, with Set/Pick disabled while it's wired; Internalize disconnects the source (native GH behaviour) and re-enables Set/Pick.
+- Fix wired geometry param captures being dropped on file save/reopen.
+- Fix the group-level preview-pin eye icon lighting up when the group was hidden instead of when it was visible.
+
 ## 0.2.0 - 2026-09-21
 
 - Fix Aero Snap windows not landing flush against a screen edge/corner, and window resize occasionally squeezing the nearest pane after a snap or similar OS-driven window jump.
