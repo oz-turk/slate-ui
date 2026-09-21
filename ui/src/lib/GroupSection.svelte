@@ -103,16 +103,29 @@
   // unit, for free, via plain CSS opacity inheritance.
   let groupDragging = false
 
-  // Plain click keeps toggling (expand/collapse) exactly like before —
-  // ctrl/cmd-click switches to selecting the group instead, same modifier
-  // SliderRow uses for its own selection. Pane.svelte resolves shift (range
-  // vs single) once it also knows the rest of the tab's selection state.
+  // In preview mode a plain click toggles (expand/collapse), same as always.
+  // In edit mode, collapse/expand is the chevron's job only (see onChevronClick)
+  // — a plain click on the rest of the header does nothing there, and
+  // ctrl/cmd-click still selects the group, same modifier SliderRow uses for
+  // its own selection. Pane.svelte resolves shift (range vs single) once it
+  // also knows the rest of the tab's selection state.
   function performHeaderClick(ctrl, shift) {
-    if (mode === 'edit' && ctrl) dispatch('groupSelect', { id: group.id, shift })
-    else dispatch('toggle', group.id)
+    if (mode === 'edit') {
+      if (ctrl) dispatch('groupSelect', { id: group.id, shift })
+    } else {
+      dispatch('toggle', group.id)
+    }
   }
   function onHeaderClick(e) {
     performHeaderClick(e.ctrlKey || e.metaKey, e.shiftKey)
+  }
+  // Chevron is the one always-collapse/expand control, regardless of mode —
+  // stopPropagation so it never also runs performHeaderClick above (which
+  // in edit mode wouldn't toggle anyway, but would still swallow a ctrl-click
+  // as a select instead of a toggle if this bubbled).
+  function onChevronClick(e) {
+    e.stopPropagation()
+    dispatch('toggle', group.id)
   }
 
   // The label sits on flex:1, so it covers most of the header's width —
@@ -162,7 +175,9 @@
       </div>
     {/if}
 
-    <span class="chevron" class:open={!group.collapsed}>›</span>
+    <!-- svelte-ignore a11y-click-events-have-key-events -->
+    <!-- svelte-ignore a11y-no-static-element-interactions -->
+    <span class="chevron" class:open={!group.collapsed} on:click={onChevronClick}>›</span>
 
     {#if editingLabel}
       <input class="label-input" bind:value={labelValue} use:focusAndSelect

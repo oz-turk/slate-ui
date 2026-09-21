@@ -9,7 +9,7 @@
   import {
     layout, workspaces, activeWorkspaceId, allLeaves, restoreLayout, restoreWorkspaces,
     updatePane, syncControl, clearAllWorkspaces, resetToDefault, makeLeaf, setActiveWorkspace,
-    posAppend, applyWindowEdgeResize, orderedItems, reorderTabTopLevel, MIN_PANE_SIZE
+    posAppend, applyWindowEdgeResize, orderedItems, MIN_PANE_SIZE
   } from './stores/layout.js'
   import { mode, pinned, theme, deleteRequest, captureRequest, settingsOpen, clearSelectionTick, groupSelectionTick, hoverHint, altHeld, ctrlHeld } from './stores/uiState.js'
   import { undo, suppressDuring } from './stores/history.js'
@@ -332,6 +332,29 @@
     }
     return best
   }
+  // Unlike reorderTabTopLevel (used by the pane's Type/Name sorts, which
+  // deliberately move a group as one untouched block), Canvas Position is
+  // expected to reach inside groups too — the same recursive position lookup
+  // above (a group's key = its topmost/leftmost descendant) already implies
+  // "wherever things actually sit on the canvas", so leaving a group's own
+  // contents in whatever order they happened to be captured in would read as
+  // only half-sorted. Recurses into every level of `container` (tab or
+  // group), re-ranking that level's own sliders+groups by position and
+  // handing each subgroup back through itself for its own contents.
+  function sortContainerByPosition(container, positions) {
+    const ranked = [...orderedItems(container)].sort((a, b) => {
+      const ka = sortPositionKey(a, positions), kb = sortPositionKey(b, positions)
+      return ka[0] - kb[0] || ka[1] - kb[1]
+    })
+    const rank = new Map(ranked.map((it, i) => [it.id, i]))
+    return {
+      ...container,
+      sliders: container.sliders.map(s => ({ ...s, pos: rank.get(s.id) })),
+      groups: (container.groups ?? []).map(g =>
+        sortContainerByPosition({ ...g, pos: rank.get(g.id) }, positions)
+      ),
+    }
+  }
 
   // WebView2's own Ctrl+scroll zoom — C# posts the new factor as it changes;
   // shown as a transient status-bar hint (same slot hover hints use) since
@@ -476,21 +499,17 @@
     // Reply to Pane.svelte's 'sort_positions_request' (its right-click Sort:
     // Canvas Position) — msg.positions is { sliderId: [x, y] }, the live GH
     // pivot for each slider id it asked about. Fetched fresh and used once
-    // here to compute a new top-level order for that tab; the coordinates
-    // themselves are never stored, only the resulting `pos` (see
-    // reorderTabTopLevel) — same field every other reorder already persists.
+    // here to compute a new order for that tab, recursively through every
+    // group (see sortContainerByPosition); the coordinates themselves are
+    // never stored, only the resulting `pos` — same field every other
+    // reorder already persists.
     if (msg.type === 'sort_positions_result') {
       const leaf = allLeaves(get(layout)).find(l => l.tabs.some(t => t.id === msg.tabId))
       const tab = leaf?.tabs.find(t => t.id === msg.tabId)
       if (leaf && tab) {
-        const sortedIds = [...orderedItems(tab)]
-          .sort((a, b) => {
-            const ka = sortPositionKey(a, msg.positions), kb = sortPositionKey(b, msg.positions)
-            return ka[0] - kb[0] || ka[1] - kb[1]
-          })
-          .map(it => it.id)
+        const sortedTab = sortContainerByPosition(tab, msg.positions)
         updatePane(leaf.paneId, p => ({
-          tabs: p.tabs.map(t => t.id === tab.id ? reorderTabTopLevel(t, sortedIds) : t)
+          tabs: p.tabs.map(t => t.id === tab.id ? sortedTab : t)
         }))
         postStateSnapshot()
       }

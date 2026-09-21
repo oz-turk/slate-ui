@@ -152,8 +152,13 @@
 
 <style>
   .row {
+    /* 9ch fits a signed 7-digit value plus one decimal (e.g. "1000000.0")
+       at the current font-size/family without truncating — sized in ch so
+       it tracks the monospace glyph width exactly instead of a guessed px
+       number. The +4px matches .val's own left padding below. */
+    --val-col-w: calc(9ch + 4px);
     display: grid;
-    grid-template-columns: var(--name-col-w, 110px) 44px 1fr 44px 68px;
+    grid-template-columns: var(--name-col-w, 110px) 44px 1fr 44px var(--val-col-w);
     align-items: center;
     gap: 0;
     padding: 0 12px;
@@ -174,7 +179,7 @@
     pointer-events: none;
   }
   .row:hover          { background: var(--bg); }
-  .row.edit           { grid-template-columns: 20px var(--name-col-w, 110px) 44px 1fr 44px 68px 24px; padding: 0 8px 0 6px; }
+  .row.edit           { grid-template-columns: 20px var(--name-col-w, 110px) 44px 1fr 44px var(--val-col-w) 24px; padding: 0 8px 0 6px; }
   .row.selected       { background: rgba(var(--accent-rgb), 0.15); }
   .row.selected:hover { background: rgba(var(--accent-rgb), 0.22); }
   .row.row-dragging   { opacity: 0.5; position: relative; z-index: 2; }
@@ -256,6 +261,7 @@
   }
 
   .val {
+    box-sizing: border-box;
     width: 100%;
     background: transparent;
     border: none;
