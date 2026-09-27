@@ -1,5 +1,7 @@
 # Slate UI
 
+[![Buy Me A Coffee](https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png)](https://buymeacoffee.com/oz.turk)
+
 A modern parametric control panel for Grasshopper, an alternative to Human UI, built as a WebView2/Svelte interface instead of native WinForms.
 
 > **Status:** early, actively developed. Expect rough edges. Feedback and bug reports welcome.
