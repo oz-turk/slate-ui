@@ -4,6 +4,14 @@ Notable user-facing changes, newest first. Internal refactors and pure repo main
 
 ## Unreleased
 
+## 0.2.3 - 2026-09-27 (hotfix)
+
+- Fix the right-click context menu not opening on several row types (Button, Colour Picker, Data Dam, Geometry Param, Panel, Param Viewer, Toggle, Trigger, Value List).
+- Fix Alt-drag not detecting Alt on those same row types, so copying a control instead of moving it actually worked.
+- Fix the colour picker's saturation track reading flat at extreme lightness.
+- Fix the pane background knockout colour reading more saturated than its real on-screen blend at low alpha, and a halo it introduced on rows with no pane pattern set.
+- Seed a new Custom pane colour with the app's accent hue instead of near-black, and apply it immediately on first click.
+
 ## 0.2.2 - 2026-09-27
 
 - **Alt-drag to copy a control:** Alt-drag a slider/toggle/button row to spawn a synced copy instead of moving the original — copies share the underlying GH object and stay in sync on value/name changes. Alt+X (or a row's right-click menu) removes every copy at once.
