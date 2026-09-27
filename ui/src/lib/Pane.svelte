@@ -16,6 +16,7 @@
   import ContextMenu  from './ContextMenu.svelte'
   import PaneSettingsPopup from './PaneSettingsPopup.svelte'
   import { PANE_PATTERNS, PANE_PATTERN_DEFAULTS } from './panePatterns.js'
+  import { compositeOverOpaque } from './colorUtils.js'
   import { layout, activeWorkspaceId, updatePane, findLeaf, newTabId, splitPane, splitPaneSpanning, newSplitId, setSplitSize, collapsePane, findNeighborPane, moveCrossPaneItem, extractSlidersByIds, orderedItems, posBetween, posAppend, withAppendedPositions, reorderTabTopLevel, removeAllBySourceId, countBySourceId } from '../stores/layout.js'
   import { tabDrag, itemDrag } from '../stores/dragState.js'
   import { computeAlignedSnapTargets, snapRaw } from './splitSnap.js'
@@ -102,21 +103,43 @@
     const s = pane?.style
     if (!s) return ''
     const parts = []
+    const baseHex = $theme === 'light' ? '#e4e1d8' : '#1a1a1a'
     if (s.bg) {
       parts.push(`--pane-bg-override: ${s.bg}`)
-      // Opaque variant (alpha stripped) for text knockout outlines — text-shadow/
-      // filter respect the colour's OWN alpha, so if s.bg has reduced opacity the
-      // outline would be equally translucent and let the pattern bleed through
-      // right where it's meant to mask it. Dropping the alpha suffix ('#rrggbbaa'
-      // → '#rrggbb') isn't a true composite against whatever's behind the pane,
-      // but is close enough for a legibility knockout — see SliderRow/GroupSection.
-      parts.push(`--pane-bg-override-opaque: ${s.bg.slice(0, 7)}`)
+      // Opaque variant for DataTreeSunburst's arc-stroke gap colour — text-
+      // shadow/filter respect the colour's OWN alpha, so if s.bg has reduced
+      // opacity the outline would be equally translucent and let whatever's
+      // behind bleed through right where it's meant to mask it. This used to
+      // just drop the alpha suffix ('#rrggbbaa' → '#rrggbb'), which at low
+      // alpha comes out far more saturated than what's actually on screen (a
+      // 50%-alpha red reads as a soft pink once blended, not solid red) —
+      // composite s.bg over the theme's own flat base surface instead, same
+      // colour the pane itself visually reads as. Single composite is
+      // accurate here specifically because the pane paints its translucent
+      // fill exactly once (header used to double-paint the same colour on
+      // top — see this block's header comment below — that's gone now); a
+      // second stacked alpha layer anywhere in this chain would need a
+      // second composite pass. NOT used by row-hover/handle/label knockouts
+      // any more — see --pane-pattern-mask below for why they need a
+      // separate variable rather than sharing this one.
+      parts.push(`--pane-bg-override-opaque: ${compositeOverOpaque(s.bg, baseHex)}`)
     }
     if (s.pattern && s.pattern !== 'none' && s.pattern !== 'theme') {
       const p = PANE_PATTERNS[s.pattern] ?? PANE_PATTERNS.none
       const scale   = s.patternScale   ?? PANE_PATTERN_DEFAULTS.scale
       const opacity = s.patternOpacity ?? PANE_PATTERN_DEFAULTS.opacity
       parts.push(`--pane-pattern-image-override: ${p.image(opacity, scale)}`, `--pane-pattern-size-override: ${p.size(scale)}`)
+      // Flat colour that knocks the pattern out locally — row hover and the
+      // handle/chevron/label/bound knockout outlines all fall back to
+      // `transparent` (paint nothing) when this is unset, which is always
+      // exactly correct with no pattern since there's nothing behind them to
+      // hide. Only compute/apply it once a pattern actually exists to mask;
+      // composited approximations of a saturated, low-alpha override colour
+      // can visibly drift from the pane's true resting surface (rounding,
+      // base-colour assumptions), which showed up as a highlight/halo on
+      // every row even with no pattern present when this used to share
+      // --pane-bg-override-opaque unconditionally.
+      parts.push(`--pane-pattern-mask: ${s.bg ? compositeOverOpaque(s.bg, baseHex) : baseHex}`)
     }
     return parts.length ? '; ' + parts.join('; ') : ''
   })()

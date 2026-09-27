@@ -70,6 +70,7 @@
     on:dragover|preventDefault={e => rowDragOver(e, dispatch)}
     on:dragleave={e => rowDragLeave(e, dispatch)}
     on:drop|preventDefault={e => rowDrop(e, dispatch)}
+    on:contextmenu|preventDefault|stopPropagation={e => dispatch('contextMenu', { x: e.clientX, y: e.clientY })}
 >
   <!-- svelte-ignore a11y-no-static-element-interactions -->
   <!-- svelte-ignore a11y-click-events-have-key-events -->
@@ -82,7 +83,7 @@
       <div class="handle"
           draggable="true"
           on:click|stopPropagation
-          on:dragstart={e => { e.dataTransfer.effectAllowed = 'move'; rowDragging = true; dispatch('dragStart') }}
+          on:dragstart={e => { e.dataTransfer.effectAllowed = 'move'; rowDragging = true; dispatch('dragStart', e.altKey) }}
           on:drag={onHandleDrag}
           on:dragend={() => { rowDragging = false; dragTranslateY = 0; dispatch('dragEnd') }}
       >
@@ -165,7 +166,7 @@
     transition: background 0.1s;
   }
   .row.edit { padding: 0 8px 0 6px; }
-  .row:hover          { background: var(--bg); }
+  .row:hover          { background: var(--pane-pattern-mask, transparent); }
   .row.selected       { background: rgba(var(--accent-rgb), 0.15); }
   .row.selected:hover { background: rgba(var(--accent-rgb), 0.22); }
 
@@ -209,10 +210,10 @@
     cursor: grab;
     flex-shrink: 0;
     filter:
-      drop-shadow(2px 0 1.5px var(--pane-bg-override-opaque, var(--bg)))
-      drop-shadow(-2px 0 1.5px var(--pane-bg-override-opaque, var(--bg)))
-      drop-shadow(0 2px 1.5px var(--pane-bg-override-opaque, var(--bg)))
-      drop-shadow(0 -2px 1.5px var(--pane-bg-override-opaque, var(--bg)));
+      drop-shadow(2px 0 1.5px var(--pane-pattern-mask, transparent))
+      drop-shadow(-2px 0 1.5px var(--pane-pattern-mask, transparent))
+      drop-shadow(0 2px 1.5px var(--pane-pattern-mask, transparent))
+      drop-shadow(0 -2px 1.5px var(--pane-pattern-mask, transparent));
   }
   .handle:hover  { color: rgba(var(--text-rgb), 0.43); }
   .handle:active { cursor: grabbing; }

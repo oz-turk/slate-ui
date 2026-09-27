@@ -179,7 +179,7 @@
     background: var(--edge-tint);
     pointer-events: none;
   }
-  .row:hover          { background: var(--pane-bg-override, var(--bg)); }
+  .row:hover          { background: var(--pane-pattern-mask, transparent); }
   .row.edit           { grid-template-columns: 20px var(--name-col-w, 110px) 44px 1fr 44px var(--val-col-w) 24px; padding: 0 8px 0 6px; }
   .row.selected       { background: rgba(var(--accent-rgb), 0.15); }
   .row.selected:hover { background: rgba(var(--accent-rgb), 0.22); }
@@ -200,10 +200,10 @@
        colours respect that alpha too, so a translucent outline would let the
        pattern bleed straight back through; see Pane.svelte's paneStyleCss). */
     filter:
-      drop-shadow(2px 0 1.5px var(--pane-bg-override-opaque, var(--bg)))
-      drop-shadow(-2px 0 1.5px var(--pane-bg-override-opaque, var(--bg)))
-      drop-shadow(0 2px 1.5px var(--pane-bg-override-opaque, var(--bg)))
-      drop-shadow(0 -2px 1.5px var(--pane-bg-override-opaque, var(--bg)));
+      drop-shadow(2px 0 1.5px var(--pane-pattern-mask, transparent))
+      drop-shadow(-2px 0 1.5px var(--pane-pattern-mask, transparent))
+      drop-shadow(0 2px 1.5px var(--pane-pattern-mask, transparent))
+      drop-shadow(0 -2px 1.5px var(--pane-pattern-mask, transparent));
   }
   .handle:hover { color: rgba(var(--text-rgb), 0.43); }
   .handle:active { cursor: grabbing; }
@@ -227,10 +227,10 @@
        row's minimal, "printed on paper" look). OPAQUE pane colour — see
        .handle above for why. */
     text-shadow:
-      2px 0 1.5px var(--pane-bg-override-opaque, var(--bg)), -2px 0 1.5px var(--pane-bg-override-opaque, var(--bg)),
-      0 2px 1.5px var(--pane-bg-override-opaque, var(--bg)), 0 -2px 1.5px var(--pane-bg-override-opaque, var(--bg)),
-      2px 2px 1.5px var(--pane-bg-override-opaque, var(--bg)), -2px -2px 1.5px var(--pane-bg-override-opaque, var(--bg)),
-      2px -2px 1.5px var(--pane-bg-override-opaque, var(--bg)), -2px 2px 1.5px var(--pane-bg-override-opaque, var(--bg));
+      2px 0 1.5px var(--pane-pattern-mask, transparent), -2px 0 1.5px var(--pane-pattern-mask, transparent),
+      0 2px 1.5px var(--pane-pattern-mask, transparent), 0 -2px 1.5px var(--pane-pattern-mask, transparent),
+      2px 2px 1.5px var(--pane-pattern-mask, transparent), -2px -2px 1.5px var(--pane-pattern-mask, transparent),
+      2px -2px 1.5px var(--pane-pattern-mask, transparent), -2px 2px 1.5px var(--pane-pattern-mask, transparent);
   }
   .bound.lo { text-align: right; padding-right: 6px; }
   .bound.hi { text-align: left;  padding-left: 6px; }
@@ -297,10 +297,10 @@
     -moz-appearance: textfield;
     /* knockout outline — see .bound above */
     text-shadow:
-      2px 0 1.5px var(--pane-bg-override-opaque, var(--bg)), -2px 0 1.5px var(--pane-bg-override-opaque, var(--bg)),
-      0 2px 1.5px var(--pane-bg-override-opaque, var(--bg)), 0 -2px 1.5px var(--pane-bg-override-opaque, var(--bg)),
-      2px 2px 1.5px var(--pane-bg-override-opaque, var(--bg)), -2px -2px 1.5px var(--pane-bg-override-opaque, var(--bg)),
-      2px -2px 1.5px var(--pane-bg-override-opaque, var(--bg)), -2px 2px 1.5px var(--pane-bg-override-opaque, var(--bg));
+      2px 0 1.5px var(--pane-pattern-mask, transparent), -2px 0 1.5px var(--pane-pattern-mask, transparent),
+      0 2px 1.5px var(--pane-pattern-mask, transparent), 0 -2px 1.5px var(--pane-pattern-mask, transparent),
+      2px 2px 1.5px var(--pane-pattern-mask, transparent), -2px -2px 1.5px var(--pane-pattern-mask, transparent),
+      2px -2px 1.5px var(--pane-pattern-mask, transparent), -2px 2px 1.5px var(--pane-pattern-mask, transparent);
   }
   .val::-webkit-inner-spin-button { display: none; }
   .val:focus { border-bottom-color: rgba(var(--accent-rgb), 0.4); color: rgba(var(--text-rgb), 0.85); }
@@ -319,10 +319,10 @@
     justify-content: center;
     /* knockout outline — see .bound above */
     text-shadow:
-      2px 0 1.5px var(--pane-bg-override-opaque, var(--bg)), -2px 0 1.5px var(--pane-bg-override-opaque, var(--bg)),
-      0 2px 1.5px var(--pane-bg-override-opaque, var(--bg)), 0 -2px 1.5px var(--pane-bg-override-opaque, var(--bg)),
-      2px 2px 1.5px var(--pane-bg-override-opaque, var(--bg)), -2px -2px 1.5px var(--pane-bg-override-opaque, var(--bg)),
-      2px -2px 1.5px var(--pane-bg-override-opaque, var(--bg)), -2px 2px 1.5px var(--pane-bg-override-opaque, var(--bg));
+      2px 0 1.5px var(--pane-pattern-mask, transparent), -2px 0 1.5px var(--pane-pattern-mask, transparent),
+      0 2px 1.5px var(--pane-pattern-mask, transparent), 0 -2px 1.5px var(--pane-pattern-mask, transparent),
+      2px 2px 1.5px var(--pane-pattern-mask, transparent), -2px -2px 1.5px var(--pane-pattern-mask, transparent),
+      2px -2px 1.5px var(--pane-pattern-mask, transparent), -2px 2px 1.5px var(--pane-pattern-mask, transparent);
     transition: background 0.1s, color 0.1s;
     margin-left: 4px;
     padding: 0;

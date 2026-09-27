@@ -14,6 +14,15 @@
                                   // panePatterns.js) read as visibly pixelated/aliased rather than a
                                   // soft texture, and busy enough to fight row text legibility
 
+  // Seed colour for the FIRST click into Custom — the app's own accent hue
+  // (same value TabBar's tab-colouring already defaults to), not a grey.
+  // Custom doesn't do anything until this click commits it, so there's no
+  // "preserve the existing state" reason to seed with something desaturated
+  // — a vivid, decently-lit start means the H/S/L tracks are all legible
+  // immediately and the pane visibly changes the moment you pick Custom,
+  // rather than requiring a drag first to see anything happen.
+  const CUSTOM_SEED = '#74a2ffff'
+
   const PATTERN_OPTIONS = [
     { key: 'none',       label: 'None' },
     { key: 'dots',       label: 'Dots' },
@@ -49,6 +58,10 @@
   function openColourPopup(e) {
     const rect = e.currentTarget.getBoundingClientRect()
     const w = 216, h = 300
+    // First entry into Custom (bg still null) commits the seed right away —
+    // clicking Custom IS choosing it, not just previewing it, so the swatch
+    // shows active and the pane updates before any slider's been touched.
+    if (!bg) dispatch('change', { kind: 'bg', value: CUSTOM_SEED })
     colourPopup = {
       x: Math.min(rect.left, window.innerWidth  - w - 8),
       y: Math.min(rect.bottom + 4, window.innerHeight - h - 8),
@@ -126,7 +139,7 @@
   {/if}
 
   {#if colourPopup}
-    <ColourPickerPopup x={colourPopup.x} y={colourPopup.y} hex={bg ?? '#1a1a1aff'}
+    <ColourPickerPopup x={colourPopup.x} y={colourPopup.y} hex={bg ?? CUSTOM_SEED}
       on:change={onColourChange}
       on:close={() => colourPopup = null} />
   {/if}

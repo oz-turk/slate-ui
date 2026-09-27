@@ -78,9 +78,18 @@
     }
   }
 
-  // gradient backgrounds — each track's own visual IS the value indicator
+  // gradient backgrounds — each track's own visual IS the value indicator.
+  // satBg used to interpolate at the CURRENT l — a literal "what would this
+  // saturation look like at today's lightness" preview, but at low/high l
+  // both endpoints (0% and 100% sat) sit near black/white regardless of hue,
+  // so the whole track read as a flat single colour right when l was most
+  // extreme (see lightBg below, which sidesteps the identical trap by fixing
+  // its OWN reference point at 50% instead of following the live channel).
+  // Pinning l to 50% here the same way keeps the ramp visibly grey→vivid at
+  // every hue/lightness combination — the L track already shows where the
+  // real lightness sits, so this one no longer needs to double as that.
   $: hueBg  = `linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00)`
-  $: satBg  = `linear-gradient(to right, hsl(${h}, 0%, ${l}%), hsl(${h}, 100%, ${l}%))`
+  $: satBg  = `linear-gradient(to right, hsl(${h}, 0%, 50%), hsl(${h}, 100%, 50%))`
   $: lightBg = `linear-gradient(to right, #000, hsl(${h}, ${s}%, 50%), #fff)`
   $: rBg = `linear-gradient(to right, rgb(0,${g},${b}), rgb(255,${g},${b}))`
   $: gBg = `linear-gradient(to right, rgb(${r},0,${b}), rgb(${r},255,${b}))`

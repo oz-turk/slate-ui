@@ -399,10 +399,10 @@
        own alpha, so a translucent outline would let the pattern bleed
        straight back through (see Pane.svelte's paneStyleCss). */
     filter:
-      drop-shadow(2px 0 1.5px var(--pane-bg-override-opaque, var(--bg)))
-      drop-shadow(-2px 0 1.5px var(--pane-bg-override-opaque, var(--bg)))
-      drop-shadow(0 2px 1.5px var(--pane-bg-override-opaque, var(--bg)))
-      drop-shadow(0 -2px 1.5px var(--pane-bg-override-opaque, var(--bg)));
+      drop-shadow(2px 0 1.5px var(--pane-pattern-mask, transparent))
+      drop-shadow(-2px 0 1.5px var(--pane-pattern-mask, transparent))
+      drop-shadow(0 2px 1.5px var(--pane-pattern-mask, transparent))
+      drop-shadow(0 -2px 1.5px var(--pane-pattern-mask, transparent));
   }
   .handle:hover  { color: rgba(var(--text-rgb), 0.43); }
   .handle:active { cursor: grabbing; }
@@ -418,10 +418,10 @@
        (recede for hierarchy) which a busy pane pattern would otherwise wash
        out. OPAQUE pane colour, see SliderRow's .handle for why. */
     text-shadow:
-      2px 0 1.5px var(--pane-bg-override-opaque, var(--bg)), -2px 0 1.5px var(--pane-bg-override-opaque, var(--bg)),
-      0 2px 1.5px var(--pane-bg-override-opaque, var(--bg)), 0 -2px 1.5px var(--pane-bg-override-opaque, var(--bg)),
-      2px 2px 1.5px var(--pane-bg-override-opaque, var(--bg)), -2px -2px 1.5px var(--pane-bg-override-opaque, var(--bg)),
-      2px -2px 1.5px var(--pane-bg-override-opaque, var(--bg)), -2px 2px 1.5px var(--pane-bg-override-opaque, var(--bg));
+      2px 0 1.5px var(--pane-pattern-mask, transparent), -2px 0 1.5px var(--pane-pattern-mask, transparent),
+      0 2px 1.5px var(--pane-pattern-mask, transparent), 0 -2px 1.5px var(--pane-pattern-mask, transparent),
+      2px 2px 1.5px var(--pane-pattern-mask, transparent), -2px -2px 1.5px var(--pane-pattern-mask, transparent),
+      2px -2px 1.5px var(--pane-pattern-mask, transparent), -2px 2px 1.5px var(--pane-pattern-mask, transparent);
   }
   /* depth-based chevron/label color */
   .group[style*="--depth:0"] .chevron { color: rgba(var(--text-rgb), 0.36); }
@@ -440,10 +440,10 @@
     white-space: nowrap;
     /* knockout outline — see .chevron above */
     text-shadow:
-      2px 0 1.5px var(--pane-bg-override-opaque, var(--bg)), -2px 0 1.5px var(--pane-bg-override-opaque, var(--bg)),
-      0 2px 1.5px var(--pane-bg-override-opaque, var(--bg)), 0 -2px 1.5px var(--pane-bg-override-opaque, var(--bg)),
-      2px 2px 1.5px var(--pane-bg-override-opaque, var(--bg)), -2px -2px 1.5px var(--pane-bg-override-opaque, var(--bg)),
-      2px -2px 1.5px var(--pane-bg-override-opaque, var(--bg)), -2px 2px 1.5px var(--pane-bg-override-opaque, var(--bg));
+      2px 0 1.5px var(--pane-pattern-mask, transparent), -2px 0 1.5px var(--pane-pattern-mask, transparent),
+      0 2px 1.5px var(--pane-pattern-mask, transparent), 0 -2px 1.5px var(--pane-pattern-mask, transparent),
+      2px 2px 1.5px var(--pane-pattern-mask, transparent), -2px -2px 1.5px var(--pane-pattern-mask, transparent),
+      2px -2px 1.5px var(--pane-pattern-mask, transparent), -2px 2px 1.5px var(--pane-pattern-mask, transparent);
   }
   .group[style*="--depth:0"] .label { color: rgba(var(--text-rgb), 0.47); }
   .group[style*="--depth:1"] .label { color: rgba(var(--text-rgb), 0.35); }

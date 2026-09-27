@@ -16,6 +16,26 @@ export function rgbaToHex8({ r, g, b, a }) {
   return '#' + h(r) + h(g) + h(b) + h(a)
 }
 
+// Source-over composite of an #RRGGBBAA colour against an opaque #RRGGBB
+// backdrop, returned as an opaque #RRGGBB. Used where a translucent colour
+// (e.g. a pane's own background override) needs an equivalent SOLID colour
+// — a knockout outline, for instance, can't itself be translucent (it would
+// let whatever's behind bleed straight through, defeating the knockout), so
+// it needs the colour that translucent fill actually *reads as* once
+// blended with its backdrop, not just its alpha-stripped hue (which can be
+// far more saturated/different than what's visually on screen at low alpha).
+export function compositeOverOpaque(hex8, baseHex) {
+  const { r, g, b, a } = hex8ToRgba(hex8)
+  const base = hex8ToRgba(baseHex)
+  const t = a / 255
+  return rgbaToHex8({
+    r: r * t + base.r * (1 - t),
+    g: g * t + base.g * (1 - t),
+    b: b * t + base.b * (1 - t),
+    a: 255,
+  })
+}
+
 export function rgbToHsl(r, g, b) {
   r /= 255; g /= 255; b /= 255
   const max = Math.max(r, g, b), min = Math.min(r, g, b)

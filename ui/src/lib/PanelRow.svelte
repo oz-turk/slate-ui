@@ -255,6 +255,7 @@
     on:dragover|preventDefault={e => rowDragOver(e, dispatch)}
     on:dragleave={e => rowDragLeave(e, dispatch)}
     on:drop|preventDefault={e => rowDrop(e, dispatch)}
+    on:contextmenu|preventDefault|stopPropagation={e => dispatch('contextMenu', { x: e.clientX, y: e.clientY })}
 >
   {#if mode === 'edit'}
     <!-- svelte-ignore a11y-no-static-element-interactions -->
@@ -264,7 +265,7 @@
     <div class="handle"
         draggable="true"
         on:click|stopPropagation
-        on:dragstart={e => { e.dataTransfer.effectAllowed = 'move'; rowDragging = true; dispatch('dragStart') }}
+        on:dragstart={e => { e.dataTransfer.effectAllowed = 'move'; rowDragging = true; dispatch('dragStart', e.altKey) }}
         on:drag={onHandleDrag}
         on:dragend={() => { rowDragging = false; dragTranslateY = 0; dispatch('dragEnd') }}
     >
@@ -386,7 +387,7 @@
      band reads as breathing room even with padding-top:0. Matches the
      bottom's 3px (see TabBar's own inter-tab gap for that reference value). */
   .row.headerless      { padding-top: 3px; }
-  .row:hover          { background: var(--bg); }
+  .row:hover          { background: var(--pane-pattern-mask, transparent); }
   .row.selected       { background: rgba(var(--accent-rgb), 0.15); }
   .row.selected:hover { background: rgba(var(--accent-rgb), 0.22); }
   .row.row-dragging   { opacity: 0.5; position: relative; z-index: 2; }
@@ -428,10 +429,10 @@
        own alpha, so a translucent outline would let the pattern bleed
        straight back through (see Pane.svelte's paneStyleCss). */
     filter:
-      drop-shadow(2px 0 1.5px var(--pane-bg-override-opaque, var(--bg)))
-      drop-shadow(-2px 0 1.5px var(--pane-bg-override-opaque, var(--bg)))
-      drop-shadow(0 2px 1.5px var(--pane-bg-override-opaque, var(--bg)))
-      drop-shadow(0 -2px 1.5px var(--pane-bg-override-opaque, var(--bg)));
+      drop-shadow(2px 0 1.5px var(--pane-pattern-mask, transparent))
+      drop-shadow(-2px 0 1.5px var(--pane-pattern-mask, transparent))
+      drop-shadow(0 2px 1.5px var(--pane-pattern-mask, transparent))
+      drop-shadow(0 -2px 1.5px var(--pane-pattern-mask, transparent));
   }
   .handle:hover  { color: rgba(var(--text-rgb), 0.43); }
   .handle:active { cursor: grabbing; }
