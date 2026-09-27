@@ -10,12 +10,14 @@
   import ColourPickerRow from './ColourPickerRow.svelte'
   import TriggerRow from './TriggerRow.svelte'
   import GeometryParamRow from './GeometryParamRow.svelte'
+  import DataDamRow from './DataDamRow.svelte'
+  import ParamViewerRow from './ParamViewerRow.svelte'
   import { hoverHint } from '../stores/uiState.js'
   import { orderedItems } from '../stores/layout.js'
   const dispatch = createEventDispatcher()
 
   // slider.type → row component (falls back to SliderRow when unset/unknown)
-  const ROW_COMPONENTS = { toggle: ToggleRow, button: ButtonRow, valueList: ValueListRow, panel: PanelRow, itemPicker: ValueListRow, humanValueList: ValueListRow, colourPicker: ColourPickerRow, pancakeButton: ButtonRow, trigger: TriggerRow, geometryParam: GeometryParamRow }
+  const ROW_COMPONENTS = { toggle: ToggleRow, button: ButtonRow, valueList: ValueListRow, panel: PanelRow, itemPicker: ValueListRow, humanValueList: ValueListRow, colourPicker: ColourPickerRow, pancakeButton: ButtonRow, trigger: TriggerRow, geometryParam: GeometryParamRow, dataDam: DataDamRow, paramViewer: ParamViewerRow }
 
   export let group        = {}
   export let mode         = 'preview'
@@ -246,6 +248,8 @@
               on:resizeStart={e  => dispatch('sliderResizeStart', e.detail)}
               on:resizeEnd={()   => dispatch('sliderResizeEnd')}
               on:select={e      => dispatch('sliderSelect',      { id: slider.id, shift: e.detail.shift, ctrl: e.detail.ctrl })}
+              on:paramViewerSize={e       => dispatch('sliderParamViewerSize',       { id: slider.id, size: e.detail })}
+              on:paramViewerShowCounts={e => dispatch('sliderParamViewerShowCounts', { id: slider.id, value: e.detail })}
               on:remove={()      => dispatch('sliderRemove',     { groupId: group.id, sliderId: slider.id })}
               on:dragStart={()  => dispatch('sliderDragStart',   { sliderId: slider.id, groupId: group.id })}
               on:dragEnd={()    => dispatch('sliderDragEnd')}

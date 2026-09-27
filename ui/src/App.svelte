@@ -6,12 +6,13 @@
   import WorkspaceTabs  from './lib/WorkspaceTabs.svelte'
   import StatusBar      from './lib/StatusBar.svelte'
   import SettingsPanel  from './lib/SettingsPanel.svelte'
+  import ParamViewerFullscreen from './lib/ParamViewerFullscreen.svelte'
   import {
     layout, workspaces, activeWorkspaceId, allLeaves, restoreLayout, restoreWorkspaces,
     updatePane, syncControl, clearAllWorkspaces, resetToDefault, makeLeaf, setActiveWorkspace,
     posAppend, applyWindowEdgeResize, orderedItems, MIN_PANE_SIZE
   } from './stores/layout.js'
-  import { mode, pinned, theme, deleteRequest, captureRequest, settingsOpen, clearSelectionTick, groupSelectionTick, hoverHint, altHeld, ctrlHeld } from './stores/uiState.js'
+  import { mode, pinned, theme, deleteRequest, captureRequest, settingsOpen, clearSelectionTick, groupSelectionTick, hoverHint, altHeld, ctrlHeld, fullscreenTreeId, paramViewerItemsCache } from './stores/uiState.js'
   import { undo, suppressDuring } from './stores/history.js'
   import { postToCs, postStateSnapshot } from './lib/ipc.js'
 
@@ -448,6 +449,47 @@
       syncControl(msg.id, { name: msg.name, count: msg.count, wired: msg.wired })
     }
 
+    // Native "Data Dam" (GH_DataDamComponent) — mode is "always"/"never"/
+    // "delay" (mirrors the native right-click submenu's own combined preset
+    // list, see yapilacaklar/data-dam-capture.md); delayLabel is C#'s own
+    // formatted text (no native display-string property exists here, unlike
+    // Trigger's intervalString). gateLinked/gateName start false/null — see
+    // dataDam_gate_selected below for how a Select Gate link is attached.
+    if (msg.type === 'dataDam_added') {
+      addCapturedControl({ id: msg.id, type: 'dataDam', name: msg.name, mode: msg.mode, delaySeconds: msg.delaySeconds, delayLabel: msg.delayLabel, transferPossible: msg.transferPossible, gateLinked: msg.gateLinked, gateName: msg.gateName, gateMode: 'once' }, msg)
+    }
+
+    // Catches Mode/Delay/name changes made directly on the native canvas,
+    // plus a gate link breaking (its source deleted on the canvas) — see
+    // PushDataDamUpdates/PushDataDamGateUpdates in SlateWindow.cs. Never
+    // touches gateId (see dataDam_gate_selected for the only thing that does).
+    if (msg.type === 'dataDam_update') {
+      syncControl(msg.id, { name: msg.name, mode: msg.mode, delaySeconds: msg.delaySeconds, delayLabel: msg.delayLabel, transferPossible: msg.transferPossible, gateLinked: msg.gateLinked, gateName: msg.gateName })
+    }
+
+    // One-shot reply to DataDamRow's Select Gate button. gateId has no live
+    // GH counterpart (pure Slate bookkeeping, like geometryParam's
+    // "internalize") — RestoreState can't refresh it from anywhere, so it's
+    // persisted explicitly here rather than relying on the periodic
+    // dataDam_update push above (which never carries or triggers a save).
+    if (msg.type === 'dataDam_gate_selected') {
+      syncControl(msg.id, { gateLinked: msg.gateLinked, gateName: msg.gateName, gateId: msg.gateId })
+      postStateSnapshot()
+    }
+
+    // Native "Param Viewer" (GH_ParamViewer) — tree is the generic
+    // { kids: [...] } / { count } shape built from GH's own GraphicTree
+    // (see BuildParamViewerTree in SlateWindow.cs). Re-pushed on every solve
+    // (paramViewer_update) since the wired source's data can change freely,
+    // same reasoning as panel_text_update.
+    if (msg.type === 'paramViewer_added') {
+      addCapturedControl({ id: msg.id, type: 'paramViewer', name: msg.name, tree: msg.tree }, msg)
+    }
+
+    if (msg.type === 'paramViewer_update') {
+      syncControl(msg.id, { name: msg.name, tree: msg.tree })
+    }
+
     if (msg.type === 'slider_name_update') {
       syncControl(msg.id, { name: msg.name })
     }
@@ -513,6 +555,15 @@
         }))
         postStateSnapshot()
       }
+    }
+
+    // Reply to DataTreeSunburst's 'paramViewer_request_items' — see
+    // GetParamViewerLeafItems in SlateWindow.cs. Cached by key so a leaf the
+    // user has already drilled into (and hasn't re-solved since) doesn't
+    // re-request on every back/forward through it.
+    if (msg.type === 'paramViewer_items_result') {
+      const key = `${msg.id}:${(msg.path ?? []).join(',')}`
+      paramViewerItemsCache.update(c => ({ ...c, [key]: msg.items }))
     }
 
     if (msg.type === 'restore_state') {
@@ -598,6 +649,8 @@
 
   <StatusBar />
 </main>
+
+{#if $fullscreenTreeId}<ParamViewerFullscreen />{/if}
 
 <style>
   :global(*, *::before, *::after) { box-sizing: border-box; margin: 0; padding: 0; }

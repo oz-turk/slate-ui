@@ -1,4 +1,5 @@
 import { writable, derived, get } from 'svelte/store'
+import { generateMockTree, generateDenseMockTree } from '../lib/treeMock.js'
 
 // ── ID generators ─────────────────────────────────────────────────────────────
 let _pc = 0, _sc = 0, _tc = 0, _wc = 0
@@ -69,8 +70,19 @@ function makeSplit(dir, a, b, sizeA = 260, presetId) {
 // Each workspace is a fully independent pane/split/tab tree — switching the
 // active one swaps the whole layout, like a separate desktop.
 const _initialWorkspaceId = wid()
+const _initialLayout = makeLeaf()
+// Dev-only seed for the Data Tree Explorer (see ParamViewerRow/
+// DataTreeSunburst) — `import.meta.env.DEV` is false in the built .gha
+// bundle (npm run build), so this never reaches a real user. Stands in for
+// a real Path Mapper capture until that exists (yapilacaklar/data-tree-editor.md).
+if (import.meta.env.DEV) {
+  _initialLayout.tabs[0].sliders.push(
+    { id: 'dev_paramviewer_sample', type: 'paramViewer', name: 'Data tree (sample)', tree: generateMockTree(), pos: 0 },
+    { id: 'dev_paramviewer_dense',  type: 'paramViewer', name: 'Data tree (dense)',  tree: generateDenseMockTree(), pos: 1 },
+  )
+}
 export const workspaces = writable([
-  { id: _initialWorkspaceId, label: 'Workspace 1', layout: makeLeaf() }
+  { id: _initialWorkspaceId, label: 'Workspace 1', layout: _initialLayout }
 ])
 export const activeWorkspaceId = writable(_initialWorkspaceId)
 

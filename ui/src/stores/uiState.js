@@ -52,6 +52,12 @@ export const altHeld = writable(false)
 // switch) while it's down. Set/cleared in App.svelte alongside altHeld.
 export const ctrlHeld = writable(false)
 
+// Id of the paramViewer control currently shown fullscreen (covers the whole
+// Slate window, not the OS screen) — null when closed. Set by
+// ParamViewerRow's expand button, cleared by ParamViewerFullscreen's close
+// button or Escape (see App.svelte).
+export const fullscreenTreeId = writable(null)
+
 // SplitIds currently moving together as an aligned-edge group drag — each
 // divider is a separate component instance (they can belong to completely
 // unrelated split subtrees), so this is how the one under the pointer tells
@@ -59,3 +65,12 @@ export const ctrlHeld = writable(false)
 // group drag is in progress; set to just the dragged divider's own id once
 // it's broken off (Alt / shake) mid-drag.
 export const activeDragGroup = writable([])
+
+// On-demand cache for the Data Tree Explorer's item-view drill-in (drilling
+// all the way into a real branch to read its actual values, rendered as
+// its own ring — see DataTreeSunburst.svelte's itemsPath/itemsNode).
+// Keyed by `${paramViewerId}:${path}`; filled by App.svelte's
+// 'paramViewer_items_result' handler. Deliberately not persisted/read by
+// state_snapshot — always a fresh request per drill, GH data can change
+// between opens and a branch can hold thousands of items.
+export const paramViewerItemsCache = writable({})

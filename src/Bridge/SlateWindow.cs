@@ -1,5 +1,7 @@
 using Grasshopper.GUI.Base;
 using Grasshopper.Kernel;
+using Grasshopper.Kernel.Components;
+using Grasshopper.Kernel.Data;
 using Grasshopper.Kernel.Parameters;
 using Grasshopper.Kernel.Special;
 using Grasshopper.Kernel.Types;
@@ -254,6 +256,35 @@ public class SlateWindow : Form
     // for the type→kind map.
     private readonly Dictionary<string, IGH_Param> _geometryParams = new();
 
+    // Native "Data Dam" (Grasshopper.Kernel.Components.GH_DataDamComponent) —
+    // unlike every entry above it IS a genuine data-carrying GH_Component (own
+    // input/output), not an IGH_Param, but it's captured the same "not wired
+    // into Slate's slider-value pipeline" way GH_Timer is. See
+    // _barika/.../data-dam-capture.md.
+    private readonly Dictionary<string, GH_DataDamComponent> _dataDams = new();
+
+    // Native "Param Viewer" (Grasshopper.Kernel.Special.GH_ParamViewer) — an
+    // IGH_Param whose own value type (GH_StructurePath) isn't the data we
+    // actually want; what we read instead is GraphicTree, the recursive
+    // structure GH already builds for its own on-canvas fan display (see
+    // BuildParamViewerTree). See yapilacaklar/data-tree-editor.md.
+    private readonly Dictionary<string, GH_ParamViewer> _paramViewers = new();
+
+    // Optional "Select Gate" link, one per captured Data Dam id — the source
+    // object (Param_Boolean / Param_Integer / GH_Panel, see IsValidGateSource)
+    // whose value gates an automatic release. Pure Slate bookkeeping, no
+    // native GH concept behind it. _dataDamGateLastValue holds the last-read
+    // bool per dam id for the rising-edge check in PushDataDamGateUpdates.
+    private readonly Dictionary<string, IGH_Param> _dataDamGates = new();
+    private readonly Dictionary<string, bool> _dataDamGateLastValue = new();
+
+    // Gate trigger mode — "once" (rising-edge, fire a single release) or
+    // "always" (see PushDataDamGateUpdates: acts like BufferMode.Always for as
+    // long as the gate reads true, WITHOUT ever touching the dam's own Mode —
+    // deliberately non-destructive, see data-dam-capture.md's "Gate Options"
+    // design). Pure Slate bookkeeping, defaults to "once" whenever absent.
+    private readonly Dictionary<string, string> _dataDamGateMode = new();
+
     // Live GH canvas position for an already-captured id — checks every
     // per-type registry above (same set RestoreState re-attaches from). Used
     // only for the ephemeral "sort_positions_request" round trip; never
@@ -271,8 +302,120 @@ public class SlateWindow : Form
         if (_pancakeTrueOnlyButtons.TryGetValue(id, out var pb)) { pivot = pb.Attributes.Pivot; return true; }
         if (_triggers.TryGetValue(id, out var tr))          { pivot = tr.Attributes.Pivot;  return true; }
         if (_geometryParams.TryGetValue(id, out var gp))    { pivot = gp.Attributes.Pivot;  return true; }
+        if (_dataDams.TryGetValue(id, out var dd))          { pivot = dd.Attributes.Pivot;  return true; }
+        if (_paramViewers.TryGetValue(id, out var pvw))     { pivot = pvw.Attributes.Pivot; return true; }
         pivot = default;
         return false;
+    }
+
+    // ── Data Dam capture + Select Gate ──────────────────────────────────────
+
+    // Select Gate source restriction — Boolean/Integer params and Panel are
+    // the only types whose value maps cleanly to a release trigger (see
+    // TryGetGateBoolValue). Matches the scope agreed in data-dam-capture.md.
+    private static bool IsValidGateSource(IGH_DocumentObject o) =>
+        o is Param_Boolean || o is Param_Integer || o is GH_Panel;
+
+    // Casts a gate source's current value to bool the same way GH itself
+    // casts wired int/string data into a Boolean param — confirmed via
+    // reflection against GH_Convert.ToBoolean (Grasshopper.dll), so this
+    // never reimplements GH's own 0/1/"True"/"False" coercion rules. Panel
+    // goes through GetPanelText (not raw VolatileData) for the same
+    // SourceCount/UserText reasoning as the panel row itself.
+    private static bool TryGetGateBoolValue(IGH_Param source, out bool value)
+    {
+        value = false;
+        if (source is GH_Panel panel)
+            return GH_Convert.ToBoolean(GetPanelText(panel), out value, GH_Conversion.Both);
+
+        var goo = source.VolatileData?.AllData(true).FirstOrDefault();
+        if (goo == null) return false;
+        return GH_Convert.ToBoolean(goo, out value, GH_Conversion.Both);
+    }
+
+    // Mode/Delay → wire shape. Mirrors the native right-click submenu's own
+    // preset list exactly (Always / 0.25 / 0.5 / 1.0 / 2.0 / 10.0 seconds /
+    // Never — confirmed from a live screenshot, see data-dam-capture.md), so
+    // delayLabel always matches what GH itself would show for the same value
+    // even if the file's actual Delay isn't one of the presets.
+    private static (string mode, double delaySeconds, string delayLabel) DescribeDam(GH_DataDamComponent dam)
+    {
+        string mode = dam.Mode switch
+        {
+            GH_DataDamComponent.BufferMode.Always => "always",
+            GH_DataDamComponent.BufferMode.Never  => "never",
+            _                                      => "delay",
+        };
+        double seconds = dam.Delay.TotalSeconds;
+        string label = mode switch
+        {
+            "always" => "Always",
+            "never"  => "Never",
+            _        => $"{seconds.ToString("0.0#", System.Globalization.CultureInfo.InvariantCulture)} seconds",
+        };
+        return (mode, seconds, label);
+    }
+
+    public void AddDataDam(string tabId, string? groupId, GH_DataDamComponent dam)
+    {
+        string id = dam.InstanceGuid.ToString();
+        _dataDams[id] = dam;
+
+        var (mode, delaySeconds, delayLabel) = DescribeDam(dam);
+        PostToJs(SlateEvent.DataDamAdded(tabId, id, dam.NickName, mode, delaySeconds, delayLabel, dam.TransferPossible, gateLinked: false, gateName: null, groupId));
+    }
+
+    // Reads the currently-selected canvas object (same "select on canvas,
+    // then click the Slate button" flow as Capture itself, see
+    // CaptureSelected) and, if it's a valid gate source type, links it —
+    // replacing any previous gate for this dam. No match (nothing selected,
+    // or the wrong type) just logs and leaves any existing gate untouched.
+    private void PickDataDamGate(string damId)
+    {
+        if (!_dataDams.TryGetValue(damId, out var dam)) return;
+
+        var doc = HostDocument ?? Grasshopper.Instances.ActiveCanvas?.Document;
+        // Only one gate can ever be linked per dam — if the user has more
+        // than one valid type selected, pick deterministically rather than
+        // whatever order doc.Objects happens to enumerate in. Same canvas-
+        // order convention SlatePanel.cs's own capture loop already uses:
+        // top-to-bottom (Pivot.Y) then left-to-right (Pivot.X).
+        var candidates = doc?.Objects
+            .Where(o => o.Attributes?.Selected == true && IsValidGateSource(o))
+            .OfType<IGH_Param>()
+            .OrderBy(p => p.Attributes.Pivot.Y)
+            .ThenBy(p => p.Attributes.Pivot.X)
+            .ToList() ?? new List<IGH_Param>();
+        var candidate = candidates.FirstOrDefault();
+
+        if (candidate == null)
+        {
+            Log("Select Gate: no Boolean param, Integer param, or Panel selected.");
+            return;
+        }
+        if (candidates.Count > 1)
+            Log($"Select Gate: {candidates.Count} valid objects were selected — used the top-left one (\"{candidate.NickName}\").");
+
+        _dataDamGates[damId] = candidate;
+        // Seed with the CURRENT value rather than false — a link shouldn't
+        // immediately fire the dam just because the source already reads
+        // true at the moment it's selected, only on the next false→true
+        // transition (see PushDataDamGateUpdates).
+        TryGetGateBoolValue(candidate, out var seed);
+        _dataDamGateLastValue[damId] = seed;
+
+        PostToJs(SlateEvent.DataDamGateSelected(damId, gateLinked: true, candidate.NickName, candidate.InstanceGuid.ToString()));
+    }
+
+    // The "x" next to the gate button — unlinks without selecting a
+    // replacement. Reuses the same DataDamGateSelected reply shape as
+    // PickDataDamGate (gateLinked=false, gateId=null) so JS's persisted
+    // gateId is cleared the same explicit way it was set.
+    private void ClearDataDamGate(string damId)
+    {
+        if (!_dataDamGates.Remove(damId)) return;
+        _dataDamGateLastValue.Remove(damId);
+        PostToJs(SlateEvent.DataDamGateSelected(damId, gateLinked: false, gateName: null, gateId: null));
     }
 
     // Concrete Param_* class → our wire "kind" string. Only these 8 —
@@ -1052,6 +1195,9 @@ public class SlateWindow : Form
             PushColourPickerUpdates();
             PushTriggerUpdates();
             PushGeometryParamUpdates();
+            PushDataDamGateUpdates();
+            PushDataDamUpdates();
+            PushParamViewerUpdates();
         }));
     }
 
@@ -1150,6 +1296,120 @@ public class SlateWindow : Form
         }
     }
 
+    // Gate check — see data-dam-capture.md's "Select Gate" / "Gate Options"
+    // design. Runs every solve end (same reasoning/caveat as
+    // PushTriggerUpdates: a gate source changing alone doesn't itself
+    // schedule a solve, so this only reacts once something else in the doc
+    // causes one). A source deleted from the canvas silently drops the link —
+    // no error surfaced, per the agreed UX; PushDataDamUpdates (called right
+    // after) picks up the resulting gateLinked=false on its own next
+    // fingerprint check.
+    private static void PushDataDamGateUpdates()
+    {
+        var win = _instance;
+        if (win == null || win._dataDamGates.Count == 0) return;
+        var doc = _hostDocument;
+
+        foreach (var damId in win._dataDamGates.Keys.ToList())
+        {
+            var gate = win._dataDamGates[damId];
+            bool stillLive = doc != null && doc.Objects.Contains(gate);
+            if (!stillLive)
+            {
+                win._dataDamGates.Remove(damId);
+                win._dataDamGateLastValue.Remove(damId);
+                continue;
+            }
+
+            if (!TryGetGateBoolValue(gate, out var current)) continue;
+            bool previous = win._dataDamGateLastValue.TryGetValue(damId, out var p) && p;
+            win._dataDamGateLastValue[damId] = current;
+
+            if (!win._dataDams.TryGetValue(damId, out var dam)) continue;
+            bool alwaysGate = win._dataDamGateMode.TryGetValue(damId, out var gm) && gm == "always";
+
+            // "always": deliberately never touches dam.Mode (see the type's
+            // comment) — instead it leans on TransferPossible, the same public
+            // flag GH_DataDamAttributes.RespondToMouseUp itself checks before
+            // enabling its click ("there's new data waiting"). It's set true
+            // by the dam's own ExpireSolution override whenever upstream data
+            // actually changes (even the swallowed recompute=false path still
+            // sets it), and reset false at the top of every SolveInstance —
+            // so checking it here is what makes "while gated true, act like
+            // Always" self-throttling: no new upstream data since the last
+            // forced release means no forced release, so this can never loop
+            // forever on its own SolutionEnd feedback. "once" keeps the
+            // original rising-edge behavior — a single release per false→true
+            // transition, regardless of TransferPossible.
+            bool shouldRelease = alwaysGate
+                ? current && dam.TransferPossible
+                : !previous && current;
+
+            if (shouldRelease)
+            {
+                // GH_DataDamComponent overrides ExpireSolution(bool) —
+                // confirmed via ilspycmd decompile (Grasshopper.dll). The
+                // recompute=false path (ApplyLatestValues' own idiom
+                // elsewhere in this file) is a dead end here: in Never/Delay
+                // mode the override never calls base.ExpireSolution at all,
+                // so the dam is never actually queued and nothing updates —
+                // this was the real cause of a gate's false→true edge doing
+                // nothing. The real release (confirmed from
+                // GH_DataDamAttributes.RespondToMouseUp) is exactly
+                // ExpireSolution(true). Calling that synchronously here would
+                // re-enter the solver (this runs from inside SolutionEnd
+                // itself), so it's deferred one tick via BeginInvoke instead —
+                // same reasoning OnDocSolutionEnd already uses to get off the
+                // solve thread in the first place.
+                win.BeginInvoke((Action)(() => dam.ExpireSolution(true)));
+            }
+        }
+    }
+
+    // Catches Mode/Delay/name changes made directly on the native canvas
+    // (the right-click submenu), plus a gate link breaking (see
+    // PushDataDamGateUpdates) — same reasoning as PushTriggerUpdates.
+    private static void PushDataDamUpdates()
+    {
+        var win = _instance;
+        if (win == null) return;
+        foreach (var kv in win._dataDams)
+        {
+            var dam = kv.Value;
+            var (mode, delaySeconds, delayLabel) = DescribeDam(dam);
+            bool gateLinked = win._dataDamGates.TryGetValue(kv.Key, out var gate);
+            string? gateName = gateLinked ? gate!.NickName : null;
+            bool transferPossible = dam.TransferPossible;
+            var fingerprint = dam.NickName + "" + mode + "" + delaySeconds + "" + gateLinked + "" + gateName + "" + transferPossible;
+            if (_lastPushedDataDams.TryGetValue(kv.Key, out var last) && last == fingerprint) continue;
+            _lastPushedDataDams[kv.Key] = fingerprint;
+
+            win.PostToJs(SlateEvent.DataDamUpdated(kv.Key, dam.NickName, mode, delaySeconds, delayLabel, transferPossible, gateLinked, gateName));
+        }
+    }
+
+    // Unlike the other Push*Updates above (a handful of scalar fields), the
+    // whole rebuilt tree IS the fingerprint here — correctness over a cheap
+    // proxy (e.g. branch count alone would miss an item added/removed inside
+    // an existing branch). Fine at UI scale; revisit if a real file ever
+    // shows this costing anything on a busy solve.
+    private static void PushParamViewerUpdates()
+    {
+        var win = _instance;
+        if (win == null) return;
+        foreach (var kv in win._paramViewers)
+        {
+            var pv = kv.Value;
+            var name = pv.NickName;
+            var tree = BuildParamViewerTree(pv);
+            var fingerprint = name + JsonSerializer.Serialize(tree);
+            if (_lastPushedParamViewers.TryGetValue(kv.Key, out var last) && last == fingerprint) continue;
+            _lastPushedParamViewers[kv.Key] = fingerprint;
+
+            win.PostToJs(SlateEvent.ParamViewerUpdated(kv.Key, name, tree));
+        }
+    }
+
     // These pushes run on EVERY document solve — anywhere in the canvas,
     // not just Slate-related changes — across every tracked object, over every
     // workspace. Left unguarded that's O(tracked objects) wasted messages (each
@@ -1164,6 +1424,8 @@ public class SlateWindow : Form
     private static readonly Dictionary<string, string> _lastPushedColours = new();
     private static readonly Dictionary<string, string> _lastPushedTriggers = new();
     private static readonly Dictionary<string, string> _lastPushedGeometryParams = new();
+    private static readonly Dictionary<string, string> _lastPushedDataDams = new();
+    private static readonly Dictionary<string, string> _lastPushedParamViewers = new();
 
     private static void ClearPushCaches()
     {
@@ -1175,6 +1437,8 @@ public class SlateWindow : Form
         _lastPushedPickers.Clear();
         _lastPushedTriggers.Clear();
         _lastPushedGeometryParams.Clear();
+        _lastPushedDataDams.Clear();
+        _lastPushedParamViewers.Clear();
     }
 
     private static void PushSliderNameUpdates()
@@ -1897,6 +2161,71 @@ public class SlateWindow : Form
                     }
                     break;
 
+                // Mirrors the native right-click Mode/Delay submenu (Always /
+                // preset seconds / Never — one combined list, see
+                // data-dam-capture.md). Mode and Delay are both plain public
+                // settable properties (confirmed via reflection), no private
+                // Menu_*Clicked handler needed. ExpireSolution(true): same
+                // immediate idiom as trigger_interval_change, not the batched
+                // slider path.
+                case "datadam_mode_change":
+                    string dmid = root.GetProperty("id").GetString() ?? "";
+                    string dmMode = root.GetProperty("mode").GetString() ?? "never";
+                    double dmSeconds = root.TryGetProperty("delaySeconds", out var dsEl) ? dsEl.GetDouble() : 0;
+                    if (_dataDams.TryGetValue(dmid, out var damMode))
+                    {
+                        damMode.Mode = dmMode switch
+                        {
+                            "always" => GH_DataDamComponent.BufferMode.Always,
+                            "delay"  => GH_DataDamComponent.BufferMode.Delay,
+                            _        => GH_DataDamComponent.BufferMode.Never,
+                        };
+                        if (dmMode == "delay") damMode.Delay = TimeSpan.FromSeconds(dmSeconds);
+                        damMode.ExpireSolution(true);
+                    }
+                    break;
+
+                // Mirrors clicking the native component itself (release) —
+                // GH_DataDamAttributes.RespondToMouseUp handles that directly
+                // on the component, no dedicated ExpireTargets()-style method
+                // exists (see data-dam-capture.md reflection notes);
+                // ExpireSolution(true) is the direct equivalent. The
+                // TransferPossible check matches RespondToMouseUp exactly too
+                // (native no-ops a click when there's nothing new to send —
+                // its own tooltip says "you do not need to click here") —
+                // deliberately NOT applied to the gate's "Once" trigger
+                // (PushDataDamGateUpdates): that's a programmatic signal, not
+                // a manual click, and gating it the same way could silently
+                // swallow a trigger whose edge won't recur.
+                case "datadam_fire":
+                    string dfid = root.GetProperty("id").GetString() ?? "";
+                    if (_dataDams.TryGetValue(dfid, out var damFire) && damFire.TransferPossible)
+                        damFire.ExpireSolution(true);
+                    break;
+
+                // Reads the currently-selected canvas object — see
+                // PickDataDamGate. Runs directly (not via Invoke) same as the
+                // "capture" case above, which reads doc.Objects the same way.
+                case "datadam_select_gate":
+                    string dgid = root.GetProperty("id").GetString() ?? "";
+                    PickDataDamGate(dgid);
+                    break;
+
+                case "datadam_clear_gate":
+                    string dcgid = root.GetProperty("id").GetString() ?? "";
+                    ClearDataDamGate(dcgid);
+                    break;
+
+                // "once"/"always" — see PushDataDamGateUpdates. Pure Slate
+                // bookkeeping, no live GH counterpart, no ExpireSolution here
+                // (this alone doesn't change anything, just how the next gate
+                // check behaves).
+                case "datadam_gate_mode_change":
+                    string dgmid = root.GetProperty("id").GetString() ?? "";
+                    string dgmMode = root.GetProperty("gateMode").GetString() ?? "once";
+                    _dataDamGateMode[dgmid] = dgmMode == "always" ? "always" : "once";
+                    break;
+
                 // Opens Rhino's own object picker (modal, blocks this thread
                 // until the user finishes/cancels — same as any native Rhino
                 // command) via Invoke, same as every other GH-canvas-thread
@@ -1958,6 +2287,28 @@ public class SlateWindow : Form
                             if (TryGetLivePivot(sortId, out var pivot))
                                 positions[sortId] = new[] { pivot.X, pivot.Y };
                         PostToJs(SlateEvent.SortPositionsResult(sortTabId, positions));
+                    });
+                    break;
+                }
+
+                // Data Tree Explorer's leaf item view (drilling all the way into
+                // a real branch, not just its arc/count — bkz.
+                // yapilacaklar/data-tree-editor.md, 2026-09-26 "item değerlerini
+                // okuma" kararı: on-demand, not sent eagerly with the tree, since
+                // a branch can hold thousands of items and this is only ever
+                // needed for the one leaf a user actually drills into).
+                case "paramViewer_request_items":
+                {
+                    string pvid = root.GetProperty("id").GetString() ?? "";
+                    var pathIdx = new List<int>();
+                    if (root.TryGetProperty("path", out var pvPathEl))
+                        foreach (var pEl in pvPathEl.EnumerateArray())
+                            pathIdx.Add(pEl.GetInt32());
+
+                    Invoke(() =>
+                    {
+                        var items = GetParamViewerLeafItems(pvid, pathIdx);
+                        PostToJs(SlateEvent.ParamViewerItemsResult(pvid, pathIdx, items));
                     });
                     break;
                 }
@@ -2075,7 +2426,15 @@ public class SlateWindow : Form
         foreach (var gp in geometryParams)
             if (TryGetGeometryParamKind(gp, out var gpKind)) AddGeometryParam(tabId, groupId, gp, gpKind);
 
-        Log($"Captured {sliders.Count} slider(s), {toggles.Count} toggle(s), {buttons.Count} button(s), {valueLists.Count} value list(s), {panels.Count} panel(s), {itemPickers.Count} item picker(s), {humanLists.Count} item selector(s), {colourPickers.Count} colour picker(s), {pancakeButtons.Count} true-only button(s), {triggers.Count} trigger(s), {geometryParams.Count} geometry param(s).");
+        var dataDams = selected.OfType<GH_DataDamComponent>().ToList();
+        foreach (var dd in dataDams)
+            AddDataDam(tabId, groupId, dd);
+
+        var paramViewers = selected.OfType<GH_ParamViewer>().ToList();
+        foreach (var pv in paramViewers)
+            AddParamViewer(tabId, groupId, pv);
+
+        Log($"Captured {sliders.Count} slider(s), {toggles.Count} toggle(s), {buttons.Count} button(s), {valueLists.Count} value list(s), {panels.Count} panel(s), {itemPickers.Count} item picker(s), {humanLists.Count} item selector(s), {colourPickers.Count} colour picker(s), {pancakeButtons.Count} true-only button(s), {triggers.Count} trigger(s), {geometryParams.Count} geometry param(s), {dataDams.Count} data dam(s), {paramViewers.Count} param viewer(s).");
     }
 
     // ── Geometry param "Set Geometry" pick ──────────────────────────────────
@@ -2494,6 +2853,73 @@ public class SlateWindow : Form
         PostToJs(SlateEvent.GeometryParamAdded(tabId, id, param.NickName, kind, param.VolatileDataCount, param.SourceCount > 0, groupId));
     }
 
+    // Recurses GH's own GraphicTree (built for GH_ParamViewer's native
+    // on-canvas fan display — see the reflection notes in
+    // yapilacaklar/data-tree-editor.md: GH_GraphicBranch.Twigs is already
+    // exactly the recursive grouping our front end wants) into the generic
+    // { kids: [...] } / { count } shape the sunburst view consumes.
+    // GraphicTree itself is the invisible root — only its Twigs (the real
+    // top-level paths) are distributed, same convention as treeLayout.js's
+    // computeSunburst never drawing the root it's handed.
+    //
+    // GraphicTree.Twigs[].DataCount is NOT usable here — decompiled
+    // GH_ParamViewer.CollectVolatileData_FromSources only ever calls
+    // GraphicTree.GrowTree(allPaths), which builds the tree from bare
+    // GH_Path structure and explicitly sets Data = null on every branch;
+    // nothing downstream ever assigns it, so DataCount reads 0 for every
+    // leaf regardless of real content (bkz. data-tree-editor.md, session
+    // 2026-09-26 — reported as "no branch is empty but everything shows
+    // empty"). Twigs DO get a real Path though (same GrowTree pass), so the
+    // true count comes from looking that path up in the actual upstream
+    // source's VolatileData instead — GH_ParamViewer only supports a single
+    // source (its own HtmlHelp text), so Sources[0] is authoritative.
+    private static object BuildParamViewerTree(GH_ParamViewer pv)
+    {
+        var twigs = pv.GraphicTree?.Twigs ?? new List<GH_GraphicBranch>();
+        var source = pv.SourceCount > 0 ? pv.Sources[0].VolatileData : null;
+        return new { kids = twigs.Select(t => BuildTreeNode(t, source)).ToArray() };
+    }
+
+    private static object BuildTreeNode(GH_GraphicBranch branch, IGH_Structure? source)
+    {
+        if (branch.Twigs == null || branch.Twigs.Count == 0)
+        {
+            var count = source != null && branch.Path != null && source.PathExists(branch.Path)
+                ? source.get_Branch(branch.Path).Count
+                : 0;
+            return new { count };
+        }
+        return new { kids = branch.Twigs.Select(t => BuildTreeNode(t, source)).ToArray() };
+    }
+
+    // On-demand fetch for the item-view drill-in (see paramViewer_request_items
+    // above) — reads real values straight from the source's VolatileData, same
+    // lookup path as BuildTreeNode's count fix, just returning the branch's
+    // actual items instead of just its length. Every IGH_Goo has a ToString()
+    // (numbers, text, booleans, geometry summaries — no per-type handling
+    // needed); null slots inside a branch print literally as "null".
+    private List<string> GetParamViewerLeafItems(string id, List<int> pathIndices)
+    {
+        if (!_paramViewers.TryGetValue(id, out var pv) || pv.SourceCount == 0)
+            return new List<string>();
+        var source = pv.Sources[0].VolatileData;
+        var path = new GH_Path(pathIndices.ToArray());
+        if (!source.PathExists(path)) return new List<string>();
+        var branch = source.get_Branch(path);
+        var result = new List<string>(branch.Count);
+        foreach (var item in branch)
+            result.Add(item?.ToString() ?? "null");
+        return result;
+    }
+
+    public void AddParamViewer(string tabId, string? groupId, GH_ParamViewer pv)
+    {
+        string id = pv.InstanceGuid.ToString();
+        _paramViewers[id] = pv;
+
+        PostToJs(SlateEvent.ParamViewerAdded(tabId, id, pv.NickName, BuildParamViewerTree(pv), groupId));
+    }
+
     public void ClearAll()
     {
         ClearDicts();
@@ -2537,6 +2963,11 @@ public class SlateWindow : Form
         _pancakeTrueOnlyButtons.Clear();
         _triggers.Clear();
         _geometryParams.Clear();
+        _dataDams.Clear();
+        _paramViewers.Clear();
+        _dataDamGates.Clear();
+        _dataDamGateLastValue.Clear();
+        _dataDamGateMode.Clear();
         ClearPushCaches();
     }
 
@@ -2584,6 +3015,18 @@ public class SlateWindow : Form
                 .OfType<IGH_Param>()
                 .Where(p => TryGetGeometryParamKind(p, out _))
                 .ToDictionary(p => p.InstanceGuid.ToString(), p => p);
+            var docDataDams = doc.Objects
+                .OfType<GH_DataDamComponent>()
+                .ToDictionary(d => d.InstanceGuid.ToString(), d => d);
+            var docParamViewers = doc.Objects
+                .OfType<GH_ParamViewer>()
+                .ToDictionary(p => p.InstanceGuid.ToString(), p => p);
+            // Candidate pool for resolving a saved "gateId" — see the
+            // "dataDam" branch below. Same 3 types as IsValidGateSource.
+            var docGateSources = doc.Objects
+                .Where(o => o is Param_Boolean || o is Param_Integer || o is GH_Panel)
+                .OfType<IGH_Param>()
+                .ToDictionary(p => p.InstanceGuid.ToString(), p => p);
 
             _sliders.Clear();
             _toggles.Clear();
@@ -2596,6 +3039,11 @@ public class SlateWindow : Form
             _pancakeTrueOnlyButtons.Clear();
             _triggers.Clear();
             _geometryParams.Clear();
+            _dataDams.Clear();
+            _paramViewers.Clear();
+            _dataDamGates.Clear();
+            _dataDamGateLastValue.Clear();
+            _dataDamGateMode.Clear();
 
             void ProcessItems(JsonArray arr)
             {
@@ -2724,6 +3172,64 @@ public class SlateWindow : Form
                             s["wired"]    = gpm.SourceCount > 0;
                             // "internalize" is left untouched — pure UI preference,
                             // no live GH counterpart to refresh it from.
+                        }
+                        else { Log($"RestoreState: dropped {kind} id={id} — no matching live object in doc.Objects."); arr.RemoveAt(i); }
+                    }
+                    else if (kind == "dataDam")
+                    {
+                        if (docDataDams.TryGetValue(id, out var dd))
+                        {
+                            _dataDams[id] = dd;
+                            var (ddMode, ddDelaySeconds, ddDelayLabel) = DescribeDam(dd);
+                            s["name"]             = dd.NickName;
+                            s["mode"]             = ddMode;
+                            s["delaySeconds"]     = ddDelaySeconds;
+                            s["delayLabel"]       = ddDelayLabel;
+                            s["transferPossible"] = dd.TransferPossible;
+
+                            // "gateMode" ("once"/"always") is pure Slate
+                            // bookkeeping too (see PushDataDamGateUpdates) —
+                            // left untouched in the saved JSON (JS owns it,
+                            // same as geometryParam's "internalize"), just
+                            // loaded into the runtime dict that actually
+                            // drives the gate check.
+                            var savedGateMode = s["gateMode"]?.GetValue<string>();
+                            _dataDamGateMode[id] = savedGateMode == "always" ? "always" : "once";
+
+                            // "gateId" is pure Slate bookkeeping (see
+                            // SlateEvent.DataDamGateSelected) — resolve it
+                            // against the live doc the same way docGeometryParams
+                            // etc. resolve their own saved ids; a source that's
+                            // gone just silently comes back unlinked, no
+                            // warning, per the agreed UX.
+                            var gateId = s["gateId"]?.GetValue<string>();
+                            if (gateId != null && docGateSources.TryGetValue(gateId, out var gateSource))
+                            {
+                                _dataDamGates[id] = gateSource;
+                                TryGetGateBoolValue(gateSource, out var seed);
+                                // Seed, don't fire — a false→true edge on load
+                                // shouldn't retroactively release the dam, see
+                                // the same reasoning in PickDataDamGate.
+                                _dataDamGateLastValue[id] = seed;
+                                s["gateLinked"] = true;
+                                s["gateName"]   = gateSource.NickName;
+                            }
+                            else
+                            {
+                                s["gateLinked"] = false;
+                                s["gateName"]   = null;
+                                s.Remove("gateId");
+                            }
+                        }
+                        else { Log($"RestoreState: dropped {kind} id={id} — no matching live object in doc.Objects."); arr.RemoveAt(i); }
+                    }
+                    else if (kind == "paramViewer")
+                    {
+                        if (docParamViewers.TryGetValue(id, out var pv))
+                        {
+                            _paramViewers[id] = pv;
+                            s["name"] = pv.NickName;
+                            s["tree"] = JsonNode.Parse(JsonSerializer.Serialize(BuildParamViewerTree(pv)));
                         }
                         else { Log($"RestoreState: dropped {kind} id={id} — no matching live object in doc.Objects."); arr.RemoveAt(i); }
                     }

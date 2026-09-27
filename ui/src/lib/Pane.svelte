@@ -8,6 +8,8 @@
   import ColourPickerRow from './ColourPickerRow.svelte'
   import TriggerRow   from './TriggerRow.svelte'
   import GeometryParamRow from './GeometryParamRow.svelte'
+  import DataDamRow   from './DataDamRow.svelte'
+  import ParamViewerRow from './ParamViewerRow.svelte'
   import GroupSection from './GroupSection.svelte'
   import ActionBar    from './ActionBar.svelte'
   import CornerHandle from './CornerHandle.svelte'
@@ -27,12 +29,12 @@
   // itemPicker reuses ValueListRow — same "pick one from a list" UI, the only
   // difference (candidate list from a wired input vs manually authored) lives
   // entirely on the C# side.
-  const ROW_COMPONENTS = { toggle: ToggleRow, button: ButtonRow, valueList: ValueListRow, panel: PanelRow, itemPicker: ValueListRow, humanValueList: ValueListRow, colourPicker: ColourPickerRow, pancakeButton: ButtonRow, trigger: TriggerRow, geometryParam: GeometryParamRow }
+  const ROW_COMPONENTS = { toggle: ToggleRow, button: ButtonRow, valueList: ValueListRow, panel: PanelRow, itemPicker: ValueListRow, humanValueList: ValueListRow, colourPicker: ColourPickerRow, pancakeButton: ButtonRow, trigger: TriggerRow, geometryParam: GeometryParamRow, dataDam: DataDamRow, paramViewer: ParamViewerRow }
 
   // Fixed type order for the pane's manual "Sort: Type" menu item — same
   // priority SlatePanel.cs's capture loop checks types in, just reused here
   // as an explicit ranking rather than a type-check chain.
-  const TYPE_ORDER = ['slider', 'toggle', 'button', 'valueList', 'panel', 'itemPicker', 'humanValueList', 'colourPicker', 'pancakeButton', 'trigger', 'geometryParam']
+  const TYPE_ORDER = ['slider', 'toggle', 'button', 'valueList', 'panel', 'itemPicker', 'humanValueList', 'colourPicker', 'pancakeButton', 'trigger', 'geometryParam', 'dataDam']
 
   // ── derive pane state reactively (not derived() — paneId must stay live) ─────
   $: pane        = findLeaf($layout, paneId)
@@ -60,7 +62,7 @@
   // width (see TriggerRow.svelte / GeometryParamRow.svelte), so their names
   // count toward the measurement too — every other typed row (toggle/
   // button/...) stays right-anchored and excluded.
-  function isSliderRowType(s) { return !ROW_COMPONENTS[s.type] || s.type === 'trigger' || s.type === 'geometryParam' }
+  function isSliderRowType(s) { return !ROW_COMPONENTS[s.type] || s.type === 'trigger' || s.type === 'geometryParam' || s.type === 'dataDam' }
   function maxSliderNameLen(sliders, groups) {
     let max = 0
     for (const s of sliders ?? []) if (isSliderRowType(s)) max = Math.max(max, (s.name ?? '').length)
@@ -302,6 +304,10 @@
       onGeometryParamChange(sliderId, value)
       return
     }
+    if (controlType === 'dataDam') {
+      onDataDamChange(sliderId, value)
+      return
+    }
     if (multiSelect) {
       updateSliderValue(sliderId, prev => {
         const arr = Array.isArray(prev) ? prev : []
@@ -323,6 +329,17 @@
         groups:  patchSliderFieldInGroups(t.groups, sliderId, patch)
       }))
     }))
+  }
+  // Param Viewer preview appearance — same "pure UI preference, no postToCs"
+  // reasoning as the Text Panel settings above. size: number (px, a MODULE
+  // multiple) or null to fall back to the row's own auto-measured default.
+  function onParamViewerSizeChange(sliderId, size) {
+    patchSlider(sliderId, { paramViewerSize: size })
+    postStateSnapshot()
+  }
+  function onParamViewerShowCountsChange(sliderId, value) {
+    patchSlider(sliderId, { showCounts: value })
+    postStateSnapshot()
   }
   function onTriggerChange(sliderId, detail) {
     if (detail.kind === 'fire') {
@@ -374,6 +391,41 @@
       // pinned set from the next state_snapshot (see ApplyPreviewPins).
       patchSlider(sliderId, { previewPinned: detail.value })
       postStateSnapshot()
+    }
+  }
+
+  // DataDamRow dispatches one of five discrete actions, same shape as
+  // TriggerRow's. "selectGate" doesn't patch anything locally — C# resolves
+  // the canvas selection async and replies with dataDam_gate_selected (see
+  // App.svelte), which is also the one that persists the link (gateId has no
+  // live GH counterpart, same reasoning as geometryParam's "internalize").
+  function onDataDamChange(sliderId, detail) {
+    if (detail.kind === 'fire') {
+      postToCs({ type: 'datadam_fire', id: sliderId })
+      return
+    }
+    if (detail.kind === 'mode') {
+      patchSlider(sliderId, { mode: detail.mode, delaySeconds: detail.delaySeconds, delayLabel: detail.delayLabel })
+      postToCs({ type: 'datadam_mode_change', id: sliderId, mode: detail.mode, delaySeconds: detail.delaySeconds })
+      return
+    }
+    if (detail.kind === 'gateMode') {
+      // Pure Slate bookkeeping, same reasoning as geometryParam's
+      // "internalize" — no live GH counterpart, so persisted explicitly
+      // rather than relying on a RestoreState refresh.
+      patchSlider(sliderId, { gateMode: detail.gateMode })
+      postStateSnapshot()
+      postToCs({ type: 'datadam_gate_mode_change', id: sliderId, gateMode: detail.gateMode })
+      return
+    }
+    if (detail.kind === 'selectGate') {
+      postToCs({ type: 'datadam_select_gate', id: sliderId })
+      return
+    }
+    if (detail.kind === 'clearGate') {
+      // No local patch — same reasoning as selectGate, C# replies with
+      // dataDam_gate_selected (gateLinked: false) which persists the clear.
+      postToCs({ type: 'datadam_clear_gate', id: sliderId })
     }
   }
   function onSliderCommit(sliderId, value, controlType) {
@@ -1159,6 +1211,8 @@
               on:resizeStart={e  => resizingSliderId = e.detail}
               on:resizeEnd={()   => resizingSliderId = null}
               on:select={e      => onSliderSelect(slider.id, e.detail.shift, e.detail.ctrl)}
+              on:paramViewerSize={e       => onParamViewerSizeChange(slider.id, e.detail)}
+              on:paramViewerShowCounts={e => onParamViewerShowCountsChange(slider.id, e.detail)}
               on:remove={() => removeSlider(activeTab.id, slider.id)}
               on:dragStart={() => startDrag('slider', slider.id, activeTab.id, null)}
               on:rowDragOver={e => setDropTarget('slider-row', slider.id, e.detail, null)}
@@ -1186,6 +1240,8 @@
               on:sliderResizeStart={e   => resizingSliderId = e.detail}
               on:sliderResizeEnd={()    => resizingSliderId = null}
               on:sliderSelect={e        => onSliderSelect(e.detail.id, e.detail.shift, e.detail.ctrl)}
+              on:sliderParamViewerSize={e       => onParamViewerSizeChange(e.detail.id, e.detail.size)}
+              on:sliderParamViewerShowCounts={e => onParamViewerShowCountsChange(e.detail.id, e.detail.value)}
               on:sliderRemove={e        => removeSlider(activeTab.id, e.detail.sliderId)}
               on:headerDragStart={e => startDrag('group', e.detail, activeTab.id, null)}
               on:headerDragOver={e => setDropTarget('group-header', e.detail.id, e.detail.pos, e.detail.groupId)}

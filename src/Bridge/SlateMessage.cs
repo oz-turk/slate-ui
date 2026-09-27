@@ -37,6 +37,41 @@ public static class SlateEvent
     public static string TriggerAdded(string tabId, string id, string name, int interval, string intervalString, bool lockTargets, string? groupId = null) =>
         JsonSerializer.Serialize(new { type = "trigger_added", tabId, id, name, interval, intervalString, lockTargets, groupId });
 
+    // Native "Data Dam" (Grasshopper.Kernel.Components.GH_DataDamComponent) —
+    // unlike GH_Timer this is a genuine data-carrying GH_Component, but it's
+    // captured the same "not an IGH_Param" way. mode is "always"/"never"/"delay"
+    // (mirrors the native right-click Mode/Delay submenu, which is one preset
+    // list, not two separate controls — see yapilacaklar/data-dam-capture.md);
+    // delayLabel is our own formatted text (no native IntervalString-style
+    // property exists here) so JS never reimplements "X seconds" formatting.
+    // gateLinked/gateName describe the optional Select Gate link — always
+    // false/null on a fresh capture. transferPossible mirrors the native
+    // property of the same name (true = there's new input data the dam
+    // hasn't sent out yet) — JS uses it to swap the release icon and disable
+    // the button the same way native dims its own click target and changes
+    // its tooltip when there's nothing to do (see datadam_fire's own
+    // TransferPossible check in SlateWindow.cs for the matching backend half).
+    public static string DataDamAdded(string tabId, string id, string name, string mode, double delaySeconds, string delayLabel, bool transferPossible, bool gateLinked, string? gateName, string? groupId = null) =>
+        JsonSerializer.Serialize(new { type = "dataDam_added", tabId, id, name, mode, delaySeconds, delayLabel, transferPossible, gateLinked, gateName, groupId });
+
+    // Periodic push (OnDocSolutionEnd, same PushTriggerUpdates reasoning) —
+    // catches Mode/Delay/name changes made directly on the native canvas, and
+    // a gate source's own rename or deletion (gateLinked flips false once its
+    // source is gone — see PushDataDamGateUpdates). Never carries gateId: the
+    // link itself only ever changes via an explicit Select Gate action
+    // (DataDamGateSelected), not from anything a solve alone could cause.
+    public static string DataDamUpdated(string id, string name, string mode, double delaySeconds, string delayLabel, bool transferPossible, bool gateLinked, string? gateName) =>
+        JsonSerializer.Serialize(new { type = "dataDam_update", id, name, mode, delaySeconds, delayLabel, transferPossible, gateLinked, gateName });
+
+    // One-shot reply to "datadam_select_gate" — the only message that carries
+    // gateId, because that id is pure Slate bookkeeping with no live GH
+    // counterpart (like GeometryParamAdded's "internalize"): RestoreState can't
+    // refresh it from anywhere, so JS persists it explicitly (see App.svelte's
+    // handler calling postStateSnapshot right after this one, unlike
+    // dataDam_update above which never does).
+    public static string DataDamGateSelected(string id, bool gateLinked, string? gateName, string? gateId) =>
+        JsonSerializer.Serialize(new { type = "dataDam_gate_selected", id, gateLinked, gateName, gateId });
+
     public static string HumanValueListAdded(string tabId, string id, string name, IEnumerable<string> options, object value, bool multiSelect, bool cycle, bool loop, string? groupId = null) =>
         JsonSerializer.Serialize(new { type = "humanValueList_added", tabId, id, name, options, value, multiSelect, cycle, loop, groupId });
 
@@ -59,6 +94,28 @@ public static class SlateEvent
     // an Internalize disconnects the param's source, re-enabling Pick.
     public static string GeometryParamUpdated(string id, string name, int count, bool wired) =>
         JsonSerializer.Serialize(new { type = "geometryParam_updated", id, name, count, wired });
+
+    // Native "Param Viewer" (Grasshopper.Kernel.Special.GH_ParamViewer). `tree`
+    // is a generic { kids: [...] } (grouping level) / { count } (real branch)
+    // shape built from GH's own GraphicTree (see BuildParamViewerTree in
+    // SlateWindow.cs) — not GH-specific, so the front end's sunburst/layout
+    // code isn't tied to this one capture path. See yapilacaklar/data-tree-editor.md.
+    public static string ParamViewerAdded(string tabId, string id, string name, object tree, string? groupId = null) =>
+        JsonSerializer.Serialize(new { type = "paramViewer_added", tabId, id, name, tree, groupId });
+
+    // Periodic push (OnDocSolutionEnd) — a Param Viewer's tree changes
+    // whenever its wired source's data changes, same "recompute every solve"
+    // reasoning as PanelTextUpdated.
+    public static string ParamViewerUpdated(string id, string name, object tree) =>
+        JsonSerializer.Serialize(new { type = "paramViewer_update", id, name, tree });
+
+    // Reply to "paramViewer_request_items" (Data Tree Explorer's leaf item
+    // view, drilling all the way into a real branch's actual values, not just
+    // its count) — fetched fresh per request, never cached/stored on the C#
+    // side. `path` is echoed back unchanged so JS can key its own item cache
+    // without needing to serialize the path itself.
+    public static string ParamViewerItemsResult(string id, IEnumerable<int> path, IEnumerable<string> items) =>
+        JsonSerializer.Serialize(new { type = "paramViewer_items_result", id, path, items });
 
     // Reply to Pane's "sort_positions_request" (right-click Sort: Canvas
     // Position) — live GH pivot per requested id, as [x, y]. Computed fresh
