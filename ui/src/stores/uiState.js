@@ -47,6 +47,23 @@ export const clearSelectionTick = writable(0)
 // whatever's under the mouse.
 export const groupSelectionTick = writable(0)
 
+// Whether capturing a GH object from the canvas (the "c" hotkey / right-click
+// capture) is allowed to add a second widget for an object that already has
+// one somewhere (any workspace) — see App.svelte's addCapturedControl. Off by
+// default: capturing the same slider twice by accident is easy to do and easy
+// not to notice. Independent of Alt-drag duplication in the UI itself (see
+// Pane.svelte's duplicateSlider), which always works regardless of this
+// setting — this only gates capture-from-canvas. A personal workflow
+// preference, not a per-file setting, so it's plain localStorage, same as
+// undoLimit-style prefs, not part of state_snapshot.
+function readAllowMultipleCaptures() {
+  try { return localStorage.getItem('slate-allow-multi-capture') === 'true' } catch { return false }
+}
+export const allowMultipleCaptures = writable(readAllowMultipleCaptures())
+allowMultipleCaptures.subscribe(v => {
+  try { localStorage.setItem('slate-allow-multi-capture', v ? 'true' : 'false') } catch {}
+})
+
 // True while Alt is held — lets corner-handles highlight themselves as "this
 // drag will act on more than just one pane" before the user even starts
 // dragging. Set/cleared in App.svelte.

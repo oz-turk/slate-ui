@@ -31,6 +31,13 @@
   export let size       = 0     // current effective px size — always a MODULE multiple
   export let isCustom   = false // true once the row has its own override (slider.paramViewerSize), shows the reset
   export let showCounts = true
+  // True from ParamViewerFullscreen (2026-09-27 kullanıcı: "tam boyutu
+  // kilitli olacak") — fullscreen's own display size is computed from the
+  // window (see its `size` reactive block), not from slider.paramViewerSize,
+  // so the stepper/reset here would silently do nothing useful there; grey
+  // it out instead of letting it look live. The N-count toggle stays enabled
+  // either way, it isn't size-related.
+  export let sizeLocked  = false
 
   // Must match ParamViewerRow's own MODULE — kept as a separate literal
   // rather than a shared import since it's one small UI constant, same
@@ -48,15 +55,15 @@
 <!-- svelte-ignore a11y-no-static-element-interactions -->
 <div class="popup" use:portal on:click|stopPropagation use:clickOutside={{ onClose: () => dispatch('close') }} style="left: {x}px; top: {y}px">
   <div class="section-label">Size</div>
-  <div class="stepper">
-    <button on:click={() => step(-1)} title="Shrink by one row">−</button>
+  <div class="stepper" class:locked={sizeLocked}>
+    <button on:click={() => step(-1)} disabled={sizeLocked} title={sizeLocked ? 'Fixed to the fullscreen window' : 'Shrink by one row'}>−</button>
     <span class="value">{size}px<span class="rows">({size / MODULE}×)</span></span>
-    <button on:click={() => step(1)} title="Grow by one row">+</button>
+    <button on:click={() => step(1)} disabled={sizeLocked} title={sizeLocked ? 'Fixed to the fullscreen window' : 'Grow by one row'}>+</button>
     <!-- Always shown, not just once customised (2026-09-26 kullanıcı: "reset
          to default tuşu da hep görünmeli sadece default'taysa gri olup
          disabled olmalı") — previously only rendered once isCustom, which
          made the layout shift width when it first appeared. -->
-    <button class="reset-btn" on:click={resetSize} disabled={!isCustom} title="Reset to default">×</button>
+    <button class="reset-btn" on:click={resetSize} disabled={!isCustom || sizeLocked} title={sizeLocked ? 'Fixed to the fullscreen window' : 'Reset to default'}>×</button>
   </div>
 
   <div class="section-label">Display</div>
@@ -78,7 +85,11 @@
     border-radius: 6px;
     padding: 8px;
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
-    z-index: 1000;
+    /* Above ParamViewerFullscreen's own overlay (z-index: 2000) — this popup
+       portals to document.body as a sibling of that overlay, not a child of
+       it, so it needs its own higher value to actually paint on top when
+       opened from fullscreen (2026-09-27: was 1000, invisible behind it). */
+    z-index: 2001;
     display: flex;
     flex-direction: column;
     gap: 6px;
@@ -117,6 +128,7 @@
     transition: border-color 0.15s, color 0.15s;
   }
   .stepper button:hover { color: rgba(var(--text-rgb), 0.9); border-color: var(--border); }
+  .stepper button:disabled { color: rgba(var(--text-rgb), 0.15); border-color: transparent; cursor: default; }
   .value {
     text-align: center;
     font-family: 'Segoe UI Mono', Consolas, monospace;
@@ -124,6 +136,7 @@
     color: rgba(var(--text-rgb), 0.7);
     font-variant-numeric: tabular-nums;
   }
+  .stepper.locked .value { color: rgba(var(--text-rgb), 0.35); }
   .rows {
     margin-left: 3px;
     color: rgba(var(--text-rgb), 0.4);

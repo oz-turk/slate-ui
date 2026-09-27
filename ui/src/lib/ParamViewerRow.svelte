@@ -127,7 +127,7 @@
 
   {#if slider.tree}
     <div class="body" style="height:{sunburstSize}px">
-      <DataTreeSunburst tree={slider.tree} size={sunburstSize} id={slider.id} {showCounts} />
+      <DataTreeSunburst tree={slider.tree} size={sunburstSize} id={slider.sourceId ?? slider.id} {showCounts} />
       {#if settingsPopup}
         <ParamViewerSettingsPopup x={settingsPopup.x} y={settingsPopup.y}
           size={sunburstSize} isCustom={slider.paramViewerSize != null} {showCounts}

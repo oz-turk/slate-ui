@@ -1,6 +1,6 @@
 <script>
   import { layout, allLeaves, syncControl } from '../stores/layout.js'
-  import { fullscreenTreeId } from '../stores/uiState.js'
+  import { fullscreenTreeId, mode } from '../stores/uiState.js'
   import { postStateSnapshot } from './ipc.js'
   import DataTreeSunburst from './DataTreeSunburst.svelte'
   import ParamViewerSettingsPopup from './ParamViewerSettingsPopup.svelte'
@@ -39,13 +39,24 @@
 
   // Graph settings, reachable from fullscreen too now (2026-09-27 kullanıcı:
   // "full screen'deyken edit moda giremiyorum" — turned out to mean there was
-  // no way to reach ParamViewerRow's settings popup from here at all). Patches
-  // the underlying slider by id regardless of which pane/tab/group it lives
-  // in — syncControl is pane-agnostic (unlike Pane.svelte's own patchSlider,
-  // which is scoped to a paneId this global overlay doesn't have).
+  // no way to reach ParamViewerRow's settings popup from here at all). Gated
+  // by the same global edit mode as ParamViewerRow's own corner-btn
+  // (2026-09-27 kullanıcı: "sadece edit modunda 3 nokta görünmeli") —
+  // fullscreen has no paneId/mode prop of its own, so it reads the app-wide
+  // store directly. Size stepper is locked here (2026-09-27 kullanıcı: "tam
+  // boyutu kilitli olacak") — fullscreen's own display size always comes
+  // from the window (the `size` reactive block above), not from
+  // slider.paramViewerSize, so letting it be edited here wouldn't do
+  // anything visible. The popup shows the row's own stored preview size
+  // (always a clean MODULE multiple) rather than the window-derived `size`,
+  // so its "N×" readout never shows a fraction. Only the N-count toggle
+  // stays live, via syncControl, which is pane-agnostic (unlike
+  // Pane.svelte's own patchSlider, scoped to a paneId this global overlay
+  // doesn't have).
   $: sunburstPreviewSize = control?.paramViewerSize ?? 352
   $: showCounts = control?.showCounts !== false
   let settingsPopup = null   // { x, y } | null
+  $: if ($mode !== 'edit') settingsPopup = null
   function openSettings(e) {
     const rect = e.currentTarget.getBoundingClientRect()
     const w = 176, h = 140
@@ -54,8 +65,11 @@
       y: Math.min(rect.bottom + 4, window.innerHeight - h - 8),
     }
   }
-  function onSizeChange(e)       { syncControl(control.id, { paramViewerSize: e.detail }); postStateSnapshot() }
-  function onShowCountsChange(e) { syncControl(control.id, { showCounts: e.detail }); postStateSnapshot() }
+  // syncControl matches by sourceId when the slider has one (see layout.js's
+  // matchesSource — it's how a push fans a change out to every Alt-drag copy
+  // at once), so passing the bare id silently matched nothing for any
+  // captured/copied control and the toggle looked dead (2026-09-27).
+  function onShowCountsChange(e) { syncControl(control.sourceId ?? control.id, { showCounts: e.detail }); postStateSnapshot() }
 </script>
 
 <svelte:window on:keydown={e => { if (e.key === 'Escape') close() }} />
@@ -65,23 +79,24 @@
     <div class="header">
       <span class="title">{control.name}</span>
       <div class="actions">
-        <button class="corner-btn" on:click={openSettings} title="Graph settings">
-          <svg width="3" height="12" viewBox="0 0 3 12" fill="currentColor">
-            <circle cx="1.5" cy="1.5" r="1.5"/><circle cx="1.5" cy="6" r="1.5"/><circle cx="1.5" cy="10.5" r="1.5"/>
-          </svg>
-        </button>
+        {#if $mode === 'edit'}
+          <button class="corner-btn" on:click={openSettings} title="Graph settings">
+            <svg width="3" height="12" viewBox="0 0 3 12" fill="currentColor">
+              <circle cx="1.5" cy="1.5" r="1.5"/><circle cx="1.5" cy="6" r="1.5"/><circle cx="1.5" cy="10.5" r="1.5"/>
+            </svg>
+          </button>
+        {/if}
         <button class="close" on:click={close} title="Close (Esc)">×</button>
       </div>
     </div>
     <div class="body" bind:this={container} bind:clientWidth={availW} bind:clientHeight={availH}>
       {#if container}
-        <DataTreeSunburst tree={control.tree} {size} id={control.id} {showCounts} />
+        <DataTreeSunburst tree={control.tree} {size} id={control.sourceId ?? control.id} {showCounts} />
       {/if}
     </div>
     {#if settingsPopup}
       <ParamViewerSettingsPopup x={settingsPopup.x} y={settingsPopup.y}
-        size={sunburstPreviewSize} isCustom={control.paramViewerSize != null} {showCounts}
-        on:sizeChange={onSizeChange}
+        size={sunburstPreviewSize} sizeLocked {showCounts}
         on:showCountsChange={onShowCountsChange}
         on:close={() => settingsPopup = null} />
     {/if}

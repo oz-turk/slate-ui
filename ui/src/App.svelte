@@ -9,10 +9,10 @@
   import ParamViewerFullscreen from './lib/ParamViewerFullscreen.svelte'
   import {
     layout, workspaces, activeWorkspaceId, allLeaves, restoreLayout, restoreWorkspaces,
-    updatePane, syncControl, clearAllWorkspaces, resetToDefault, makeLeaf, setActiveWorkspace,
+    updatePane, syncControl, removeAllBySourceId, clearAllWorkspaces, resetToDefault, makeLeaf, setActiveWorkspace,
     posAppend, applyWindowEdgeResize, orderedItems, MIN_PANE_SIZE
   } from './stores/layout.js'
-  import { mode, pinned, theme, deleteRequest, captureRequest, settingsOpen, clearSelectionTick, groupSelectionTick, hoverHint, altHeld, ctrlHeld, fullscreenTreeId, paramViewerItemsCache } from './stores/uiState.js'
+  import { mode, pinned, theme, deleteRequest, captureRequest, settingsOpen, clearSelectionTick, groupSelectionTick, hoverHint, altHeld, ctrlHeld, fullscreenTreeId, paramViewerItemsCache, allowMultipleCaptures } from './stores/uiState.js'
   import { undo, suppressDuring } from './stores/history.js'
   import { postToCs, postStateSnapshot } from './lib/ipc.js'
 
@@ -146,7 +146,17 @@
     const paneEl = el?.closest('[data-pane-id]')
     if (!paneEl) return
     const sliderEl = el?.closest('[data-slider-id]')
-    if (sliderEl) { deleteRequest.set({ paneId: paneEl.dataset.paneId, sliderId: sliderEl.dataset.sliderId }); return }
+    if (sliderEl) {
+      // Alt+X removes every copy of this control at once (any workspace) —
+      // plain X only ever drops the one widget under the mouse, a copy stays
+      // a copy. Same "all copies" op the row's own context menu offers.
+      if (get(altHeld)) {
+        const sourceId = deleteAllCopiesSourceId(sliderEl.dataset.sliderId)
+        if (sourceId) { removeAllBySourceId(sourceId); postStateSnapshot() }
+        return
+      }
+      deleteRequest.set({ paneId: paneEl.dataset.paneId, sliderId: sliderEl.dataset.sliderId }); return
+    }
     // Mouse is over a group but not over one of its slider rows specifically
     // (e.g. the header, or empty padding) — same target resolution as
     // triggerCapture's groupEl below, so "x" ungroups whatever group is
@@ -252,21 +262,49 @@
 
   // Spans every workspace, not just the active one — a GH object already
   // captured somewhere shouldn't silently get captured again into another.
-  function allSliderIds() {
+  // Collects sourceId (the underlying GH object's guid), not each widget's
+  // own id — a widget's id is unique per copy (see duplicateSlider in
+  // Pane.svelte), sourceId is what's shared and what capture cares about.
+  function allSourceIds() {
     const ids = new Set()
     function collectGroups(groups) {
       for (const g of groups) {
-        g.sliders.forEach(s => ids.add(s.id))
+        g.sliders.forEach(s => ids.add(s.sourceId ?? s.id))
         collectGroups(g.groups ?? [])
       }
     }
     for (const w of get(workspaces))
       for (const leaf of allLeaves(w.layout))
         for (const t of leaf.tabs) {
-          t.sliders.forEach(s => ids.add(s.id))
+          t.sliders.forEach(s => ids.add(s.sourceId ?? s.id))
           collectGroups(t.groups)
         }
     return ids
+  }
+
+  // Resolves a widget's own id (as found in the DOM via data-slider-id) to
+  // its sourceId, for the Alt+X "delete all copies" path in triggerDelete
+  // above — that path only ever has the DOM id of whatever's under the
+  // mouse, not the widget object itself.
+  function deleteAllCopiesSourceId(widgetId) {
+    function searchGroups(groups) {
+      for (const g of groups) {
+        const hit = g.sliders.find(s => s.id === widgetId)
+        if (hit) return hit.sourceId ?? hit.id
+        const found = searchGroups(g.groups ?? [])
+        if (found) return found
+      }
+      return null
+    }
+    for (const w of get(workspaces))
+      for (const leaf of allLeaves(w.layout))
+        for (const t of leaf.tabs) {
+          const hit = t.sliders.find(s => s.id === widgetId)
+          if (hit) return hit.sourceId ?? hit.id
+          const found = searchGroups(t.groups)
+          if (found) return found
+        }
+    return null
   }
 
   function addSliderToGroupInTree(groups, groupId, slider) {
@@ -280,8 +318,19 @@
   // Shared by every "captured a control" message (slider_added, toggle_added, ...) —
   // finds where it should land (by tabId/label, falling back to the first pane/tab)
   // and inserts it into that tab's top-level list or the target group.
+  //
+  // control.id/msg.id arrive equal to each other (every *_added handler below
+  // just echoes the GH guid C# sent as both) — that guid becomes this widget's
+  // sourceId, not its id. The widget gets its own fresh id here so a later
+  // Alt-drag copy (Pane.svelte's duplicateSlider) can mint more widgets
+  // against the same sourceId without ever colliding with this one in a
+  // Svelte keyed {#each}. allowMultipleCaptures (Settings) only affects
+  // whether capturing an already-captured GH object from the canvas is
+  // allowed to add a second widget for it — Alt-drag duplication in the UI
+  // itself always works, that check lives entirely in duplicateSlider.
   function addCapturedControl(control, msg) {
-    if (allSliderIds().has(control.id)) return
+    if (!get(allowMultipleCaptures) && allSourceIds().has(msg.id)) return
+    const withId = { ...control, id: crypto.randomUUID(), sourceId: msg.id }
     const $l  = get(layout)
     const leaves = allLeaves($l)
     let targetPaneId = null, targetTabId = null
@@ -303,15 +352,18 @@
     const groupId = msg.groupId ?? null
     updatePane(targetPaneId, p => ({
       tabs: p.tabs.map(t => t.id !== targetTabId ? t : groupId
-        ? { ...t, groups: addSliderToGroupInTree(t.groups, groupId, control) }
-        : { ...t, sliders: [...t.sliders, { ...control, pos: posAppend(t) }] })
+        ? { ...t, groups: addSliderToGroupInTree(t.groups, groupId, withId) }
+        : { ...t, sliders: [...t.sliders, { ...withId, pos: posAppend(t) }] })
     }))
     postStateSnapshot()
   }
 
   // ── sort_positions_result support ────────────────────────────────────────────
+  // Positions come back keyed by sourceId (see Pane.svelte's sortActiveTab —
+  // C# only knows GH guids), not the widget's own id, so every lookup below
+  // has to go through sourceId too.
   function collectSliderIdsDeep(sliders, groups) {
-    const ids = (sliders ?? []).map(s => s.id)
+    const ids = (sliders ?? []).map(s => s.sourceId ?? s.id)
     for (const g of groups ?? []) ids.push(...collectSliderIdsDeep(g.sliders, g.groups))
     return ids
   }
@@ -322,7 +374,7 @@
   // empty group) sort last.
   function sortPositionKey(item, positions) {
     if (item.kind === 'slider') {
-      const p = positions[item.id]
+      const p = positions[item.data.sourceId ?? item.id]
       return p ? [p[1], p[0]] : [Infinity, Infinity]
     }
     let best = [Infinity, Infinity]
@@ -492,6 +544,16 @@
 
     if (msg.type === 'slider_name_update') {
       syncControl(msg.id, { name: msg.name })
+    }
+
+    // Slider/toggle/button VALUE, pushed on every solve (see
+    // PushSliderValueUpdates in SlateWindow.cs) — until Alt-drag copies
+    // existed, a value only ever changed through the one widget bound to it,
+    // so this round trip was never needed; now dragging one copy has to reach
+    // every sibling copy (and a value changed by hand on the canvas itself),
+    // and syncControl's sourceId-based match fans it out to all of them.
+    if (msg.type === 'control_value_update') {
+      syncControl(msg.id, { value: msg.value })
     }
 
     // Panels, item pickers and Item Selectors can change on their own between

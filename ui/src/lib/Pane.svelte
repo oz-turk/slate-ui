@@ -16,7 +16,7 @@
   import ContextMenu  from './ContextMenu.svelte'
   import PaneSettingsPopup from './PaneSettingsPopup.svelte'
   import { PANE_PATTERNS, PANE_PATTERN_DEFAULTS } from './panePatterns.js'
-  import { layout, activeWorkspaceId, updatePane, findLeaf, newTabId, splitPane, splitPaneSpanning, newSplitId, setSplitSize, collapsePane, findNeighborPane, moveCrossPaneItem, extractSlidersByIds, orderedItems, posBetween, posAppend, withAppendedPositions, reorderTabTopLevel } from '../stores/layout.js'
+  import { layout, activeWorkspaceId, updatePane, findLeaf, newTabId, splitPane, splitPaneSpanning, newSplitId, setSplitSize, collapsePane, findNeighborPane, moveCrossPaneItem, extractSlidersByIds, orderedItems, posBetween, posAppend, withAppendedPositions, reorderTabTopLevel, removeAllBySourceId, countBySourceId } from '../stores/layout.js'
   import { tabDrag, itemDrag } from '../stores/dragState.js'
   import { computeAlignedSnapTargets, snapRaw } from './splitSnap.js'
   import { mode, deleteRequest, captureRequest, clearSelectionTick, groupSelectionTick, hoverHint, theme } from '../stores/uiState.js'
@@ -230,6 +230,25 @@
     }
   }
 
+  // Right-click on a single slider row — "Delete" mirrors the plain "x"
+  // hotkey (this widget only), "Delete All Copies" mirrors Alt+X (every
+  // widget sharing this control's sourceId, any workspace — see
+  // removeAllBySourceId in layout.js). The second entry only makes sense,
+  // and only shows, when this control actually has more than one widget.
+  function onSliderContextMenu(pos, slider) {
+    const menuW = 170, menuH = 80
+    const sourceId = slider.sourceId ?? slider.id
+    const items = [{ label: 'Delete', action: () => removeSlider(activeTab.id, slider.id) }]
+    if (countBySourceId(sourceId) > 1) {
+      items.push({ label: 'Delete All Copies', danger: true, action: () => { removeAllBySourceId(sourceId); postStateSnapshot() } })
+    }
+    contextMenu = {
+      x: Math.min(pos.x, window.innerWidth  - menuW - 8),
+      y: Math.min(pos.y, window.innerHeight - menuH - 8),
+      items
+    }
+  }
+
   // ── manual sort (pane right-click) ────────────────────────────────────────────
   // Reorders the active tab's top-level sliders+groups only — a group moves as
   // one block, its own contents untouched.
@@ -252,7 +271,10 @@
       // No canvas position is stored client-side (would bloat every saved
       // .gh file) — ask C# for the live GH pivot of each slider id instead;
       // App.svelte's 'sort_positions_result' handler finishes the reorder.
-      const ids = collectSliderIds(activeTab.sliders, activeTab.groups)
+      // C# only knows GH guids, so this sends sourceId, not the widget's own
+      // id — two copies of the same control share one guid and so share one
+      // canvas position, which is the only sensible answer for a copy anyway.
+      const ids = collectSliderIds(activeTab.sliders, activeTab.groups).map(sourceIdFor)
       if (ids.length) postToCs({ type: 'sort_positions_request', tabId: activeTab.id, ids })
       return
     }
@@ -380,7 +402,7 @@
     } else {
       updateSliderValue(sliderId, value)
     }
-    postToCs({ type: changeMessageType(controlType), id: sliderId, value })
+    postToCs({ type: changeMessageType(controlType), id: sourceIdFor(sliderId), value })
   }
 
   // Trigger has no single scalar "value" — its row dispatches one of three
@@ -438,17 +460,17 @@
   }
   function onTriggerChange(sliderId, detail) {
     if (detail.kind === 'fire') {
-      postToCs({ type: 'trigger_fire', id: sliderId })
+      postToCs({ type: 'trigger_fire', id: sourceIdFor(sliderId) })
       return
     }
     if (detail.kind === 'lock') {
       patchSlider(sliderId, { lockTargets: detail.value })
-      postToCs({ type: 'trigger_lock_change', id: sliderId, value: detail.value })
+      postToCs({ type: 'trigger_lock_change', id: sourceIdFor(sliderId), value: detail.value })
       return
     }
     if (detail.kind === 'interval') {
       patchSlider(sliderId, { interval: detail.interval, intervalString: detail.intervalString })
-      postToCs({ type: 'trigger_interval_change', id: sliderId, value: detail.interval })
+      postToCs({ type: 'trigger_interval_change', id: sourceIdFor(sliderId), value: detail.interval })
     }
   }
 
@@ -459,15 +481,15 @@
   // than relying on the next RestoreState to refresh it from live state).
   function onGeometryParamChange(sliderId, detail) {
     if (detail.kind === 'pick') {
-      postToCs({ type: 'geometry_pick', id: sliderId, internalize: !!detail.internalize })
+      postToCs({ type: 'geometry_pick', id: sourceIdFor(sliderId), internalize: !!detail.internalize })
       return
     }
     if (detail.kind === 'clear') {
-      postToCs({ type: 'geometry_clear', id: sliderId })
+      postToCs({ type: 'geometry_clear', id: sourceIdFor(sliderId) })
       return
     }
     if (detail.kind === 'bake') {
-      postToCs({ type: 'geometry_bake', id: sliderId })
+      postToCs({ type: 'geometry_bake', id: sourceIdFor(sliderId) })
       return
     }
     if (detail.kind === 'internalize') {
@@ -478,7 +500,7 @@
       // picks, then internalizes, then deletes the Rhino object still loses
       // the data, since the param would still be holding a live reference.
       // Turning it OFF is a no-op on existing data (nothing to send).
-      if (detail.value) postToCs({ type: 'geometry_internalize_change', id: sliderId })
+      if (detail.value) postToCs({ type: 'geometry_internalize_change', id: sourceIdFor(sliderId) })
       return
     }
     if (detail.kind === 'pin') {
@@ -496,12 +518,12 @@
   // live GH counterpart, same reasoning as geometryParam's "internalize").
   function onDataDamChange(sliderId, detail) {
     if (detail.kind === 'fire') {
-      postToCs({ type: 'datadam_fire', id: sliderId })
+      postToCs({ type: 'datadam_fire', id: sourceIdFor(sliderId) })
       return
     }
     if (detail.kind === 'mode') {
       patchSlider(sliderId, { mode: detail.mode, delaySeconds: detail.delaySeconds, delayLabel: detail.delayLabel })
-      postToCs({ type: 'datadam_mode_change', id: sliderId, mode: detail.mode, delaySeconds: detail.delaySeconds })
+      postToCs({ type: 'datadam_mode_change', id: sourceIdFor(sliderId), mode: detail.mode, delaySeconds: detail.delaySeconds })
       return
     }
     if (detail.kind === 'gateMode') {
@@ -510,22 +532,22 @@
       // rather than relying on a RestoreState refresh.
       patchSlider(sliderId, { gateMode: detail.gateMode })
       postStateSnapshot()
-      postToCs({ type: 'datadam_gate_mode_change', id: sliderId, gateMode: detail.gateMode })
+      postToCs({ type: 'datadam_gate_mode_change', id: sourceIdFor(sliderId), gateMode: detail.gateMode })
       return
     }
     if (detail.kind === 'selectGate') {
-      postToCs({ type: 'datadam_select_gate', id: sliderId })
+      postToCs({ type: 'datadam_select_gate', id: sourceIdFor(sliderId) })
       return
     }
     if (detail.kind === 'clearGate') {
       // No local patch — same reasoning as selectGate, C# replies with
       // dataDam_gate_selected (gateLinked: false) which persists the clear.
-      postToCs({ type: 'datadam_clear_gate', id: sliderId })
+      postToCs({ type: 'datadam_clear_gate', id: sourceIdFor(sliderId) })
     }
   }
   function onSliderCommit(sliderId, value, controlType) {
     updateSliderValue(sliderId, value)
-    postToCs({ type: changeMessageType(controlType), id: sliderId, value })
+    postToCs({ type: changeMessageType(controlType), id: sourceIdFor(sliderId), value })
   }
 
   // ── panel resize (UI-only — no postToCs, GH doesn't know about row height) ───
@@ -574,13 +596,68 @@
     postStateSnapshot()
   }
 
+  // Resolves a widget's own id to the underlying GH object's guid (sourceId)
+  // — every message to C# needs to name the GH object, never the widget,
+  // since a control can now have more than one widget bound to it (Alt-drag
+  // copies, see duplicateSlider below). Searches this pane's own tabs, which
+  // is always enough here: every caller already got sliderId from a row this
+  // pane is rendering. Falls back to sliderId itself for dev-seed items that
+  // predate the id/sourceId split and never got a sourceId.
+  function findSliderDeep(container, id) {
+    const hit = container.sliders.find(s => s.id === id)
+    if (hit) return hit
+    for (const g of container.groups ?? []) {
+      const found = findSliderDeep(g, id)
+      if (found) return found
+    }
+    return null
+  }
+  function sourceIdFor(sliderId) {
+    for (const t of tabs) {
+      const found = findSliderDeep(t, sliderId)
+      if (found) return found.sourceId ?? found.id
+    }
+    return sliderId
+  }
+
   // ── slider & group drag-drop (within pane) ────────────────────────────────────
-  function startDrag(type, id, fromTabId, fromGroupId = null) {
+  // Alt-drag: instead of moving the grabbed row, first spawn a copy right next
+  // to it (same tab/group, same sourceId — see syncControl in layout.js for
+  // how a shared sourceId keeps every copy's value/name in sync) and drag that
+  // copy instead. The original never moves. Only makes sense for a single
+  // slider-type row — a multi-selection or a group drag just moves as normal.
+  function duplicateSlider(tabId, groupId, sliderId) {
+    let cloneId = null
+    mutateTabs(tabs => tabs.map(t => {
+      if (t.id !== tabId) return t
+      if (groupId) {
+        return { ...t, groups: mapGroupTree(t.groups, groupId, g => {
+          const original = orderedItems(g).find(it => it.kind === 'slider' && it.id === sliderId)?.data
+          if (!original) return {}
+          const clone = { ...original, id: crypto.randomUUID(), sourceId: original.sourceId ?? original.id }
+          cloneId = clone.id
+          return { sliders: insertSlidersAt(g, sliderId, 'after', [clone]).sliders }
+        }) }
+      }
+      const original = orderedItems(t).find(it => it.kind === 'slider' && it.id === sliderId)?.data
+      if (!original) return t
+      const clone = { ...original, id: crypto.randomUUID(), sourceId: original.sourceId ?? original.id }
+      cloneId = clone.id
+      return insertSlidersAt(t, sliderId, 'after', [clone])
+    }))
+    return cloneId
+  }
+
+  function startDrag(type, id, fromTabId, fromGroupId = null, altKey = false) {
     // If the grabbed row is part of the current multi-selection, drag the whole
     // selection together — otherwise just this one item.
-    const ids = (type === 'slider' && selectedIds.has(id) && selectedIds.size > 1)
+    let ids = (type === 'slider' && selectedIds.has(id) && selectedIds.size > 1)
       ? [...selectedIds]
       : [id]
+    if (altKey && type === 'slider' && ids.length === 1) {
+      const cloneId = duplicateSlider(fromTabId, fromGroupId, id)
+      if (cloneId) { id = cloneId; ids = [cloneId] }
+    }
     activeDrag = { type, id, ids, fromTabId, fromGroupId }
     itemDrag.set({ type, id, ids, fromPaneId: paneId, fromTabId, fromGroupId, fromWorkspaceId: get(activeWorkspaceId) })
   }
@@ -1320,7 +1397,8 @@
               on:paramViewerSize={e       => onParamViewerSizeChange(slider.id, e.detail)}
               on:paramViewerShowCounts={e => onParamViewerShowCountsChange(slider.id, e.detail)}
               on:remove={() => removeSlider(activeTab.id, slider.id)}
-              on:dragStart={() => startDrag('slider', slider.id, activeTab.id, null)}
+              on:dragStart={e => startDrag('slider', slider.id, activeTab.id, null, e.detail)}
+              on:contextMenu={e => onSliderContextMenu(e.detail, slider)}
               on:rowDragOver={e => setDropTarget('slider-row', slider.id, e.detail, null)}
               on:rowDragLeave={() => clearDropTarget('slider-row', slider.id)}
               on:rowDrop={e     => executeDrop('slider-row', slider.id, e.detail)}
@@ -1355,12 +1433,13 @@
               on:sliderParamViewerSize={e       => onParamViewerSizeChange(e.detail.id, e.detail.size)}
               on:sliderParamViewerShowCounts={e => onParamViewerShowCountsChange(e.detail.id, e.detail.value)}
               on:sliderRemove={e        => removeSlider(activeTab.id, e.detail.sliderId)}
+              on:sliderContextMenu={e   => onSliderContextMenu(e.detail.pos, e.detail.slider)}
               on:headerDragStart={e => startDrag('group', e.detail, activeTab.id, null)}
               on:headerDragOver={e => setDropTarget('group-header', e.detail.id, e.detail.pos, e.detail.groupId)}
               on:headerDragLeave={e => clearDropTarget('group-header', e.detail)}
               on:headerDrop={e => executeDrop('group-header', e.detail.id, e.detail.pos)}
               on:groupDragEnd={endDrag}
-              on:sliderDragStart={e      => startDrag('slider', e.detail.sliderId, activeTab.id, e.detail.groupId)}
+              on:sliderDragStart={e      => startDrag('slider', e.detail.sliderId, activeTab.id, e.detail.groupId, e.detail.altKey)}
               on:sliderDragEnd={endDrag}
               on:sliderRowDragOver={e    => setDropTarget('slider-row', e.detail.sliderId, e.detail.pos, e.detail.groupId)}
               on:sliderRowDragLeave={e   => clearDropTarget('slider-row', e.detail.sliderId)}

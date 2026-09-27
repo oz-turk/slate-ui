@@ -396,16 +396,25 @@ export function clearAllWorkspaces() {
 // workspace/pane/tab/group that doesn't actually contain the id, so unrelated
 // branches keep their exact object reference — no wasted work, and Svelte
 // doesn't even consider re-rendering what didn't change.
+//
+// Matches on sourceId (the underlying GH object's guid, shared by a captured
+// control and every Alt-drag copy made of it — see duplicateSlider in
+// Pane.svelte) rather than the widget's own id, so a push naturally fans out
+// to every copy at once instead of just the one that happened to be captured
+// first. Falls back to id for the handful of dev-seed/legacy items that
+// predate the id/sourceId split and never got a sourceId of their own.
+function matchesSource(s, id) { return (s.sourceId ?? s.id) === id }
+
 function patchGroupsIfPresent(groups, id, patch) {
   let changed = false
   const next = groups.map(g => {
-    const hasHere = g.sliders.some(s => s.id === id)
+    const hasHere = g.sliders.some(s => matchesSource(s, id))
     const [subGroups, subChanged] = patchGroupsIfPresent(g.groups ?? [], id, patch)
     if (!hasHere && !subChanged) return g
     changed = true
     return {
       ...g,
-      sliders: hasHere ? g.sliders.map(s => s.id === id ? { ...s, ...patch } : s) : g.sliders,
+      sliders: hasHere ? g.sliders.map(s => matchesSource(s, id) ? { ...s, ...patch } : s) : g.sliders,
       groups: subGroups
     }
   })
@@ -416,13 +425,13 @@ function patchNodeIfPresent(node, id, patch) {
   if (node.type === 'leaf') {
     let changed = false
     const tabs = node.tabs.map(t => {
-      const hasHere = t.sliders.some(s => s.id === id)
+      const hasHere = t.sliders.some(s => matchesSource(s, id))
       const [groups, subChanged] = patchGroupsIfPresent(t.groups, id, patch)
       if (!hasHere && !subChanged) return t
       changed = true
       return {
         ...t,
-        sliders: hasHere ? t.sliders.map(s => s.id === id ? { ...s, ...patch } : s) : t.sliders,
+        sliders: hasHere ? t.sliders.map(s => matchesSource(s, id) ? { ...s, ...patch } : s) : t.sliders,
         groups
       }
     })
@@ -438,6 +447,60 @@ export function syncControl(id, patch) {
     const layout = patchNodeIfPresent(w.layout, id, patch)
     return layout === w.layout ? w : { ...w, layout }
   }))
+}
+
+// ── remove every copy of a captured control (Alt+X) ───────────────────────────
+// Plain delete (removeSlider in Pane.svelte) only ever drops the one widget
+// under the mouse — a copy stays a copy. This is the "no, really all of them"
+// counterpart: strips every widget sharing sourceId, in every group, every
+// tab, every workspace. Same recursive shape as extractSlidersByIds, just
+// spread across the whole workspace list instead of one tab.
+function removeBySourceFromGroups(groups, sourceId) {
+  return groups.map(g => ({
+    ...g,
+    sliders: g.sliders.filter(s => !matchesSource(s, sourceId)),
+    groups: removeBySourceFromGroups(g.groups ?? [], sourceId)
+  }))
+}
+function removeBySourceFromNode(node, sourceId) {
+  if (node.type === 'leaf') {
+    return {
+      ...node,
+      tabs: node.tabs.map(t => ({
+        ...t,
+        sliders: t.sliders.filter(s => !matchesSource(s, sourceId)),
+        groups: removeBySourceFromGroups(t.groups, sourceId)
+      }))
+    }
+  }
+  return { ...node, a: removeBySourceFromNode(node.a, sourceId), b: removeBySourceFromNode(node.b, sourceId) }
+}
+export function removeAllBySourceId(sourceId) {
+  workspaces.update(list => list.map(w => ({ ...w, layout: removeBySourceFromNode(w.layout, sourceId) })))
+}
+
+// Every widget (any workspace/tab/group) sharing sourceId — used to tell a
+// single copy from a control with siblings (e.g. to only show "Delete all
+// copies" in a row's context menu when there's actually more than one).
+function collectBySourceFromGroups(groups, sourceId, out) {
+  for (const g of groups) {
+    for (const s of g.sliders) if (matchesSource(s, sourceId)) out.push(s)
+    collectBySourceFromGroups(g.groups ?? [], sourceId, out)
+  }
+}
+export function countBySourceId(sourceId) {
+  let count = 0
+  for (const w of get(workspaces)) {
+    for (const leaf of allLeaves(w.layout)) {
+      for (const t of leaf.tabs) {
+        for (const s of t.sliders) if (matchesSource(s, sourceId)) count++
+        const out = []
+        collectBySourceFromGroups(t.groups, sourceId, out)
+        count += out.length
+      }
+    }
+  }
+  return count
 }
 
 // Find the splitId of the immediate parent split that contains paneId as a direct leaf child

@@ -1220,6 +1220,7 @@ public class SlateWindow : Form
             if (_latestValues.Count == 0 && _latestColourValues.Count == 0) _solveRunning = false;
             else ApplyLatestValues();
             PushSliderNameUpdates();
+            PushSliderValueUpdates();
             PushPanelTextUpdates();
             PushItemPickerUpdates();
             PushHumanValueListUpdates();
@@ -1458,6 +1459,8 @@ public class SlateWindow : Form
     private static readonly Dictionary<string, string> _lastPushedGeometryParams = new();
     private static readonly Dictionary<string, string> _lastPushedDataDams = new();
     private static readonly Dictionary<string, string> _lastPushedParamViewers = new();
+    // Slider/toggle/button VALUE — see PushSliderValueUpdates below.
+    private static readonly Dictionary<string, string> _lastPushedControlValues = new();
 
     private static void ClearPushCaches()
     {
@@ -1471,6 +1474,7 @@ public class SlateWindow : Form
         _lastPushedGeometryParams.Clear();
         _lastPushedDataDams.Clear();
         _lastPushedParamViewers.Clear();
+        _lastPushedControlValues.Clear();
     }
 
     private static void PushSliderNameUpdates()
@@ -1501,6 +1505,42 @@ public class SlateWindow : Form
         foreach (var kv in win._toggles)    PushIfChanged(kv.Key, kv.Value.NickName, allowEmpty: true);
         foreach (var kv in win._buttons)    PushIfChanged(kv.Key, kv.Value.NickName, allowEmpty: true);
         foreach (var kv in win._pancakeTrueOnlyButtons) PushIfChanged(kv.Key, kv.Value.NickName, allowEmpty: true);
+    }
+
+    // Slider/toggle/button VALUE. Until a control could have more than one
+    // Slate widget bound to it (Alt-drag copies — see duplicateSlider in
+    // Pane.svelte), a value only ever changed through that one widget's own
+    // drag, so JS's own optimistic update was the only place it needed to
+    // live and this push never had to exist. Now a value changed through one
+    // copy (or by hand on the canvas) has to reach every sibling copy too —
+    // same solve-end broadcast + diff-cache shape as PushSliderNameUpdates
+    // above, just for CurrentValue/Value/ButtonDown instead of the name.
+    // Scoped to the three native types for now (not the Pancake true-only
+    // button, which needs its own reflection-based value read).
+    private static void PushSliderValueUpdates()
+    {
+        var win = _instance;
+        if (win == null) return;
+
+        void PushIfChanged(string id, object value)
+        {
+            // Invariant culture — a plain ToString() would format the diff-cache
+            // fingerprint with a locale decimal separator (e.g. "1,5" under a
+            // Turkish OS locale), which is harmless here (comparison-only, never
+            // sent over the wire) but needlessly fragile.
+            string fingerprint = value is double d ? d.ToString(System.Globalization.CultureInfo.InvariantCulture) : (value.ToString() ?? "");
+            if (_lastPushedControlValues.TryGetValue(id, out var last) && last == fingerprint) return;
+            _lastPushedControlValues[id] = fingerprint;
+            win.PostToJs(System.Text.Json.JsonSerializer.Serialize(new {
+                type = "control_value_update",
+                id,
+                value
+            }));
+        }
+
+        foreach (var kv in win._sliders) PushIfChanged(kv.Key, (double)kv.Value.CurrentValue);
+        foreach (var kv in win._toggles) PushIfChanged(kv.Key, kv.Value.Value);
+        foreach (var kv in win._buttons) PushIfChanged(kv.Key, kv.Value.ButtonDown);
     }
 
     // GH_Panel.UserText is only the typed-in source text for an unwired panel
@@ -1963,7 +2003,12 @@ public class SlateWindow : Form
 
     // ── construction ─────────────────────────────────────────────────────────
 
-    internal static readonly Size  DefaultWindowSize     = new Size(380, 760);
+    // 760 -> 840: the Settings panel (undo depth, capture toggle, theme,
+    // shortcuts) no longer fit a fresh 760px-tall window without scrolling —
+    // it now scrolls on its own (see SettingsPanel.svelte's .panel) so this
+    // isn't load-bearing, just gives a first-run window enough room that
+    // Settings doesn't immediately need it.
+    internal static readonly Size  DefaultWindowSize     = new Size(380, 840);
     internal static readonly Point DefaultWindowLocation = new Point(60, 60);
 
     private SlateWindow()
@@ -3083,7 +3128,11 @@ public class SlateWindow : Form
                 for (int i = arr.Count - 1; i >= 0; i--)
                 {
                     var s    = arr[i]!.AsObject();
-                    var id   = s["id"]!.GetValue<string>();
+                    // sourceId is the live GH object's guid — id is the widget's
+                    // own (possibly random, possibly shared-with-a-copy) id, only
+                    // meaningful client-side. A file saved before the id/sourceId
+                    // split has no sourceId at all, where id already was the guid.
+                    var id   = s["sourceId"]?.GetValue<string>() ?? s["id"]!.GetValue<string>();
                     var kind = s["type"]?.GetValue<string>() ?? "slider";
 
                     if (kind == "toggle")

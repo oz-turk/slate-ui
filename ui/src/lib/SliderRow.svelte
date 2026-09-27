@@ -93,13 +93,14 @@
     on:dragover|preventDefault={e => rowDragOver(e, dispatch)}
     on:dragleave={e => rowDragLeave(e, dispatch)}
     on:drop|preventDefault={e => rowDrop(e, dispatch)}
+    on:contextmenu|preventDefault|stopPropagation={e => dispatch('contextMenu', { x: e.clientX, y: e.clientY })}
 >
   {#if mode === 'edit'}
     <!-- svelte-ignore a11y-no-static-element-interactions -->
     <div class="handle"
         draggable="true"
         on:click|stopPropagation
-        on:dragstart={e => { e.dataTransfer.effectAllowed = 'move'; rowDragging = true; dispatch('dragStart') }}
+        on:dragstart={e => { e.dataTransfer.effectAllowed = 'move'; rowDragging = true; dispatch('dragStart', e.altKey) }}
         on:drag={onHandleDrag}
         on:dragend={() => { rowDragging = false; dragTranslateY = 0; dispatch('dragEnd') }}
     >

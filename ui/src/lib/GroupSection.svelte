@@ -257,7 +257,8 @@
               on:paramViewerSize={e       => dispatch('sliderParamViewerSize',       { id: slider.id, size: e.detail })}
               on:paramViewerShowCounts={e => dispatch('sliderParamViewerShowCounts', { id: slider.id, value: e.detail })}
               on:remove={()      => dispatch('sliderRemove',     { groupId: group.id, sliderId: slider.id })}
-              on:dragStart={()  => dispatch('sliderDragStart',   { sliderId: slider.id, groupId: group.id })}
+              on:dragStart={e   => dispatch('sliderDragStart',   { sliderId: slider.id, groupId: group.id, altKey: e.detail })}
+              on:contextMenu={e => dispatch('sliderContextMenu', { pos: e.detail, slider })}
               on:dragEnd={()    => dispatch('sliderDragEnd')}
               on:rowDragOver={e => dispatch('sliderRowDragOver', { sliderId: slider.id, pos: e.detail, groupId: group.id })}
               on:rowDragLeave={()=> dispatch('sliderRowDragLeave',{ sliderId: slider.id })}
@@ -297,6 +298,7 @@
               on:sliderTextItalic
               on:sliderTextUnderline
               on:sliderRemove
+              on:sliderContextMenu
               on:headerDragStart
               on:headerDragOver
               on:headerDragLeave
