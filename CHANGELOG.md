@@ -4,6 +4,20 @@ Notable user-facing changes, newest first. Internal refactors and pure repo main
 
 ## Unreleased
 
+## 0.2.2 - 2026-09-27
+
+- **Alt-drag to copy a control:** Alt-drag a slider/toggle/button row to spawn a synced copy instead of moving the original — copies share the underlying GH object and stay in sync on value/name changes. Alt+X (or a row's right-click menu) removes every copy at once.
+- New Settings toggle to allow capturing the same GH object twice from the canvas (off by default).
+- Fix Param Viewer fullscreen: settings gear only shows in edit mode, size stepper is locked there (fullscreen's size comes from the window, not the stored preview size), settings popup now paints above the fullscreen overlay, and the item-count toggle works again for captured/copied controls.
+- Settings panel shortcuts list shows the ~10 most useful shortcuts by default, with a "Show more" toggle for the rest.
+- Icon consistency pass across Param Viewer/Text Panel rows; fix sunburst crowding and single-branch rendering.
+- Data Dam and Param Viewer native captures.
+- Generalize Text Panel appearance settings to all panels.
+- Show the open file's name in the Slate window title.
+- Ctrl+scroll zoom hint in the status bar.
+- Per-pane background colour/pattern and Obsidian-style tab colouring.
+- Buy Me a Coffee badge and GitHub sponsor button.
+
 ## 0.2.1 - 2026-09-21 (hotfix)
 
 - Fix pinned preview geometry clipping in perspective viewports (Top and other parallel views were unaffected) — the pin conduit now contributes its objects' bounds to Rhino's per-frame clipping-plane calculation.
