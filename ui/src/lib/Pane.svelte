@@ -14,6 +14,8 @@
   import ActionBar    from './ActionBar.svelte'
   import CornerHandle from './CornerHandle.svelte'
   import ContextMenu  from './ContextMenu.svelte'
+  import PaneSettingsPopup from './PaneSettingsPopup.svelte'
+  import { PANE_PATTERNS, PANE_PATTERN_DEFAULTS } from './panePatterns.js'
   import { layout, activeWorkspaceId, updatePane, findLeaf, newTabId, splitPane, splitPaneSpanning, newSplitId, setSplitSize, collapsePane, findNeighborPane, moveCrossPaneItem, extractSlidersByIds, orderedItems, posBetween, posAppend, withAppendedPositions, reorderTabTopLevel } from '../stores/layout.js'
   import { tabDrag, itemDrag } from '../stores/dragState.js'
   import { computeAlignedSnapTargets, snapRaw } from './splitSnap.js'
@@ -78,6 +80,64 @@
   // sidesteps whatever cascade issue that was rather than keep guessing at it.
   $: edgeTint   = $theme === 'light' ? 'rgba(0, 0, 0, 0.08)'   : 'rgba(255, 255, 255, 0.04)'
 
+  // Per-pane background colour/pattern override (right-click → Pane
+  // Settings). Was gated to a separate 'beta' theme while this feature was
+  // developed (see yapilacaklar/gorsel-cesitlendirme.md, bölüm 8-10) — beta
+  // is gone now (2026-09-24), this works on dark/light directly.
+  // 'style.bg'/'style.pattern' are each optional; a missing one falls
+  // through to --bg/none (no per-pane override at all — Pane Settings
+  // itself defaults to 'none', not an inherited theme pattern, see
+  // panePatterns.js) since only the properties present here get an inline
+  // value at all.
+  //
+  // Set as CUSTOM PROPERTIES (read by .pane's own background-color/-image
+  // rules below), not assigned as background-color/-image directly here —
+  // keeps this reactive block just building a style STRING, agnostic of
+  // which CSS properties end up consuming it. header used to also read
+  // these vars and paint its own copy (to fix an older bug — see .pane's
+  // style block comment), but that double-painted the same translucent
+  // colour a second time on top of .pane's own fill; header is transparent
+  // now and just shows .pane's single paint through instead.
+  $: paneStyleCss = (() => {
+    const s = pane?.style
+    if (!s) return ''
+    const parts = []
+    if (s.bg) {
+      parts.push(`--pane-bg-override: ${s.bg}`)
+      // Opaque variant (alpha stripped) for text knockout outlines — text-shadow/
+      // filter respect the colour's OWN alpha, so if s.bg has reduced opacity the
+      // outline would be equally translucent and let the pattern bleed through
+      // right where it's meant to mask it. Dropping the alpha suffix ('#rrggbbaa'
+      // → '#rrggbb') isn't a true composite against whatever's behind the pane,
+      // but is close enough for a legibility knockout — see SliderRow/GroupSection.
+      parts.push(`--pane-bg-override-opaque: ${s.bg.slice(0, 7)}`)
+    }
+    if (s.pattern && s.pattern !== 'none' && s.pattern !== 'theme') {
+      const p = PANE_PATTERNS[s.pattern] ?? PANE_PATTERNS.none
+      const scale   = s.patternScale   ?? PANE_PATTERN_DEFAULTS.scale
+      const opacity = s.patternOpacity ?? PANE_PATTERN_DEFAULTS.opacity
+      parts.push(`--pane-pattern-image-override: ${p.image(opacity, scale)}`, `--pane-pattern-size-override: ${p.size(scale)}`)
+    }
+    return parts.length ? '; ' + parts.join('; ') : ''
+  })()
+
+  function openPaneSettings(clientX, clientY) {
+    // h is sized for the common case (Scale/Opacity sliders visible, since
+    // sized for the common case (a pattern picked, Scale/Opacity sliders
+    // visible, 7-item pattern list) — a couple px of slack under the popup
+    // when None is picked instead is harmless.
+    const w = 160, h = 340
+    paneSettingsPopup = {
+      x: Math.min(clientX, window.innerWidth  - w - 8),
+      y: Math.min(clientY, window.innerHeight - h - 8),
+    }
+  }
+  function onPaneSettingsChange(e) {
+    const { kind, value } = e.detail
+    updatePane(paneId, p => ({ style: { ...(p.style ?? {}), [kind]: value } }))
+    postStateSnapshot()
+  }
+
   // "x"/"c" hotkeys — App.svelte resolves what's under the mouse via the DOM
   // (data-pane-id / data-slider-id) and sets these; whichever Pane matches acts.
   $: if ($deleteRequest?.paneId === paneId && activeTab) {
@@ -124,6 +184,7 @@
   // the drag directly.
   let resizingSliderId = null
   let contextMenu = null  // { x, y, items } | null — right-click menu on the pane itself
+  let paneSettingsPopup = null  // { x, y } | null — pane's own background colour/pattern override
 
   // The "Right-click: split or close" hint is only useful while hovering
   // empty pane background — over a row/group it just sits there hiding
@@ -149,20 +210,23 @@
 
   function onPaneContextMenu(e) {
     e.preventDefault()
-    const menuW = 170, menuH = 210
+    const { clientX, clientY } = e
+    const menuW = 170, menuH = 240
+    const items = [
+      { label: 'Split Vertically',   action: () => splitEven('h') },
+      { label: 'Split Horizontally', action: () => splitEven('v') },
+      'sep',
+      { label: 'Sort: Canvas Position', action: () => sortActiveTab('position') },
+      { label: 'Sort: Type',            action: () => sortActiveTab('type') },
+      { label: 'Sort: Name (A-Z)',      action: () => sortActiveTab('name') },
+      'sep',
+      { label: 'Pane Settings…', action: () => openPaneSettings(clientX, clientY) },
+    ]
+    items.push('sep', { label: 'Close Pane', danger: true, action: () => { collapsePane(paneId); postStateSnapshot() } })
     contextMenu = {
-      x: Math.min(e.clientX, window.innerWidth  - menuW - 8),
-      y: Math.min(e.clientY, window.innerHeight - menuH - 8),
-      items: [
-        { label: 'Split Vertically',   action: () => splitEven('h') },
-        { label: 'Split Horizontally', action: () => splitEven('v') },
-        'sep',
-        { label: 'Sort: Canvas Position', action: () => sortActiveTab('position') },
-        { label: 'Sort: Type',            action: () => sortActiveTab('type') },
-        { label: 'Sort: Name (A-Z)',      action: () => sortActiveTab('name') },
-        'sep',
-        { label: 'Close Pane', danger: true, action: () => { collapsePane(paneId); postStateSnapshot() } },
-      ]
+      x: Math.min(clientX, window.innerWidth  - menuW - 8),
+      y: Math.min(clientY, window.innerHeight - menuH - 8),
+      items
     }
   }
 
@@ -492,6 +556,10 @@
 
   function renameTab(id, label) {
     mutateTabs(tabs => tabs.map(t => t.id === id ? { ...t, label } : t))
+  }
+
+  function setTabColor(id, color) {
+    mutateTabs(tabs => tabs.map(t => t.id === id ? { ...t, color } : t))
   }
 
   function removeTab(id) {
@@ -1162,7 +1230,7 @@
   class="pane"
   data-pane-id={paneId}
   bind:this={paneEl}
-  style="border: 1px solid {edgeTint}"
+  style="border: 1px solid {edgeTint}{paneStyleCss}"
   class:drop-target={isDropTarget || itemDragHover}
   on:dragover={onPaneDragOver}
   on:dragleave={onPaneDragLeave}
@@ -1185,6 +1253,7 @@
       {crossPaneItemDrag}
       on:select={e        => { setActive(e.detail); clearSelection() }}
       on:rename={e        => renameTab(e.detail.id, e.detail.label)}
+      on:colorChange={e   => setTabColor(e.detail.id, e.detail.color)}
       on:remove={e        => removeTab(e.detail)}
       on:add={addTab}
       on:tabDragOver={e   => setDropTarget('tab', e.detail)}
@@ -1329,7 +1398,29 @@
   <ContextMenu x={contextMenu.x} y={contextMenu.y} items={contextMenu.items} on:close={() => contextMenu = null} />
 {/if}
 
+{#if paneSettingsPopup}
+  <PaneSettingsPopup x={paneSettingsPopup.x} y={paneSettingsPopup.y}
+    bg={pane?.style?.bg ?? null} pattern={pane?.style?.pattern ?? 'none'}
+    patternScale={pane?.style?.patternScale ?? PANE_PATTERN_DEFAULTS.scale}
+    patternOpacity={pane?.style?.patternOpacity ?? PANE_PATTERN_DEFAULTS.opacity}
+    on:change={onPaneSettingsChange}
+    on:close={() => paneSettingsPopup = null} />
+{/if}
+
 <style>
+  /* .pane paints the per-pane override ONCE — header stays transparent (see
+     below) and just shows this same layer through, rather than repainting
+     its own copy on top. header USED to carry its own copy of these same
+     properties (see paneStyleCss's comment for the older bug that motivated
+     it — header showing the theme default because it read a hardcoded
+     var(--bg), not this override, at all), but re-painting an IDENTICAL
+     translucent colour a second time on the exact area .pane already
+     painted compounds the alpha: fully-opaque colours hid this, but any
+     custom colour with reduced opacity came out visibly darker/different in
+     the header strip than in the body below it. A single paint layer also
+     sidesteps the diagonal/crosshatch pattern seam at the header/body
+     boundary — two independently-tiled copies could drift out of phase;
+     one continuous image can't. */
   .pane {
     display: flex;
     flex-direction: column;
@@ -1338,14 +1429,16 @@
     position: relative;
     overflow: hidden;
     border-radius: 4px;
-    background: var(--bg);
+    background-color: var(--pane-bg-override, var(--bg));
     /* border colour set inline from edgeTint (JS/$theme-driven, not a CSS
        var — see edgeTint's comment above) */
+    background-image: var(--pane-pattern-image-override, none);
+    background-size: var(--pane-pattern-size-override, auto);
   }
 
   header {
     flex-shrink: 0;
-    background: var(--bg);
+    background: transparent;
   }
 
   .content {

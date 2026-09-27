@@ -197,7 +197,13 @@ public class SlateWindow : Form
 
     static string ReadThemeDefaultFile()
     {
-        try { return File.ReadAllText(_themeDefaultFile).Trim() == "light" ? "light" : "dark"; }
+        try
+        {
+            var t = File.ReadAllText(_themeDefaultFile).Trim();
+            // 'beta' theme removed 2026-09-24 — an old file left over from
+            // when it existed (2026-09-22..09-24) falls through to "dark".
+            return t == "light" ? t : "dark";
+        }
         catch { return "dark"; }
     }
 

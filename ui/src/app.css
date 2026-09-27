@@ -30,6 +30,11 @@
   --ws-tab-bg-hover:  rgba(0, 0, 0, 0.28);
   --ws-tab-bg-active: rgba(255, 255, 255, 0.14);
 
+  /* Pane background pattern tint (panePatterns.js) — same "white in dark,
+     black in light" reasoning as --edge-tint above: a hardcoded white
+     pattern is invisible against light mode's near-white pane surfaces. */
+  --pattern-tint-rgb: 255, 255, 255;
+
   color-scheme: dark;
 }
 
@@ -69,6 +74,8 @@
   --ws-tab-bg:        rgba(0, 0, 0, 0.05);
   --ws-tab-bg-hover:  rgba(0, 0, 0, 0.09);
   --ws-tab-bg-active: rgba(0, 0, 0, 0.14);
+
+  --pattern-tint-rgb: 0, 0, 0;
 
   color-scheme: light;
 }

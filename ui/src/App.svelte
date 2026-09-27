@@ -599,7 +599,10 @@
           restoreLayout(leaf)
         }
       })
-      if (msg.theme) theme.set(msg.theme)
+      // Same fallback as readDefaultTheme (uiState.js) / ReadThemeDefaultFile
+      // (SlateWindow.cs) — an old file saved under the since-removed 'beta'
+      // theme (2026-09-22..09-24) lands on 'dark' instead of an unstyled value.
+      if (msg.theme) theme.set(msg.theme === 'light' ? 'light' : 'dark')
       postStateSnapshot()
     }
   }

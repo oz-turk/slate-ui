@@ -418,6 +418,15 @@
     padding-top: 16px;
     color: rgba(var(--text-rgb), 0.21);
     cursor: grab;
+    /* knockout outline — keeps the handle visible over a busy pane pattern.
+       OPAQUE pane colour — text-shadow/filter colours respect the colour's
+       own alpha, so a translucent outline would let the pattern bleed
+       straight back through (see Pane.svelte's paneStyleCss). */
+    filter:
+      drop-shadow(2px 0 1.5px var(--pane-bg-override-opaque, var(--bg)))
+      drop-shadow(-2px 0 1.5px var(--pane-bg-override-opaque, var(--bg)))
+      drop-shadow(0 2px 1.5px var(--pane-bg-override-opaque, var(--bg)))
+      drop-shadow(0 -2px 1.5px var(--pane-bg-override-opaque, var(--bg)));
   }
   .handle:hover  { color: rgba(var(--text-rgb), 0.43); }
   .handle:active { cursor: grabbing; }
@@ -466,6 +475,12 @@
     display: flex;
     align-items: center;
     justify-content: center;
+    /* knockout outline — see SliderRow's .bound for why */
+    text-shadow:
+      2px 0 1.5px var(--pane-bg-override-opaque, var(--bg)), -2px 0 1.5px var(--pane-bg-override-opaque, var(--bg)),
+      0 2px 1.5px var(--pane-bg-override-opaque, var(--bg)), 0 -2px 1.5px var(--pane-bg-override-opaque, var(--bg)),
+      2px 2px 1.5px var(--pane-bg-override-opaque, var(--bg)), -2px -2px 1.5px var(--pane-bg-override-opaque, var(--bg)),
+      2px -2px 1.5px var(--pane-bg-override-opaque, var(--bg)), -2px 2px 1.5px var(--pane-bg-override-opaque, var(--bg));
     transition: background 0.1s, color 0.1s;
     padding: 0;
   }

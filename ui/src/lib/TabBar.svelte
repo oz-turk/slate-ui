@@ -1,6 +1,9 @@
 <script>
   import { createEventDispatcher } from 'svelte'
   import { hoverHint } from '../stores/uiState.js'
+  import { hex8ToRgba } from './colorUtils.js'
+  import ContextMenu from './ContextMenu.svelte'
+  import ColourPickerPopup from './ColourPickerPopup.svelte'
   const dispatch = createEventDispatcher()
 
   export let tabs        = []
@@ -55,9 +58,64 @@
     dragTabId = null
     dispatch('tabDragEnd')
   }
+
+  // ── per-tab colour (Obsidian-style folder colouring) ─────────────────────────
+  // Previously built + removed 2026-08-27 (right-click opened the PANE's own
+  // split/sort/close menu instead of a colour menu) — root cause confirmed
+  // here, never fixed: the tab's own contextmenu handler called
+  // preventDefault but not stopPropagation, so the event bubbled up to
+  // Pane.svelte's own contextmenu listener on the surrounding .pane element,
+  // which then built and showed ITS menu on top. See
+  // yapilacaklar/tab-color-menu-bubbling.md.
+  let colourMenu  = null   // { tabId, x, y, rawX, rawY } | null — small Change/Reset menu
+  let colourPopup = null   // { tabId, x, y } | null — the actual HSLA/RGBA picker
+
+  function onTabContextMenu(e, tab) {
+    if (mode !== 'edit') return
+    e.preventDefault()
+    e.stopPropagation()
+    const hasColour = !!tab.color
+    const menuW = 150, menuH = hasColour ? 68 : 36
+    colourMenu = {
+      tabId: tab.id,
+      x: Math.min(e.clientX, window.innerWidth  - menuW - 8),
+      y: Math.min(e.clientY, window.innerHeight - menuH - 8),
+      rawX: e.clientX, rawY: e.clientY,
+    }
+  }
+  $: colourMenuItems = colourMenu ? [
+    { label: 'Change Colour…', action: () => openColourPopup(colourMenu) },
+    ...(tabs.find(t => t.id === colourMenu.tabId)?.color
+      ? [{ label: 'Reset Colour', danger: true, action: () => dispatch('colorChange', { id: colourMenu.tabId, color: null }) }]
+      : []),
+  ] : []
+  function openColourPopup({ tabId, rawX, rawY }) {
+    const w = 216, h = 300
+    colourPopup = {
+      tabId,
+      x: Math.min(rawX, window.innerWidth  - w - 8),
+      y: Math.min(rawY, window.innerHeight - h - 8),
+    }
+  }
+  function onColourChange(e) {
+    if (colourPopup) dispatch('colorChange', { id: colourPopup.tabId, color: e.detail })
+  }
+
+  // rgba(...)-ready "r, g, b" triplet for a tab's stored hex8 colour — used
+  // for both the active tab's own pill (replacing the fixed accent tint) and
+  // the whole tabbar's wash below.
+  function tabRgb(color) {
+    const { r, g, b } = hex8ToRgba(color)
+    return `${r}, ${g}, ${b}`
+  }
+
+  $: activeTab = tabs.find(t => t.id === activeTabId)
+  // Wash on the bar itself, not just the active tab's own pill — low opacity
+  // since it spans the whole header width, not a small chip.
+  $: barStyle = activeTab?.color ? `background: rgba(${tabRgb(activeTab.color)}, 0.08);` : ''
 </script>
 
-<div class="tabbar">
+<div class="tabbar" style={barStyle}>
   {#each tabs as tab (tab.id)}
     <!-- svelte-ignore a11y-no-static-element-interactions -->
     <div
@@ -67,9 +125,13 @@
       class:drag-over={dropTabId === tab.id}
       class:being-dragged={dragTabId === tab.id}
       draggable={canDragTabs && mode === 'edit' && editingId !== tab.id}
+      style={tab.id === activeTabId && tab.color
+        ? `background: rgba(${tabRgb(tab.color)}, 0.22); border-color: rgba(${tabRgb(tab.color)}, 0.45); color: var(--text);`
+        : ''}
       on:click={() => dispatch('select', tab.id)}
       on:dblclick={() => startRename(tab)}
-      on:mouseenter={() => mode === 'edit' && hoverHint.set('Double-click: rename  ·  Drag: reorder or move to another pane')}
+      on:contextmenu={e => onTabContextMenu(e, tab)}
+      on:mouseenter={() => mode === 'edit' && hoverHint.set('Double-click: rename  ·  Right-click: colour  ·  Drag: reorder or move to another pane')}
       on:mouseleave={() => hoverHint.set(null)}
       on:dragstart={e => onTabDragStart(e, tab)}
       on:dragend={onTabDragEnd}
@@ -90,6 +152,7 @@
           on:click|stopPropagation
         />
       {:else}
+        {#if tab.color}<span class="dot" style="background: {tab.color}"></span>{/if}
         <span class="label">{tab.label}</span>
         {#if mode === 'edit' && tabs.length > 1}
           <button
@@ -114,6 +177,17 @@
     </button>
   {/if}
 </div>
+
+{#if colourMenu}
+  <ContextMenu x={colourMenu.x} y={colourMenu.y} items={colourMenuItems} on:close={() => colourMenu = null} />
+{/if}
+
+{#if colourPopup}
+  <ColourPickerPopup x={colourPopup.x} y={colourPopup.y}
+    hex={tabs.find(t => t.id === colourPopup.tabId)?.color ?? '#74a2ffff'}
+    on:change={onColourChange}
+    on:close={() => colourPopup = null} />
+{/if}
 
 <style>
   .tabbar {
@@ -156,6 +230,13 @@
   .tab.being-dragged      { opacity: 0.4; }
 
   .label { pointer-events: none; }
+  .dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    pointer-events: none;
+  }
 
   .remove {
     display: flex; align-items: center; justify-content: center;

@@ -2,16 +2,21 @@ import { writable } from 'svelte/store'
 export const mode   = writable('preview')
 export const pinned = writable(true)
 
-// 'dark' | 'light' — toggled in the settings panel, persisted two ways:
-// per-file with the rest of the workspace state (ipc.js / App.svelte's
+// 'dark' | 'light' — toggled in the settings panel, persisted two
+// ways: per-file with the rest of the workspace state (ipc.js / App.svelte's
 // restore_state handler takes priority when a file has its own saved theme),
 // and as a cross-file default in localStorage (WebView2's profile — see
 // SlateWindow.cs's userDataFolder — outlives any single .gh file) so a file
 // with no saved theme opens in whatever the user picked last, not always dark.
+// (a third 'beta' theme existed 2026-09-22..09-24 as a testbed for the
+// pane background/pattern feature — removed once that feature graduated to
+// dark/light directly; an old file/localStorage value of 'beta' just falls
+// through the THEMES.includes() check below to 'dark'.)
+const THEMES = ['dark', 'light']
 function readDefaultTheme() {
   try {
     const t = localStorage.getItem('slate-theme')
-    return t === 'light' ? 'light' : 'dark'
+    return THEMES.includes(t) ? t : 'dark'
   } catch {
     return 'dark'
   }

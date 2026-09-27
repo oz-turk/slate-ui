@@ -178,7 +178,7 @@
     background: var(--edge-tint);
     pointer-events: none;
   }
-  .row:hover          { background: var(--bg); }
+  .row:hover          { background: var(--pane-bg-override, var(--bg)); }
   .row.edit           { grid-template-columns: 20px var(--name-col-w, 110px) 44px 1fr 44px var(--val-col-w) 24px; padding: 0 8px 0 6px; }
   .row.selected       { background: rgba(var(--accent-rgb), 0.15); }
   .row.selected:hover { background: rgba(var(--accent-rgb), 0.22); }
@@ -193,6 +193,16 @@
     color: rgba(var(--text-rgb), 0.21);
     cursor: grab;
     flex-shrink: 0;
+    /* knockout outline — keeps the handle visible over a busy pane pattern.
+       Tracks the pane's OWN background, OPAQUE variant (--pane-bg-override
+       may carry reduced alpha for the pane's actual fill — text-shadow/filter
+       colours respect that alpha too, so a translucent outline would let the
+       pattern bleed straight back through; see Pane.svelte's paneStyleCss). */
+    filter:
+      drop-shadow(2px 0 1.5px var(--pane-bg-override-opaque, var(--bg)))
+      drop-shadow(-2px 0 1.5px var(--pane-bg-override-opaque, var(--bg)))
+      drop-shadow(0 2px 1.5px var(--pane-bg-override-opaque, var(--bg)))
+      drop-shadow(0 -2px 1.5px var(--pane-bg-override-opaque, var(--bg)));
   }
   .handle:hover { color: rgba(var(--text-rgb), 0.43); }
   .handle:active { cursor: grabbing; }
@@ -211,6 +221,15 @@
     font-size: 10px;
     color: rgba(var(--text-rgb), 0.29);
     font-variant-numeric: tabular-nums;
+    /* knockout outline — keeps these readable over a busy pane background
+       pattern without giving them an opaque backing (would fight the
+       row's minimal, "printed on paper" look). OPAQUE pane colour — see
+       .handle above for why. */
+    text-shadow:
+      2px 0 1.5px var(--pane-bg-override-opaque, var(--bg)), -2px 0 1.5px var(--pane-bg-override-opaque, var(--bg)),
+      0 2px 1.5px var(--pane-bg-override-opaque, var(--bg)), 0 -2px 1.5px var(--pane-bg-override-opaque, var(--bg)),
+      2px 2px 1.5px var(--pane-bg-override-opaque, var(--bg)), -2px -2px 1.5px var(--pane-bg-override-opaque, var(--bg)),
+      2px -2px 1.5px var(--pane-bg-override-opaque, var(--bg)), -2px 2px 1.5px var(--pane-bg-override-opaque, var(--bg));
   }
   .bound.lo { text-align: right; padding-right: 6px; }
   .bound.hi { text-align: left;  padding-left: 6px; }
@@ -275,6 +294,12 @@
     outline: none;
     transition: border-color 0.15s, color 0.15s;
     -moz-appearance: textfield;
+    /* knockout outline — see .bound above */
+    text-shadow:
+      2px 0 1.5px var(--pane-bg-override-opaque, var(--bg)), -2px 0 1.5px var(--pane-bg-override-opaque, var(--bg)),
+      0 2px 1.5px var(--pane-bg-override-opaque, var(--bg)), 0 -2px 1.5px var(--pane-bg-override-opaque, var(--bg)),
+      2px 2px 1.5px var(--pane-bg-override-opaque, var(--bg)), -2px -2px 1.5px var(--pane-bg-override-opaque, var(--bg)),
+      2px -2px 1.5px var(--pane-bg-override-opaque, var(--bg)), -2px 2px 1.5px var(--pane-bg-override-opaque, var(--bg));
   }
   .val::-webkit-inner-spin-button { display: none; }
   .val:focus { border-bottom-color: rgba(var(--accent-rgb), 0.4); color: rgba(var(--text-rgb), 0.85); }
@@ -291,6 +316,12 @@
     display: flex;
     align-items: center;
     justify-content: center;
+    /* knockout outline — see .bound above */
+    text-shadow:
+      2px 0 1.5px var(--pane-bg-override-opaque, var(--bg)), -2px 0 1.5px var(--pane-bg-override-opaque, var(--bg)),
+      0 2px 1.5px var(--pane-bg-override-opaque, var(--bg)), 0 -2px 1.5px var(--pane-bg-override-opaque, var(--bg)),
+      2px 2px 1.5px var(--pane-bg-override-opaque, var(--bg)), -2px -2px 1.5px var(--pane-bg-override-opaque, var(--bg)),
+      2px -2px 1.5px var(--pane-bg-override-opaque, var(--bg)), -2px 2px 1.5px var(--pane-bg-override-opaque, var(--bg));
     transition: background 0.1s, color 0.1s;
     margin-left: 4px;
     padding: 0;

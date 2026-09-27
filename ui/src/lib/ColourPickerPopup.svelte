@@ -10,8 +10,23 @@
 
   let tab = 'hsla'   // 'hsla' | 'rgba' — HSLA opens first
 
-  $: ({ r, g, b, a } = hex8ToRgba(hex))
-  $: ({ h, s, l }    = rgbToHsl(r, g, b))
+  // h/s/l are their OWN state, not a pure derivation of r/g/b — rgbToHsl is
+  // lossy at s===0 (any grey, hue undefined, returns h=0 unconditionally —
+  // see colorUtils.js). Re-deriving on every change meant dragging H while
+  // S was 0 immediately round-tripped through a grey RGB and snapped H back
+  // to 0, making it impossible to dial in a hue before raising saturation.
+  // skipHslSync marks an rgba update that came FROM setHsl itself (h/s/l
+  // already known exactly, no need to reconstruct them lossily) — every
+  // other write path (RGB sliders, hex input, eyedropper) leaves it false so
+  // the HSLA tab still follows along as expected.
+  let r = 255, g = 255, b = 255, a = 255
+  let h = 0, s = 0, l = 100
+  let skipHslSync = false
+  $: {
+    ;({ r, g, b, a } = hex8ToRgba(hex))
+    if (!skipHslSync) ({ h, s, l } = rgbToHsl(r, g, b))
+    skipHslSync = false
+  }
   $: alphaPct = Math.round(a / 255 * 100)
   $: hexRgb   = hex.slice(1, 7)
 
@@ -22,8 +37,11 @@
 
   function setRgb(patch)   { emit({ r, g, b, a, ...patch }) }
   function setHsl(patch) {
-    const nh = patch.h ?? h, ns = patch.s ?? s, nl = patch.l ?? l
-    const rgb = hslToRgb(nh, ns, nl)
+    h = patch.h ?? h
+    s = patch.s ?? s
+    l = patch.l ?? l
+    const rgb = hslToRgb(h, s, l)
+    skipHslSync = true
     emit({ r: rgb.r, g: rgb.g, b: rgb.b, a: patch.a ?? a })
   }
   function setAlpha(pct) {
@@ -71,7 +89,15 @@
                  repeating-conic-gradient(#5a5a5a 0% 25%, #3a3a3a 0% 50%) 50% / 8px 8px`
 </script>
 
-<div class="popup" use:clickOutside={{ onClose: () => dispatch('close') }} style="left: {x}px; top: {y}px">
+<!-- svelte-ignore a11y-click-events-have-key-events -->
+<!-- svelte-ignore a11y-no-static-element-interactions -->
+<!-- Wherever this is nested (e.g. inside TextSettingsPopup, or directly
+     inside a row's DOM subtree), a click here would otherwise bubble past
+     this popup into whatever click handler its host row/pane has (row
+     selection, etc.) — see TextSettingsPopup's own note on this. clickOutside
+     listens on window in the capture phase (actions.js), so stopping the
+     bubble phase here doesn't affect it. -->
+<div class="popup" on:click|stopPropagation use:clickOutside={{ onClose: () => dispatch('close') }} style="left: {x}px; top: {y}px">
   <div class="tabs">
     <button class="tab" class:active={tab === 'hsla'} on:click={() => tab = 'hsla'}>HSLA</button>
     <button class="tab" class:active={tab === 'rgba'} on:click={() => tab = 'rgba'}>RGBA</button>
