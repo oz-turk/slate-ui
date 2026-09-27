@@ -34,6 +34,18 @@
     {:else if $ctrlHeld}
       {#if $hoverHint}
         <span class="hint-item">{$hoverHint}</span>
+      {:else}
+        <span class="hint-item">
+          <span class="kbd">Ctrl</span> +
+          <span class="kbd">
+            <!-- mouse-wheel: composite icon, body shape based on Lucide "mouse" (ISC) with a filled scroll-wheel highlight — see NOTICE.md -->
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="5" y="2" width="14" height="20" rx="7" />
+              <rect x="10" y="6" width="4" height="6" rx="2" fill="currentColor" stroke="none" />
+            </svg>
+          </span>
+          Zoom
+        </span>
       {/if}
       {#if $mode === 'edit'}
         <span class="hint-item">

@@ -12,6 +12,10 @@ Icons used:
   custom composite: body shape based on Lucide's `mouse` icon, with an added
   filled rect highlighting the left button (Lucide has no dedicated
   left-click icon)
+- "mouse-wheel" — status bar Ctrl+scroll zoom hint (`ui/src/lib/StatusBar.svelte`),
+  a custom composite: body shape based on Lucide's `mouse` icon, with an
+  added filled highlight over the scroll wheel (Lucide has no dedicated
+  scroll-wheel icon)
 - `lock` / `lock-open` — Trigger's target-lock toggle
   (`ui/src/lib/TriggerRow.svelte`), used as-is
 - `refresh-cw` — Trigger's manual/cyclic mode toggle
