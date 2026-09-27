@@ -248,6 +248,12 @@
               on:resizeStart={e  => dispatch('sliderResizeStart', e.detail)}
               on:resizeEnd={()   => dispatch('sliderResizeEnd')}
               on:select={e      => dispatch('sliderSelect',      { id: slider.id, shift: e.detail.shift, ctrl: e.detail.ctrl })}
+              on:textAlign={e => dispatch('sliderTextAlign', { id: slider.id, align: e.detail })}
+              on:textColor={e => dispatch('sliderTextColor', { id: slider.id, color: e.detail })}
+              on:textFontSize={e => dispatch('sliderTextFontSize', { id: slider.id, size: e.detail })}
+              on:textBold={e => dispatch('sliderTextBold', { id: slider.id, value: e.detail })}
+              on:textItalic={e => dispatch('sliderTextItalic', { id: slider.id, value: e.detail })}
+              on:textUnderline={e => dispatch('sliderTextUnderline', { id: slider.id, value: e.detail })}
               on:paramViewerSize={e       => dispatch('sliderParamViewerSize',       { id: slider.id, size: e.detail })}
               on:paramViewerShowCounts={e => dispatch('sliderParamViewerShowCounts', { id: slider.id, value: e.detail })}
               on:remove={()      => dispatch('sliderRemove',     { groupId: group.id, sliderId: slider.id })}
@@ -284,6 +290,12 @@
               on:sliderResizeStart
               on:sliderResizeEnd
               on:sliderSelect
+              on:sliderTextAlign
+              on:sliderTextColor
+              on:sliderTextFontSize
+              on:sliderTextBold
+              on:sliderTextItalic
+              on:sliderTextUnderline
               on:sliderRemove
               on:headerDragStart
               on:headerDragOver

@@ -330,6 +330,37 @@
       }))
     }))
   }
+
+  // Text Panel appearance (alignment/colour/font size) — pure UI preference,
+  // same as GeometryParam's previewPinned/internalize: no postToCs, GH has
+  // no concept of it, just persisted via the next snapshot. Applies to any
+  // Text Panel row (standalone header look or the normal boxed one, see
+  // PanelRow's textStyle), not just headers. One flat value per panel, so
+  // patchSlider's plain replacement patch (already group-aware) is enough.
+  function onTextAlignChange(sliderId, align) {
+    patchSlider(sliderId, { textAlign: align })
+    postStateSnapshot()
+  }
+  function onTextColorChange(sliderId, color) {
+    patchSlider(sliderId, { textColor: color })
+    postStateSnapshot()
+  }
+  function onTextFontSizeChange(sliderId, size) {
+    patchSlider(sliderId, { textFontSize: size })
+    postStateSnapshot()
+  }
+  function onTextBoldChange(sliderId, value) {
+    patchSlider(sliderId, { textBold: value })
+    postStateSnapshot()
+  }
+  function onTextItalicChange(sliderId, value) {
+    patchSlider(sliderId, { textItalic: value })
+    postStateSnapshot()
+  }
+  function onTextUnderlineChange(sliderId, value) {
+    patchSlider(sliderId, { textUnderline: value })
+    postStateSnapshot()
+  }
   // Param Viewer preview appearance — same "pure UI preference, no postToCs"
   // reasoning as the Text Panel settings above. size: number (px, a MODULE
   // multiple) or null to fall back to the row's own auto-measured default.
@@ -1211,6 +1242,12 @@
               on:resizeStart={e  => resizingSliderId = e.detail}
               on:resizeEnd={()   => resizingSliderId = null}
               on:select={e      => onSliderSelect(slider.id, e.detail.shift, e.detail.ctrl)}
+              on:textAlign={e => onTextAlignChange(slider.id, e.detail)}
+              on:textColor={e => onTextColorChange(slider.id, e.detail)}
+              on:textFontSize={e => onTextFontSizeChange(slider.id, e.detail)}
+              on:textBold={e => onTextBoldChange(slider.id, e.detail)}
+              on:textItalic={e => onTextItalicChange(slider.id, e.detail)}
+              on:textUnderline={e => onTextUnderlineChange(slider.id, e.detail)}
               on:paramViewerSize={e       => onParamViewerSizeChange(slider.id, e.detail)}
               on:paramViewerShowCounts={e => onParamViewerShowCountsChange(slider.id, e.detail)}
               on:remove={() => removeSlider(activeTab.id, slider.id)}
@@ -1240,6 +1277,12 @@
               on:sliderResizeStart={e   => resizingSliderId = e.detail}
               on:sliderResizeEnd={()    => resizingSliderId = null}
               on:sliderSelect={e        => onSliderSelect(e.detail.id, e.detail.shift, e.detail.ctrl)}
+              on:sliderTextAlign={e     => onTextAlignChange(e.detail.id, e.detail.align)}
+              on:sliderTextColor={e     => onTextColorChange(e.detail.id, e.detail.color)}
+              on:sliderTextFontSize={e  => onTextFontSizeChange(e.detail.id, e.detail.size)}
+              on:sliderTextBold={e      => onTextBoldChange(e.detail.id, e.detail.value)}
+              on:sliderTextItalic={e    => onTextItalicChange(e.detail.id, e.detail.value)}
+              on:sliderTextUnderline={e => onTextUnderlineChange(e.detail.id, e.detail.value)}
               on:sliderParamViewerSize={e       => onParamViewerSizeChange(e.detail.id, e.detail.size)}
               on:sliderParamViewerShowCounts={e => onParamViewerShowCountsChange(e.detail.id, e.detail.value)}
               on:sliderRemove={e        => removeSlider(activeTab.id, e.detail.sliderId)}

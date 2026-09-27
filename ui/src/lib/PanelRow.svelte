@@ -4,6 +4,7 @@
   import { hoverHint, mode as modeStore } from '../stores/uiState.js'
   import { dragTranslateYFor, rowDragOver, rowDragLeave, rowDrop } from './rowDrag.js'
   import { resizeHint, measureResizeBounds, computeResizeHeight } from './resizeHandle.js'
+  import TextSettingsPopup from './TextSettingsPopup.svelte'
   const dispatch = createEventDispatcher()
 
   export let slider    = {}   // { id, name, value, readOnly, height } — value is the panel's text
@@ -52,7 +53,7 @@
   // showHeader is included because naming/unnaming a panel changes rowEl's
   // actual chrome (the header appearing/disappearing), so a fresh measurement
   // is needed after Svelte patches the DOM.
-  $: (slider.value, slider.id, showHeader, remeasure())
+  $: (slider.value, slider.id, showHeader, showAsHeader, remeasure())
   // Math.max clamps the TOTAL (overhead + body) to at least one MODULE, not
   // the body alone — overhead here is already bigger than one MODULE, so the
   // floor never actually bites, but clamping the body instead would produce
@@ -181,13 +182,72 @@
     }
   }
 
+  // ── standalone header display (md-style `#`/`##`/`###`) ──────────────────────
+  // A panel whose ENTIRE (trimmed) text is ONE header line becomes its own
+  // simple, frameless component in PREVIEW — not the boxed/code-block panel
+  // look. Edit mode always shows the normal panel body (raw textarea or, for
+  // a wired panel, the plain text-display) regardless, same as any other
+  // panel, so the `###` syntax stays visible/typeable there — only preview
+  // swaps to the standalone look, once there's nothing left to edit.
+  // Row height still comes from the same MODULE-snapped bodyHeight/fitHeight
+  // above; this only changes what renders INSIDE .text-wrap, not its size.
+  function parseWholeHeader(text) {
+    const m = String(text ?? '').trim().match(/^(#{1,3})\s+(.*)$/)
+    return m ? { level: m[1].length, text: m[2] } : null
+  }
+  $: wholeHeader  = parseWholeHeader(slider.value)
+  $: showAsHeader = mode === 'preview' && !!wholeHeader
+
+  // ── appearance settings (align/colour/font size) — apply to EITHER render
+  // of this panel's text (the standalone header look above, or the normal
+  // boxed text-display/text-input below): not header-specific, any Text
+  // Panel can use them. One small settings icon in .text-wrap's top-right
+  // corner opens TextSettingsPopup.svelte (align/colour/size only — text
+  // itself stays typed inline here, the popup never duplicates that editor).
+  // Previously this was a 3-button+swatch overlay sitting directly on top of
+  // .text-wrap, which could cover/intercept clicks into the text underneath
+  // it — a single small icon avoids that.
+  const LEVEL_FONT_SIZE = { 1: 15, 2: 13, 3: 12 }   // must match .standalone-header.level-N in the style block below
+  const NORMAL_FONT_SIZE = 11                        // must match .text-display/.text-input's font-size below
+  $: naturalDefaultSize = wholeHeader ? LEVEL_FONT_SIZE[wholeHeader.level] : NORMAL_FONT_SIZE
+
+  $: textAlign     = slider.textAlign ?? 'left'
+  $: textColor     = slider.textColor ?? null
+  $: textFontSize  = slider.textFontSize ?? null
+  $: textBold      = !!slider.textBold
+  $: textItalic    = !!slider.textItalic
+  $: textUnderline = !!slider.textUnderline
+  $: textStyle = [
+    textColor    ? `color: ${textColor}`          : '',
+    textFontSize ? `font-size: ${textFontSize}px` : '',
+    `text-align: ${textAlign}`,
+    textBold      ? 'font-weight: 700'        : '',
+    textItalic    ? 'font-style: italic'      : '',
+    textUnderline ? 'text-decoration: underline' : '',
+  ].filter(Boolean).join('; ')
+
+  let textSettingsPopup = null   // { x, y } | null
+  function openTextSettings(e) {
+    const rect = e.currentTarget.getBoundingClientRect()
+    const w = 176, h = 240
+    textSettingsPopup = {
+      x: Math.min(rect.left, window.innerWidth  - w - 8),
+      y: Math.min(rect.bottom + 4, window.innerHeight - h - 8),
+    }
+  }
+  function onTextAlignChange(e)     { dispatch('textAlign', e.detail) }
+  function onTextColorChange(e)     { dispatch('textColor', e.detail) }
+  function onTextFontSizeChange(e)  { dispatch('textFontSize', e.detail) }
+  function onTextBoldChange(e)      { dispatch('textBold', e.detail) }
+  function onTextItalicChange(e)    { dispatch('textItalic', e.detail) }
+  function onTextUnderlineChange(e) { dispatch('textUnderline', e.detail) }
 </script>
 
 <!-- svelte-ignore a11y-no-static-element-interactions -->
 <!-- svelte-ignore a11y-click-events-have-key-events -->
 <div class="row" data-slider-id={slider.id} class:edit={mode === 'edit'} class:selected
     class:row-dragging={rowDragging} class:row-last={isLast}
-    class:headerless={!showHeader}
+    class:headerless={!showHeader || showAsHeader}
     bind:this={rowEl}
     style={dragTranslateY ? `transform: translateY(${dragTranslateY}px)` : ''}
     on:click={e => mode === 'edit' && dispatch('select', { shift: e.shiftKey, ctrl: e.ctrlKey })}
@@ -214,9 +274,15 @@
         <circle cx="2" cy="10" r="1.2"/><circle cx="6" cy="10" r="1.2"/>
       </svg>
     </div>
+    <!-- Outside the resizable body and at the row's far right edge, same
+         spot/size/colour every other row type's remove button uses (see
+         e.g. SliderRow's .del) — not inside .text-wrap (see corner-controls
+         below), and not tied to .header existing, since unnamed panels skip
+         that band entirely (see showHeader) but still need to be removable. -->
+    <button class="del" on:click|stopPropagation={() => dispatch('remove')} title="Remove">×</button>
   {/if}
 
-  {#if showHeader}
+  {#if showHeader && !showAsHeader}
   <div class="header">
     <span class="name" title={slider.name}>{slider.name}</span>
 
@@ -225,16 +291,16 @@
     {#if slider.readOnly}
       <span class="badge">read-only</span>
     {/if}
-
-    {#if mode === 'edit'}
-      <button class="del" on:click|stopPropagation={() => dispatch('remove')} title="Remove">×</button>
-    {/if}
   </div>
   {/if}
 
   <div class="text-wrap" style="height: {resizing ? liveHeight : bodyHeight}px">
-    {#if slider.readOnly}
-      <div class="text-display" bind:this={textEl}>{slider.value || '—'}</div>
+    {#if showAsHeader}
+      <div class="standalone-header level-{wholeHeader.level}"
+          class:align-center={textAlign === 'center'} class:align-right={textAlign === 'right'}
+          style={textStyle}>{wholeHeader.text}</div>
+    {:else if slider.readOnly}
+      <div class="text-display" bind:this={textEl} style={textStyle}>{slider.value || '—'}</div>
     {:else}
       <!-- svelte-ignore a11y-no-static-element-interactions -->
       <textarea
@@ -243,12 +309,34 @@
         value={slider.value}
         placeholder="Type text… (Ctrl+Enter to apply)"
         spellcheck="false"
+        style={textStyle}
         on:click={onTextClick}
         on:pointerdown={onTextPointerDown}
         on:keydown|stopPropagation={onTextKeydown}
         on:change={commit}
         on:blur={commit}
       ></textarea>
+    {/if}
+
+    {#if mode === 'edit'}
+      <button class="corner-btn" on:click|stopPropagation={openTextSettings} title="Text settings">
+        <svg width="3" height="12" viewBox="0 0 3 12" fill="currentColor">
+          <circle cx="1.5" cy="1.5" r="1.5"/><circle cx="1.5" cy="6" r="1.5"/><circle cx="1.5" cy="10.5" r="1.5"/>
+        </svg>
+      </button>
+    {/if}
+
+    {#if textSettingsPopup}
+      <TextSettingsPopup x={textSettingsPopup.x} y={textSettingsPopup.y}
+        align={textAlign} color={textColor} fontSize={textFontSize} defaultSize={naturalDefaultSize}
+        bold={textBold} italic={textItalic} underline={textUnderline}
+        on:alignChange={onTextAlignChange}
+        on:colorChange={onTextColorChange}
+        on:fontSizeChange={onTextFontSizeChange}
+        on:boldChange={onTextBoldChange}
+        on:italicChange={onTextItalicChange}
+        on:underlineChange={onTextUnderlineChange}
+        on:close={() => textSettingsPopup = null} />
     {/if}
   </div>
 
@@ -285,7 +373,7 @@
     background: var(--edge-tint);
     pointer-events: none;
   }
-  .row.edit            { padding: 0 8px 3px 26px; }
+  .row.edit            { padding: 0 32px 3px 26px; }
   /* Without a header, the recessed text box is the row's very first thing —
      flush against the divider line above it (the previous row's .row::after)
      with nothing to hold it off, unlike the bottom edge which already has
@@ -353,7 +441,20 @@
     flex-shrink: 0;
   }
 
+  /* Outside the resizable body, at the row's far right edge — same
+     size/colour as every other row type's remove button (e.g. SliderRow's
+     .del), but positioned absolutely (like .handle on the left) rather than
+     as a flex child, since it needs to sit at a fixed spot regardless of
+     whether .header exists (unnamed panels skip that band, see showHeader)
+     or how tall the resizable body is. A small fixed 20x20 box, NOT
+     spanning the row's full height like .handle does — a delete target
+     should stay small and precise, not turn the whole right edge into one
+     big click-to-remove column. top:12px roughly centres it within the
+     44px .header band when one is shown (12 + 20/2 = 22 = 44/2). */
   .del {
+    position: absolute;
+    top: 12px;
+    right: 6px;
     width: 20px;
     height: 20px;
     border: none;
@@ -366,15 +467,14 @@
     align-items: center;
     justify-content: center;
     transition: background 0.1s, color 0.1s;
-    margin-left: 4px;
     padding: 0;
-    flex-shrink: 0;
   }
   .del:hover { background: var(--grid); color: rgba(var(--text-rgb), 0.58); }
 
   /* code-block look: monospace, recessed fill, thin accent rule on the left —
-     no height cap here, .text-wrap's inline height (module-based) governs it */
-  .text-wrap { width: 100%; }
+     no height cap here, .text-wrap's inline height (module-based) governs it.
+     position:relative for .corner-btn below. */
+  .text-wrap { width: 100%; position: relative; }
   .text-display, .text-input {
     width: 100%;
     height: 100%;
@@ -385,7 +485,10 @@
     border: 1px solid transparent;
     border-left: 2px solid rgba(var(--text-rgb), 0.15);
     border-radius: 4px;
-    padding: 6px 8px;
+    /* extra right room clears the .corner-btn settings icon (top-right)
+       so it never sits over the last few characters of text — the remove
+       button lives outside .text-wrap entirely now, see .del above */
+    padding: 6px 24px 6px 8px;
     overflow-y: auto;
   }
 
@@ -402,6 +505,61 @@
     transition: border-color 0.15s;
   }
   .text-input:focus { border-left-color: var(--accent); }
+
+  /* standalone header (preview, whole-panel text is one #/##/### line) —
+     deliberately NOT sharing .text-display's boxed/monospace/code-block
+     look: no background, no border, no left accent rule, plain UI sans-serif
+     — reads as its own component, not a text panel. Weight/size scale
+     mirrors ValueListRow's .check-header.level-N so both speak the same
+     "section label" language elsewhere in the app. Centered vertically in
+     whatever MODULE-snapped height .text-wrap has (same box the code-block
+     look would've filled), so a header panel just spans however many
+     modules its slider.height (or the fit-to-content default) already gives
+     it — no separate sizing path. */
+  .standalone-header {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    box-sizing: border-box;
+    padding: 0 24px 0 4px;   /* right side clears .corner-btn, see .text-display/.text-input above */
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    white-space: normal;
+    word-break: break-word;
+  }
+  .standalone-header.level-1 { font-size: 15px; font-weight: 700; letter-spacing: 0.02em; color: rgba(var(--text-rgb), 0.92); }
+  .standalone-header.level-2 { font-size: 13px; font-weight: 600; color: rgba(var(--text-rgb), 0.78); }
+  .standalone-header.level-3 { font-size: 12px; font-weight: 600; color: rgba(var(--text-rgb), 0.6); }
+  .standalone-header.align-center { justify-content: center; text-align: center; }
+  .standalone-header.align-right  { justify-content: flex-end; text-align: right; }
+
+  /* single small icon, not a multi-button bar — the previous 3-button+swatch
+     overlay sat directly on top of .text-wrap and could cover/intercept
+     clicks into the text underneath it (align+colour controls blocking
+     edit-mode typing). One 16x16 icon in the corner (plus the matching
+     right-padding above) leaves the rest of the box free. The remove button
+     is a separate, ROW-level control now (see .del above), not part of this. */
+  .corner-btn {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    z-index: 1;
+    width: 16px;
+    height: 16px;
+    padding: 0;
+    border: none;
+    border-radius: 3px;
+    background: var(--panel-bg);
+    color: rgba(var(--text-rgb), 0.35);
+    font-size: 12px;
+    line-height: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: color 0.15s, background 0.1s;
+  }
+  .corner-btn:hover { color: rgba(var(--text-rgb), 0.75); background: var(--grid); }
 
   /* absolutely positioned into the row's existing bottom padding (10px, always
      reserved whether or not the handle is rendered) rather than added as a
