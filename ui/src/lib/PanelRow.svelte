@@ -274,6 +274,19 @@
         <circle cx="2" cy="10" r="1.2"/><circle cx="6" cy="10" r="1.2"/>
       </svg>
     </div>
+    <!-- Settings sits at the same row-level corner as .del, immediately to
+         its left (2026-09-27 kullanıcı: "3 nokta ... çarpıdan biraz
+         uzaklaştır", "param viewer ve text panel'deki 3 noktayı da diğer
+         ikonlara benzeterek düzenle") — no longer floats inside .text-wrap
+         (see ParamViewerRow's matching settings/expand/remove cluster), and
+         like .del below, positioned absolutely so it stays put regardless of
+         whether .header exists (unnamed panels skip that band). -->
+    <button class="corner-btn" on:click|stopPropagation={openTextSettings} title="Text settings">
+      <svg width="3" height="12" viewBox="0 0 3 12" fill="currentColor">
+        <circle cx="1.5" cy="1.5" r="1.5"/><circle cx="1.5" cy="6" r="1.5"/><circle cx="1.5" cy="10.5" r="1.5"/>
+      </svg>
+    </button>
+
     <!-- Outside the resizable body and at the row's far right edge, same
          spot/size/colour every other row type's remove button uses (see
          e.g. SliderRow's .del) — not inside .text-wrap (see corner-controls
@@ -316,14 +329,6 @@
         on:change={commit}
         on:blur={commit}
       ></textarea>
-    {/if}
-
-    {#if mode === 'edit'}
-      <button class="corner-btn" on:click|stopPropagation={openTextSettings} title="Text settings">
-        <svg width="3" height="12" viewBox="0 0 3 12" fill="currentColor">
-          <circle cx="1.5" cy="1.5" r="1.5"/><circle cx="1.5" cy="6" r="1.5"/><circle cx="1.5" cy="10.5" r="1.5"/>
-        </svg>
-      </button>
     {/if}
 
     {#if textSettingsPopup}
@@ -373,7 +378,7 @@
     background: var(--edge-tint);
     pointer-events: none;
   }
-  .row.edit            { padding: 0 32px 3px 26px; }
+  .row.edit            { padding: 0 68px 3px 26px; }
   /* Without a header, the recessed text box is the row's very first thing —
      flush against the divider line above it (the previous row's .row::after)
      with nothing to hold it off, unlike the bottom edge which already has
@@ -450,46 +455,44 @@
     flex-shrink: 0;
   }
 
-  /* Outside the resizable body, at the row's far right edge — same
-     size/colour as every other row type's remove button (e.g. SliderRow's
-     .del), but positioned absolutely (like .handle on the left) rather than
-     as a flex child, since it needs to sit at a fixed spot regardless of
-     whether .header exists (unnamed panels skip that band, see showHeader)
-     or how tall the resizable body is. A small fixed 20x20 box, NOT
-     spanning the row's full height like .handle does — a delete target
-     should stay small and precise, not turn the whole right edge into one
-     big click-to-remove column. top:12px roughly centres it within the
-     44px .header band when one is shown (12 + 20/2 = 22 = 44/2). */
-  .del {
+  /* Shared box for both row-level icon buttons (settings, remove) — same
+     spot/size/colour convention as ParamViewerRow's settings/expand/remove
+     cluster (2026-09-27 kullanıcı: "iconların arka plan renkleri ve
+     boyutları da tutarlı olsun") — positioned absolutely (like .handle on
+     the left) rather than as flex children, since they need to sit at a
+     fixed spot regardless of whether .header exists (unnamed panels skip
+     that band, see showHeader) or how tall the resizable body is. Opaque
+     background (not a border/knockout-shadow trick) so each one also fully
+     occludes whatever text sits behind it in the headerless case. top:10px
+     centres a 24px box within the 44px .header band when one is shown
+     ((44 - 24) / 2 = 10). */
+  .corner-btn, .del {
     position: absolute;
-    top: 12px;
-    right: 6px;
-    width: 20px;
-    height: 20px;
+    top: 10px;
+    width: 24px;
+    height: 24px;
     border: none;
-    background: transparent;
-    color: rgba(var(--text-rgb), 0.21);
+    border-radius: 4px;
+    background: var(--grid);
+    color: rgba(var(--text-rgb), 0.5);
     font-size: 14px;
     cursor: pointer;
-    border-radius: 3px;
     display: flex;
     align-items: center;
     justify-content: center;
-    /* knockout outline — see SliderRow's .bound for why */
-    text-shadow:
-      2px 0 1.5px var(--pane-bg-override-opaque, var(--bg)), -2px 0 1.5px var(--pane-bg-override-opaque, var(--bg)),
-      0 2px 1.5px var(--pane-bg-override-opaque, var(--bg)), 0 -2px 1.5px var(--pane-bg-override-opaque, var(--bg)),
-      2px 2px 1.5px var(--pane-bg-override-opaque, var(--bg)), -2px -2px 1.5px var(--pane-bg-override-opaque, var(--bg)),
-      2px -2px 1.5px var(--pane-bg-override-opaque, var(--bg)), -2px 2px 1.5px var(--pane-bg-override-opaque, var(--bg));
-    transition: background 0.1s, color 0.1s;
     padding: 0;
+    transition: background 0.1s, color 0.15s;
   }
-  .del:hover { background: var(--grid); color: rgba(var(--text-rgb), 0.58); }
+  .corner-btn:hover, .del:hover { background: var(--border); color: rgba(var(--text-rgb), 0.85); }
+
+  .del { right: 6px; }
+  /* Left of .del with extra breathing room past it (2026-09-27 kullanıcı:
+     "çarpıdan biraz uzaklaştır") — keeps remove out of easy fat-finger range. */
+  .corner-btn { right: 40px; z-index: 1; }
 
   /* code-block look: monospace, recessed fill, thin accent rule on the left —
-     no height cap here, .text-wrap's inline height (module-based) governs it.
-     position:relative for .corner-btn below. */
-  .text-wrap { width: 100%; position: relative; }
+     no height cap here, .text-wrap's inline height (module-based) governs it. */
+  .text-wrap { width: 100%; }
   .text-display, .text-input {
     width: 100%;
     height: 100%;
@@ -500,10 +503,7 @@
     border: 1px solid transparent;
     border-left: 2px solid rgba(var(--text-rgb), 0.15);
     border-radius: 4px;
-    /* extra right room clears the .corner-btn settings icon (top-right)
-       so it never sits over the last few characters of text — the remove
-       button lives outside .text-wrap entirely now, see .del above */
-    padding: 6px 24px 6px 8px;
+    padding: 6px 8px;
     overflow-y: auto;
   }
 
@@ -537,7 +537,7 @@
     display: flex;
     align-items: center;
     box-sizing: border-box;
-    padding: 0 24px 0 4px;   /* right side clears .corner-btn, see .text-display/.text-input above */
+    padding: 0 4px;
     font-family: 'Segoe UI', system-ui, sans-serif;
     white-space: normal;
     word-break: break-word;
@@ -547,34 +547,6 @@
   .standalone-header.level-3 { font-size: 12px; font-weight: 600; color: rgba(var(--text-rgb), 0.6); }
   .standalone-header.align-center { justify-content: center; text-align: center; }
   .standalone-header.align-right  { justify-content: flex-end; text-align: right; }
-
-  /* single small icon, not a multi-button bar — the previous 3-button+swatch
-     overlay sat directly on top of .text-wrap and could cover/intercept
-     clicks into the text underneath it (align+colour controls blocking
-     edit-mode typing). One 16x16 icon in the corner (plus the matching
-     right-padding above) leaves the rest of the box free. The remove button
-     is a separate, ROW-level control now (see .del above), not part of this. */
-  .corner-btn {
-    position: absolute;
-    top: 4px;
-    right: 4px;
-    z-index: 1;
-    width: 16px;
-    height: 16px;
-    padding: 0;
-    border: none;
-    border-radius: 3px;
-    background: var(--panel-bg);
-    color: rgba(var(--text-rgb), 0.35);
-    font-size: 12px;
-    line-height: 1;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-    transition: color 0.15s, background 0.1s;
-  }
-  .corner-btn:hover { color: rgba(var(--text-rgb), 0.75); background: var(--grid); }
 
   /* absolutely positioned into the row's existing bottom padding (10px, always
      reserved whether or not the handle is rendered) rather than added as a

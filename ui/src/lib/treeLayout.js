@@ -48,7 +48,17 @@ function polar(cx, cy, r, a) {
   return [cx + r * Math.cos(a), cy + r * Math.sin(a)]
 }
 
+// A single SVG arc command can't draw a full circle — when a wedge's span is
+// exactly 2π (e.g. one branch holding 100% of the ring, or drilling into a
+// node with only one child), its start and end point are the literal same
+// coordinate, which most renderers treat as a zero-length no-op instead of
+// a full ring (2026-09-27 kullanıcı: "sadece 1 branch olduğunda gösterim
+// bozuluyor, tek bir dilim şeklinde gösterebilmeli"). Nudging the end angle
+// a hair short of a full turn keeps start/end distinct with no visible seam.
+const FULL_CIRCLE_EPS = 0.0001
+
 function arcPath(cx, cy, r0, r1, a0, a1) {
+  if (a1 - a0 >= 2 * Math.PI - FULL_CIRCLE_EPS) a1 = a0 + 2 * Math.PI - FULL_CIRCLE_EPS
   const [x0, y0] = polar(cx, cy, r1, a0)
   const [x1, y1] = polar(cx, cy, r1, a1)
   const [x2, y2] = polar(cx, cy, r0, a1)

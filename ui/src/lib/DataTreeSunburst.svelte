@@ -96,6 +96,22 @@
     focusPath = focusPath.slice(0, -1)
   }
 
+  // Rim label chain (leader stub → path label → N label) — one number in,
+  // the rest follow, so lengthening the stub doesn't need three separate
+  // matching edits (2026-09-27 kullanıcı: "çizgi uzarsa path uzaklaşacak,
+  // path uzaklaşırsa N uzaklaşacak... basit bir hesaplama ekleyemez
+  // miyiz"). All still guessed constants, not real text measurement — see
+  // where they're used below for the tuning history.
+  const LEADER_START    = 3   // gap from the wedge's own edge to the stub's start
+  const LEADER_LEN      = 18  // the stub's own length (2026-09-27: doubled from 9 as an experiment)
+  // Was miscopied as 3 when this got chained together — the actual gap the
+  // old hardcoded pathR (r1+24) left past the old stub's tip (r1+12) was 12,
+  // not 3, so the chained version put the path label almost on top of the
+  // stub (2026-09-27 kullanıcı: "çizgiyi uzattığımız için şimdi path'in
+  // içine girdi, öncekindeki gibi boşluk olmalıydı"). Restored to 12.
+  const LABEL_GAP       = 12  // gap from the stub's tip to where the path label starts
+  const PATH_COUNT_GAP  = 20  // gap from the path label to the N label
+
   // Rough "is there room to letter this arc" check — chord length in px.
   function fits(arc, minPx) {
     return arc.r1 * (arc.a1 - arc.a0) > minPx
@@ -194,6 +210,34 @@
     for (let i = 0; i < n; i++) angles.push(arc.a0 + ((i + 0.5) / n) * span)
     return angles
   }
+  // Same "does it fit" math as pinAngles' own internal check, but as a
+  // reusable predicate — see midFitsByLevel/pinsFitByLevel below for why.
+  function pinsFit(arc) {
+    if (arc.count <= 0) return true   // nothing to fit, so it can't drag the group down
+    return (arc.a1 - arc.a0) * arc.r1 / arc.count >= PIN_MIN_PX
+  }
+
+  // Per-ring (level) all-or-nothing gate for both the inline path+N label
+  // and the per-item pins — deciding "does this fit" arc by arc let
+  // neighbours at the SAME radius end up in different styles the moment
+  // live item counts changed one wedge's width but not another's, which
+  // read as the whole ring "tangling" together (2026-09-27 kullanıcı: "path
+  // ve N değerini sığdırabiliyorsa dilimin içine sığdırmaya çalışıyor...
+  // eğer noktalardan biri bile sığmıyorsa diğerlerini de koyma, eğer
+  // pathlerden biri bile sığmıyorsa diğerlerini de koyma"). One arc failing
+  // its level's fit check now falls the WHOLE level back to the
+  // crowded/rim treatment, so a ring always reads as one consistent style.
+  $: leafArcsByLevel = (() => {
+    const map = new Map()
+    for (const arc of arcs) {
+      if (!arc.isLeaf) continue
+      if (!map.has(arc.level)) map.set(arc.level, [])
+      map.get(arc.level).push(arc)
+    }
+    return map
+  })()
+  $: midFitsByLevel  = new Map([...leafArcsByLevel].map(([level, list]) => [level, list.every(a => fitsMid(a, 19))]))
+  $: pinsFitByLevel  = new Map([...leafArcsByLevel].map(([level, list]) => [level, list.every(pinsFit)]))
 </script>
 
 <div class="tree-sunburst" style="width:{size}px; height:{size}px">
@@ -242,7 +286,7 @@
 
     {#each arcs as arc (arcKey(arc) + ':detail')}
       {#if arc.isLeaf}
-        {@const pins = arc.empty ? [] : pinAngles(arc)}
+        {@const pins = (arc.empty || !pinsFitByLevel.get(arc.level)) ? [] : pinAngles(arc)}
         <!-- Pin ring sits WEDGE_GAP + a dot's own radius past the wedge edge
              (2026-09-26 kullanıcı: "dilimlerden uzaklığı biraz fazla, iki
              dilim arasındaki boşluk kadar bir mesafe yeterli, o mesafeye
@@ -282,18 +326,36 @@
                kullanabiliriz, bir üye olduğu daha net anlaşılır". -->
           <circle cx={dx} cy={dy} r={PIN_DOT_R} class="pin-dot" />
         {/each}
-        {#if fitsMid(arc, 19)}
-          <!-- Plenty of room in this wedge (e.g. a single wide ring with few
-               siblings) — put the path right inside it, same treatment as a
-               non-leaf arc, instead of the outside-rim label (2026-09-26:
-               "pathleri dilimlerin içine yazalım"). -->
+        {#if midFitsByLevel.get(arc.level)}
+          <!-- Plenty of room in EVERY leaf at this ring, not just this one
+               wedge (2026-09-27: whole-level gate, see midFitsByLevel) — put
+               the path right inside it, same treatment as a non-leaf arc,
+               instead of the outside-rim label (2026-09-26: "pathleri
+               dilimlerin içine yazalım"). -->
           {@const [lx, ly] = labelPos(arc, (arc.r0 + arc.r1) / 2)}
+          <!-- Same left-hemisphere flip labelRotation itself adds (cos(mid)<0)
+               to keep the label upright — rotating the WHOLE run an extra
+               180° for readability also reverses which tspan a viewer reads
+               first, so "path then N" (2026-09-27 kullanıcı: "önce path
+               sonra N kuralımız burada bozulmuş, 180-360 arası flip olmuş")
+               silently became "N then path" on that half unless the DOM
+               order is swapped to match. Same fix the rim/leader-line case
+               already needed for its own near/far version of this. -->
+          {@const flip = Math.cos(arc.mid) < 0}
           <!-- Inline `style` (not the `fill` attribute) so it actually beats
                the .lbl-count CSS rule's own fill — CSS always outranks a
                plain presentation attribute. -->
           <text x={lx} y={ly} class="lbl idx" style="fill:{levelTextFill(arc.level)}" text-anchor="middle" dominant-baseline="middle"
               transform={labelRotation(arc, lx, ly)}>
-            <tspan>{arcLabel(arc)}</tspan>{#if !itemsPath && showCounts}<tspan class="lbl-count" style="fill:{levelTextFill(arc.level)}; opacity:0.7">{arcCountSuffix(arc)}</tspan>{/if}
+            {#if !itemsPath && showCounts}
+              {#if flip}
+                <tspan class="lbl-count" style="fill:{levelTextFill(arc.level)}; opacity:0.7">{arcCountSuffix(arc)}</tspan><tspan dx="6">{arcLabel(arc)}</tspan>
+              {:else}
+                <tspan>{arcLabel(arc)}</tspan><tspan class="lbl-count" dx="6" style="fill:{levelTextFill(arc.level)}; opacity:0.7">{arcCountSuffix(arc)}</tspan>
+              {/if}
+            {:else}
+              <tspan>{arcLabel(arc)}</tspan>
+            {/if}
           </text>
         {:else}
           <!-- On-arc count number REMOVED here (2026-09-26: "sığmayan
@@ -339,18 +401,18 @@
                occupied radial space is its rendered WIDTH (a handful of
                characters, ~25-35+ units), not its font height (~9px); +14
                was sized like a line-height gap, which is the wrong axis
-               entirely. That +38 then read as way too far with an
-               oversized N (2026-09-26 kullanıcı: "N'ler path'lerden çok
-               uzak ve çok büyükler, path'in kapladığı alandan daha küçük
-               olmalı, path ile arasında 1-2 karakter olsa yeterli") —
-               shrunk the gap and, since a smaller/tighter count font also
-               needs less radial room for itself, dropped .lbl-count's own
-               size well below the path label's (see CSS). Still a guessed
-               constant, not a real measurement. -->
-          {@const pathR = arc.r1 + 24}
-          {@const countR = pathR + 16}
-          {@const [lx1, ly1] = polar(CX, CY, arc.r1 + 3, arc.mid)}
-          {@const [lx2, ly2] = polar(CX, CY, arc.r1 + 12, arc.mid)}
+               entirely.
+               pathR/countR/the leader stub used to be three separately
+               tuned constants — every "too close/too far" round meant
+               re-deriving all three by hand. Now chained off one number
+               (LEADER_LEN, see top of script): the stub's own tip sets
+               where the path label starts, which sets where the N label
+               starts. Still guessed distances, not real text measurement. -->
+          {@const leaderTipR = arc.r1 + LEADER_START + LEADER_LEN}
+          {@const pathR = leaderTipR + LABEL_GAP}
+          {@const countR = pathR + PATH_COUNT_GAP}
+          {@const [lx1, ly1] = polar(CX, CY, arc.r1 + LEADER_START, arc.mid)}
+          {@const [lx2, ly2] = polar(CX, CY, leaderTipR, arc.mid)}
           <line x1={lx1} y1={ly1} x2={lx2} y2={ly2} class="leader" />
           {@const [px, py] = labelPos(arc, pathR)}
           <text x={px} y={py} class="lbl idx" text-anchor="middle" dominant-baseline="middle"
@@ -420,11 +482,25 @@
 
   .lbl {
     fill: var(--text);
-    font-family: inherit;
+    /* Condensed/technical stack (2026-09-27 kullanıcı: "daha dar bir font...
+       çiplerin üstünde dar alanda rahat sığsın diye kullanılan fontlar
+       gibi") — Bahnschrift ships with Windows (this app is Windows-only,
+       see e.g. PanelRow's Segoe UI Mono usage) and its SemiCondensed
+       instance is registered as its own selectable family name there, so a
+       narrower path/count label costs no extra width vs the app's base
+       Segoe UI without it. Falls back to the app's normal sans stack if
+       unavailable. */
+    font-family: 'Bahnschrift SemiCondensed', 'Bahnschrift', 'Segoe UI', system-ui, sans-serif;
     pointer-events: none;
   }
   .lbl.idx { font-size: 9px; font-weight: 600; fill: rgba(var(--text-rgb), 0.7); }
   .lbl-count {
+    /* Doesn't carry the .lbl class (the rim case renders it as its own
+       standalone <text>, not nested inside one) so it never inherited
+       .lbl's font-family — only the path label was actually getting
+       Bahnschrift before this (2026-09-27 kullanıcı: "fontu hem path'te
+       hem N'de mi değiştirdin?" — no, just path). Same stack, explicit. */
+    font-family: 'Bahnschrift SemiCondensed', 'Bahnschrift', 'Segoe UI', system-ui, sans-serif;
     font-size: 6px;
     font-weight: 400;
     font-style: italic;
