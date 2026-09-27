@@ -11,6 +11,7 @@ using Rhino.Input;
 using ObjectType = Rhino.DocObjects.ObjectType;
 using ObjRef = Rhino.DocObjects.ObjRef;
 using System.Drawing;
+using System.IO;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text.Json;
@@ -1106,10 +1107,35 @@ public class SlateWindow : Form
     // legitimate captures made in this exact window instead. Closing the gap
     // itself, rather than filtering messages that fall into it, needs no such
     // guard.)
+    // DisplayName is "highly context sensitive" per its own doc comment and
+    // isn't guaranteed to carry the saved extension — FilePath (.gh vs .ghx,
+    // whichever the user actually saved as) is the reliable source once the
+    // document has one. "unnamed" matches Grasshopper's own canvas title
+    // (e.g. "Grasshopper - unnamed*") for a document that hasn't been saved yet.
+    private static string TitleFor(Grasshopper.Kernel.GH_Document doc) =>
+        $"Slate - {(doc.IsFilePathDefined ? Path.GetFileName(doc.FilePath) : "unnamed")}";
+
+    // A document opened from disk can go active (firing OnActiveDocumentChanged,
+    // which is what drives the Text update below) before GH_IO has finished
+    // assigning its FilePath — confirmed live, 2026-09-24: opening a saved file
+    // while an unnamed one was showing left the title stuck on "unnamed". Each
+    // doc's FilePathChanged event is the actual authoritative signal for when
+    // FilePath settles (covers that race AND a later Save As on a still-active
+    // unnamed doc), so every doc we ever title gets hooked once, live for as
+    // long as it does (unhooked in EvictDocument on close).
+    private static readonly HashSet<Grasshopper.Kernel.GH_Document> _titleHookedDocs = new();
+
+    private static void OnDocumentFilePathChanged(object sender, Grasshopper.Kernel.GH_DocFilePathEventArgs e)
+    {
+        if (HostDocument == e.Document) GetOrCreate().Text = TitleFor(e.Document);
+    }
+
     public static void SyncToDocument(Grasshopper.Kernel.GH_Document doc, bool deferIfRestoring = false)
     {
         if (doc == HostDocument) return;
         HostDocument = doc;
+        if (_titleHookedDocs.Add(doc)) doc.FilePathChanged += OnDocumentFilePathChanged;
+        GetOrCreate().Text = TitleFor(doc);
         ApplyGeometryForDocument(doc);
 
         // Applying to an already-visible window (see ApplyGeometry's own
@@ -1859,6 +1885,7 @@ public class SlateWindow : Form
         _maximizedByDoc.Remove(doc);
         if (_lastActiveDoc == doc) _lastActiveDoc = null;
         if (_lastGeometrySyncedDoc == doc) _lastGeometrySyncedDoc = null;
+        if (_titleHookedDocs.Remove(doc)) doc.FilePathChanged -= OnDocumentFilePathChanged;
         if (HostComponent != null && HostComponent.OnPingDocument() == doc) HostComponent = null;
         if (HostDocument == doc) DeferHide(doc);
         PreviewPinConduit.ClearPins(doc);
