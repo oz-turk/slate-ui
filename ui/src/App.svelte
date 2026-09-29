@@ -546,6 +546,11 @@
       syncControl(msg.id, { name: msg.name })
     }
 
+    // Slider min/max/decimalPlaces (see PushSliderRangeUpdates in SlateWindow.cs).
+    if (msg.type === 'slider_range_update') {
+      syncControl(msg.id, { min: msg.min, max: msg.max, decimalPlaces: msg.decimalPlaces })
+    }
+
     // Slider/toggle/button VALUE, pushed on every solve (see
     // PushSliderValueUpdates in SlateWindow.cs) — until Alt-drag copies
     // existed, a value only ever changed through the one widget bound to it,

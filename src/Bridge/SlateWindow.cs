@@ -59,6 +59,7 @@ public class SlateWindow : Form
     const int VK_MENU = 0x12;
 
     private readonly System.Windows.Forms.Timer _altPollTimer = new() { Interval = 30 };
+    private readonly System.Windows.Forms.Timer _rangePollTimer = new() { Interval = 400 };
     private bool _altHeld;
 
     // ── 'c'/'x'/'g' hotkey state (capture / delete / group) ──────────────────────
@@ -789,9 +790,16 @@ public class SlateWindow : Form
             void CountTab(JsonObject tab)
             {
                 CountItems(tab["sliders"]?.AsArray());
-                if (tab["groups"] is JsonArray groups)
-                    foreach (var g in groups)
-                        CountItems(g!.AsObject()["sliders"]?.AsArray());
+                if (tab["groups"] is JsonArray groups) CountGroups(groups);
+            }
+            void CountGroups(JsonArray groups)
+            {
+                foreach (var g in groups)
+                {
+                    var go = g!.AsObject();
+                    CountItems(go["sliders"]?.AsArray());
+                    if (go["groups"] is JsonArray sub) CountGroups(sub);
+                }
             }
             void CountNode(JsonObject node)
             {
@@ -1220,6 +1228,7 @@ public class SlateWindow : Form
             if (_latestValues.Count == 0 && _latestColourValues.Count == 0) _solveRunning = false;
             else ApplyLatestValues();
             PushSliderNameUpdates();
+            PushSliderRangeUpdates();
             PushSliderValueUpdates();
             PushPanelTextUpdates();
             PushItemPickerUpdates();
@@ -1461,9 +1470,12 @@ public class SlateWindow : Form
     private static readonly Dictionary<string, string> _lastPushedParamViewers = new();
     // Slider/toggle/button VALUE — see PushSliderValueUpdates below.
     private static readonly Dictionary<string, string> _lastPushedControlValues = new();
+    // Slider min/max/decimalPlaces — see PushSliderRangeUpdates below.
+    private static readonly Dictionary<string, string> _lastPushedSliderRanges = new();
 
     private static void ClearPushCaches()
     {
+        _lastPushedSliderRanges.Clear();
         _lastPushedNames.Clear();
         _lastPushedPanels.Clear();
         _lastPushedHumanLists.Clear();
@@ -1505,6 +1517,33 @@ public class SlateWindow : Form
         foreach (var kv in win._toggles)    PushIfChanged(kv.Key, kv.Value.NickName, allowEmpty: true);
         foreach (var kv in win._buttons)    PushIfChanged(kv.Key, kv.Value.NickName, allowEmpty: true);
         foreach (var kv in win._pancakeTrueOnlyButtons) PushIfChanged(kv.Key, kv.Value.NickName, allowEmpty: true);
+    }
+
+    // Slider bounds + precision. Captured once at add time, so editing the
+    // slider's min/max/accuracy on the canvas left the JS copy on the old range
+    // (thumb past 100%, stale bound labels, wrong clamp). Same solve-end
+    // broadcast + diff-cache shape as the name/value pushes.
+    private static void PushSliderRangeUpdates()
+    {
+        var win = _instance;
+        if (win == null) return;
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
+        foreach (var kv in win._sliders)
+        {
+            double min = (double)kv.Value.Slider.Minimum;
+            double max = (double)kv.Value.Slider.Maximum;
+            int decimalPlaces = EffectiveDecimalPlaces(kv.Value.Slider);
+            var fingerprint = min.ToString(inv) + "|" + max.ToString(inv) + "|" + decimalPlaces;
+            if (_lastPushedSliderRanges.TryGetValue(kv.Key, out var last) && last == fingerprint) continue;
+            _lastPushedSliderRanges[kv.Key] = fingerprint;
+            win.PostToJs(System.Text.Json.JsonSerializer.Serialize(new {
+                type = "slider_range_update",
+                id = kv.Key,
+                min,
+                max,
+                decimalPlaces
+            }));
+        }
     }
 
     // Slider/toggle/button VALUE. Until a control could have more than one
@@ -2082,11 +2121,17 @@ public class SlateWindow : Form
             _gHeld = gDown;
         };
         _altPollTimer.Start();
+
+        // Editing a slider's bounds on the canvas doesn't necessarily trigger a
+        // solve (so no SolutionEnd), hence a cheap diff-cached poll on top of
+        // the solve-end push in OnDocSolutionEnd.
+        _rangePollTimer.Tick += (_, _) => PushSliderRangeUpdates();
+        _rangePollTimer.Start();
     }
 
     protected override void Dispose(bool disposing)
     {
-        if (disposing) _altPollTimer.Dispose();
+        if (disposing) { _altPollTimer.Dispose(); _rangePollTimer.Dispose(); }
         base.Dispose(disposing);
     }
 
@@ -3331,8 +3376,18 @@ public class SlateWindow : Form
             void ProcessTab(JsonObject tab)
             {
                 ProcessItems(tab["sliders"]!.AsArray());
-                foreach (var g in tab["groups"]!.AsArray())
-                    ProcessItems(g!.AsObject()["sliders"]!.AsArray());
+                ProcessGroups(tab["groups"]!.AsArray());
+            }
+            // Groups nest (group.groups) — walk every level, or a nested group's
+            // controls never get re-bound to their live GH objects.
+            void ProcessGroups(JsonArray groups)
+            {
+                foreach (var g in groups)
+                {
+                    var go = g!.AsObject();
+                    ProcessItems(go["sliders"]!.AsArray());
+                    if (go["groups"] is JsonArray sub) ProcessGroups(sub);
+                }
             }
 
             void ProcessNode(JsonObject node)
