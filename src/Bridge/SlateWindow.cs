@@ -3420,8 +3420,10 @@ public class SlateWindow : Form
             foreach (var s in sliders)
             {
                 var so = s!.AsObject();
+                // "id" is the widget's own UUID; the GH object's guid lives in
+                // "sourceId" (absent on widgets that predate the id/sourceId split).
                 if (so["previewPinned"]?.GetValue<bool>() ?? false)
-                    pinnedIds.Add(so["id"]!.GetValue<string>());
+                    pinnedIds.Add((so["sourceId"] ?? so["id"])!.GetValue<string>());
             }
         }
         void CollectFromGroup(JsonObject group, bool ancestorsVisible)
@@ -3459,8 +3461,10 @@ public class SlateWindow : Form
         }
 
         if (state["workspaces"] is JsonArray workspacesArr)
+        {
             foreach (var w in workspacesArr)
                 if (w!.AsObject()["layout"] is JsonObject wLayout) CollectFromNode(wLayout);
+        }
         else if (state["layout"] is JsonObject layoutNode) CollectFromNode(layoutNode);
         else CollectFromNode(state);
 
