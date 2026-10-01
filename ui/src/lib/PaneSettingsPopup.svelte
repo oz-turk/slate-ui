@@ -2,6 +2,7 @@
   import { createEventDispatcher } from 'svelte'
   import { clickOutside } from './actions.js'
   import ColourPickerPopup from './ColourPickerPopup.svelte'
+  import BgPalette from './BgPalette.svelte'
   const dispatch = createEventDispatcher()
 
   export let x = 0
@@ -43,20 +44,7 @@
   // even dispatch.
   let colourPopup = null   // { x, y } | null
 
-  // Same layered-checkerboard swatch ColourPickerRow uses (see its own
-  // swatchStyle) — with bg === null the colour layer is fully transparent,
-  // so the checker shows through plain, same "nothing set" look used
-  // everywhere else in the app rather than a blank box that reads as broken.
-  $: swatchStyle = `background-image: linear-gradient(${bg ?? 'transparent'}, ${bg ?? 'transparent'}),
-      linear-gradient(45deg, #4a4a4a 25%, transparent 25%),
-      linear-gradient(-45deg, #4a4a4a 25%, transparent 25%),
-      linear-gradient(45deg, transparent 75%, #4a4a4a 75%),
-      linear-gradient(-45deg, transparent 75%, #4a4a4a 75%);
-    background-size: 100% 100%, 8px 8px, 8px 8px, 8px 8px, 8px 8px;
-    background-position: 0 0, 0 0, 0 4px, 4px -4px, -4px 0;
-    background-color: #2a2a2a;`
-  function openColourPopup(e) {
-    const rect = e.currentTarget.getBoundingClientRect()
+  function openColourPopup(rect) {
     const w = 216, h = 300
     // First entry into Custom (bg still null) commits the seed right away —
     // clicking Custom IS choosing it, not just previewing it, so the swatch
@@ -104,18 +92,15 @@
      (actions.js), so stopping the bubble phase here doesn't affect it. -->
 <div class="popup" on:click|stopPropagation use:clickOutside={{ onClose: () => dispatch('close') }} style="left: {x}px; top: {y}px">
   <div class="section-label">Background</div>
-  <div class="bg-row">
-    <button class="swatch" class:active={!bg} on:click={resetBg} title="Theme default">
-      <span class="swatch-reset">×</span>
-    </button>
-    <button class="swatch" class:active={!!bg} style={swatchStyle}
-      on:click={openColourPopup} title="Custom colour"></button>
-  </div>
+  <BgPalette value={bg}
+    on:pick={e   => dispatch('change', { kind: 'bg', value: e.detail })}
+    on:reset={resetBg}
+    on:custom={e => openColourPopup(e.detail)} />
 
   <div class="section-label">Pattern</div>
   <div class="list">
     {#each PATTERN_OPTIONS as opt (opt.key)}
-      <button class="item" class:active={pattern === opt.key} on:click={() => pickPattern(opt.key)}>{opt.label}</button>
+      <button class="item" class:active={pattern === opt.key} class:full={opt.key === 'none'} on:click={() => pickPattern(opt.key)}>{opt.label}</button>
     {/each}
   </div>
 
@@ -148,7 +133,7 @@
 <style>
   .popup {
     position: fixed;
-    width: 160px;
+    width: 176px;
     background: var(--panel-bg);
     border: 1px solid var(--grid);
     border-radius: 6px;
@@ -161,7 +146,7 @@
   }
 
   .section-label {
-    padding: 2px 8px 0;
+    padding: 2px 4px 0;
     font-size: 9px;
     font-weight: 600;
     letter-spacing: 0.04em;
@@ -169,38 +154,18 @@
     color: rgba(var(--text-rgb), 0.4);
   }
 
-  .bg-row {
-    display: flex;
-    gap: 6px;
-    padding: 0 4px;
-  }
-  .swatch {
-    width: 24px;
-    height: 24px;
-    border-radius: 4px;
-    border: 1px solid var(--grid);
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: rgba(var(--text-rgb), 0.5);
-    padding: 0;
-    overflow: hidden;
-  }
-  .swatch.active   { border-color: rgba(var(--accent-rgb), 0.6); }
-  .swatch-reset    { font-size: 12px; line-height: 1; }
-
   .list {
-    display: flex;
-    flex-direction: column;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
     gap: 1px;
     border-top: 1px solid var(--edge-tint);
     border-bottom: 1px solid var(--edge-tint);
-    padding: 4px 0;
+    padding: 4px;
   }
   .item {
     text-align: left;
-    padding: 5px 8px;
+    padding: 5px 6px;
+    white-space: nowrap;
     border: none;
     border-radius: 4px;
     background: transparent;
@@ -209,6 +174,7 @@
     font-family: inherit;
     cursor: pointer;
   }
+  .item.full   { grid-column: 1 / -1; }   /* None spans both columns, the six patterns split below it */
   .item:hover  { background: var(--grid); color: var(--text); }
   .item.active { background: rgba(var(--accent-rgb), 0.25); color: var(--text); }
 

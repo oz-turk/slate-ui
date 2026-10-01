@@ -169,7 +169,7 @@
     // sized for the common case (a pattern picked, Scale/Opacity sliders
     // visible, 7-item pattern list) — a couple px of slack under the popup
     // when None is picked instead is harmless.
-    const w = 160, h = 340
+    const w = 176, h = 340
     paneSettingsPopup = {
       x: Math.min(clientX, window.innerWidth  - w - 8),
       y: Math.min(clientY, window.innerHeight - h - 8),
@@ -1128,6 +1128,18 @@
       groups: mapGroupTree(t.groups, groupId, () => ({ label }))
     })))
   }
+  function setGroupColor(groupId, color) {
+    mutateTabs(tabs => tabs.map(t => ({
+      ...t,
+      groups: mapGroupTree(t.groups, groupId, () => ({ color }))
+    })))
+  }
+  function patchGroup(groupId, patch) {
+    mutateTabs(tabs => tabs.map(t => ({
+      ...t,
+      groups: mapGroupTree(t.groups, groupId, () => patch)
+    })))
+  }
   function removeGroup(groupId) {
     mutateTabs(tabs => tabs.map(t => {
       if (t.id !== activeTab.id) return t
@@ -1469,6 +1481,8 @@
               on:toggle={e              => toggleGroup(e.detail)}
               on:groupSelect={e         => onGroupSelect(e.detail.id, e.detail.shift)}
               on:rename={e              => renameGroup(e.detail.id, e.detail.label)}
+              on:colorChange={e         => setGroupColor(e.detail.id, e.detail.color)}
+              on:textStyle={e           => patchGroup(e.detail.id, e.detail.patch)}
               on:togglePreviewPin={e     => togglePreviewPin(e.detail)}
               on:remove={e              => removeGroup(e.detail)}
               on:sliderChange={e        => onSliderChange(e.detail.id, e.detail.value, e.detail.type, e.detail.multiSelect)}

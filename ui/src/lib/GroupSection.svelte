@@ -12,6 +12,7 @@
   import GeometryParamRow from './GeometryParamRow.svelte'
   import DataDamRow from './DataDamRow.svelte'
   import ParamViewerRow from './ParamViewerRow.svelte'
+  import TextSettingsPopup from './TextSettingsPopup.svelte'
   import { hoverHint } from '../stores/uiState.js'
   import { orderedItems } from '../stores/layout.js'
   const dispatch = createEventDispatcher()
@@ -55,6 +56,50 @@
 
   let editingLabel = false
   let labelValue   = ''
+
+  const HEADER_SHADE = ['transparent', 'rgba(0, 0, 0, 0.15)', 'rgba(0, 0, 0, 0.28)']   // depth 0/1/2 — mirrors the depth header rules below
+
+  // ONE appearance menu per group header (TextSettingsPopup, same popup as
+  // Text Panel rows in PanelRow.svelte): header Background palette on top,
+  // then label align/colour/size/B/I/U. Opened by the "⋮" button (edit mode
+  // only, keeps preview clean) OR right-click on the header (both modes —
+  // it's look-only, and the look is what preview mode shows). Stored on the
+  // group itself; label settings apply to the label only, not the contents.
+  // Label changes ride one 'textStyle' event as a {field: value} patch
+  // instead of a separate event per field; the background is its own
+  // 'colorChange' event (group.color).
+  const LABEL_FONT_SIZE = 11   // must match .label's font-size below
+  $: labelStyle = [
+    group.textColor     ? `color: ${group.textColor}`          : '',
+    group.textFontSize  ? `font-size: ${group.textFontSize}px` : '',
+    group.textAlign     ? `text-align: ${group.textAlign}`     : '',
+    group.textBold      ? 'font-weight: 800'                   : '',
+    group.textItalic    ? 'font-style: italic'                 : '',
+    group.textUnderline ? 'text-decoration: underline'         : '',
+  ].filter(Boolean).join('; ')
+
+  let textPopup = null   // { x, y } | null
+  const POPUP_W = 176, POPUP_H = 340
+  function openTextSettings(e) {
+    const rect = e.currentTarget.getBoundingClientRect()
+    textPopup = {
+      x: Math.min(rect.left, window.innerWidth  - POPUP_W - 8),
+      y: Math.min(rect.bottom + 4, window.innerHeight - POPUP_H - 8),
+    }
+  }
+  const patchText = patch => dispatch('textStyle', { id: group.id, patch })
+
+  // stopPropagation so Pane.svelte's own contextmenu listener on the
+  // surrounding .pane doesn't also open its menu on top (same bubbling trap
+  // as TabBar's tab colour — see yapilacaklar/tab-color-menu-bubbling.md).
+  function onHeaderContextMenu(e) {
+    e.preventDefault()
+    e.stopPropagation()
+    textPopup = {
+      x: Math.min(e.clientX, window.innerWidth  - POPUP_W - 8),
+      y: Math.min(e.clientY, window.innerHeight - POPUP_H - 8),
+    }
+  }
 
   function startRename() {
     if (mode !== 'edit') return
@@ -154,7 +199,10 @@
       class:drop-highlight={dropHighlight}
       class:drop-nest={dropNest}
       class:selected={selectedIds.has(group.id)}
+      class:colored={!!group.color}
+      style={group.color ? `--gc: ${group.color}; --hdr-base: ${depth === 0 ? 'var(--bg)' : 'transparent'}; --shade: ${HEADER_SHADE[Math.min(depth, 2)]}` : ''}
       on:click={onHeaderClick}
+      on:contextmenu={onHeaderContextMenu}
       on:mouseenter={() => hoverHint.set('Double-click: rename  ·  Ctrl-click: select (with contents) — Ctrl+Shift-click: range  ·  Drag items onto the header to add them, drag the group itself to reorder (top/bottom edge) or nest it (middle)')}
       on:mouseleave={() => hoverHint.set(null)}
       on:dragover|preventDefault={headerDragOver}
@@ -186,7 +234,16 @@
         on:blur={commitRename} on:keydown={onKeydown} on:click|stopPropagation />
     {:else}
       <!-- svelte-ignore a11y-no-static-element-interactions -->
-      <span class="label" on:click|stopPropagation={onLabelClick} on:dblclick|stopPropagation={startRename}>{group.label ?? 'Group'}</span>
+      <span class="label" on:click|stopPropagation={onLabelClick} on:dblclick|stopPropagation={startRename} style={labelStyle}>{group.label ?? 'Group'}</span>
+    {/if}
+
+    {#if mode === 'edit'}
+      <button class="icon-btn" class:active={!!textPopup} title="Label appearance"
+          on:click|stopPropagation={openTextSettings}>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+          <circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/>
+        </svg>
+      </button>
     {/if}
 
     <!-- Always drawn on the GH canvas, regardless of GH's own preview filter/mode/boundary
@@ -224,6 +281,22 @@
       <button class="del-group" on:click|stopPropagation={() => dispatch('remove', group.id)} title="Delete group">×</button>
     {/if}
   </div>
+
+  {#if textPopup}
+    <TextSettingsPopup x={textPopup.x} y={textPopup.y}
+      showBg bgColor={group.color ?? null}
+      on:bgChange={e        => dispatch('colorChange', { id: group.id, color: e.detail })}
+      align={group.textAlign ?? 'left'} color={group.textColor ?? null}
+      fontSize={group.textFontSize ?? null} defaultSize={LABEL_FONT_SIZE}
+      bold={!!group.textBold} italic={!!group.textItalic} underline={!!group.textUnderline}
+      on:alignChange={e     => patchText({ textAlign: e.detail })}
+      on:colorChange={e     => patchText({ textColor: e.detail })}
+      on:fontSizeChange={e  => patchText({ textFontSize: e.detail })}
+      on:boldChange={e      => patchText({ textBold: e.detail })}
+      on:italicChange={e    => patchText({ textItalic: e.detail })}
+      on:underlineChange={e => patchText({ textUnderline: e.detail })}
+      on:close={() => textPopup = null} />
+  {/if}
 
   {#if !group.collapsed}
     <div class="group-body" style="margin-left: {mode === 'edit' ? 36 : 12}px">
@@ -282,6 +355,8 @@
               on:toggle
               on:groupSelect
               on:rename
+              on:colorChange
+              on:textStyle
               on:togglePreviewPin
               on:remove
               on:sliderChange
@@ -378,6 +453,32 @@
   .group[style*="--depth:2"] .group-header { background: rgba(0, 0, 0, 0.28); }
 
   .group-header:hover          { background: var(--grid) !important; }
+
+  /* Header colour (right-click → Group colour). Painted as ONE translucent
+     gradient layer over an OPAQUE base, never a second translucent fill over
+     the pane's own — same double-paint trap as the pane header (see
+     Pane.svelte paneStyleCss). Base is the pane-pattern knockout colour when
+     a pattern exists (so the pattern can't bleed through the tint), else the
+     same surface the uncoloured header uses at that depth: --bg at depth 0,
+     nothing at depth 1/2 (their darkening is the --shade layer instead).
+     Specificity is deliberately higher than the depth/hover/selected rules
+     above so the tint survives all of them; hover and selected re-stack on
+     top of it rather than replacing it. */
+  /* --gc / --hdr-base / --shade are set inline on the header (see markup,
+     HEADER_SHADE in script) — NOT via [style*="--depth:N"] selectors on
+     .group: the browser re-serialises that inline style as "--depth: 0;"
+     (space after the colon), so those substring selectors never match. */
+  .group .group-header.colored:not(.drop-highlight) {
+    background-color: var(--pane-pattern-mask, var(--hdr-base));
+    background-image: linear-gradient(var(--gc), var(--gc)), linear-gradient(var(--shade), var(--shade));
+  }
+  .group .group-header.colored.selected:not(.drop-highlight) {
+    background-image: linear-gradient(rgba(var(--accent-rgb), 0.15), rgba(var(--accent-rgb), 0.15)), linear-gradient(var(--gc), var(--gc)), linear-gradient(var(--shade), var(--shade));
+  }
+  .group .group-header.colored:not(.drop-highlight):hover {
+    background-color: var(--grid) !important;
+    background-image: linear-gradient(var(--gc), var(--gc)) !important;
+  }
   .group-header.drop-highlight { background: rgba(var(--accent-rgb), 0.25); outline: 1px solid rgba(var(--accent-rgb), 0.6); }
   /* Mirrors SliderRow's .row.selected — ctrl-click marks the group itself
      (this) AND its contents (their own rows pick up `selected` the same way,

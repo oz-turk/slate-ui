@@ -7,6 +7,7 @@
   import { createEventDispatcher } from 'svelte'
   import { clickOutside } from './actions.js'
   import ColourPickerPopup from './ColourPickerPopup.svelte'
+  import BgPalette from './BgPalette.svelte'
   const dispatch = createEventDispatcher()
 
   export let x = 0
@@ -19,13 +20,18 @@
   export let italic      = false
   export let underline   = false
 
+  // Optional "Background" section on top (group headers use it; Text Panel
+  // rows don't) — shared BgPalette, see its header.
+  export let showBg  = false
+  export let bgColor = null    // '#RRGGBBAA' | null
+
   // ── nested colour popup — same trigger-position pattern as PaneSettingsPopup's
   // own bg swatch. MUST be a DOM descendant of .popup below (not a sibling) —
   // clickOutside checks DOM containment, and both popups are position:fixed,
   // so a sibling would visually sit "inside" this popup while actually
   // failing the containment check, closing this whole popup on every click
   // into the nested one before the colour change could dispatch.
-  let colourPopup = null   // { x, y } | null
+  let colourPopup = null   // { x, y, target: 'text' | 'bg' } | null
 
   $: swatchStyle = `background-image: linear-gradient(${color ?? 'transparent'}, ${color ?? 'transparent'}),
       linear-gradient(45deg, #4a4a4a 25%, transparent 25%),
@@ -36,15 +42,15 @@
     background-position: 0 0, 0 0, 0 4px, 4px -4px, -4px 0;
     background-color: #2a2a2a;`
 
-  function openColourPopup(e) {
-    const rect = e.currentTarget.getBoundingClientRect()
+  function openColourPopup(rect, target = 'text') {
     const w = 216, h = 300
     colourPopup = {
       x: Math.min(rect.left, window.innerWidth  - w - 8),
       y: Math.min(rect.bottom + 4, window.innerHeight - h - 8),
+      target,
     }
   }
-  function onColourChange(e) { dispatch('colorChange', e.detail) }
+  function onColourChange(e) { dispatch(colourPopup?.target === 'bg' ? 'bgChange' : 'colorChange', e.detail) }
   function resetColor()      { dispatch('colorChange', null) }
 
   function pickAlign(a) { dispatch('alignChange', a) }
@@ -84,6 +90,14 @@
      capture phase (see actions.js), which already fires before this, so
      stopping the bubble phase here doesn't affect it. -->
 <div class="popup" on:click|stopPropagation use:clickOutside={{ onClose: () => dispatch('close') }} style="left: {x}px; top: {y}px">
+  {#if showBg}
+    <div class="section-label">Background</div>
+    <BgPalette value={bgColor}
+      on:pick={e   => dispatch('bgChange', e.detail)}
+      on:reset={() => dispatch('bgChange', null)}
+      on:custom={e => openColourPopup(e.detail, 'bg')} />
+  {/if}
+
   <div class="section-label">Alignment</div>
   <div class="align-row">
     <button class:active={align === 'left'} on:click={() => pickAlign('left')} title="Align left">
@@ -109,7 +123,7 @@
     <button class="swatch" class:active={!color} on:click={resetColor} title="Theme default">
       <span class="swatch-reset">×</span>
     </button>
-    <button class="swatch" class:active={!!color} style={swatchStyle} on:click={openColourPopup} title="Custom colour"></button>
+    <button class="swatch" class:active={!!color} style={swatchStyle} on:click={e => openColourPopup(e.currentTarget.getBoundingClientRect())} title="Custom colour"></button>
   </div>
 
   <div class="section-label">Font size</div>
@@ -125,7 +139,8 @@
   </div>
 
   {#if colourPopup}
-    <ColourPickerPopup x={colourPopup.x} y={colourPopup.y} hex={color ?? '#e8e8e8ff'}
+    <ColourPickerPopup x={colourPopup.x} y={colourPopup.y}
+      hex={colourPopup.target === 'bg' ? (bgColor ?? '#8caaee47') : (color ?? '#e8e8e8ff')}
       on:change={onColourChange}
       on:close={() => colourPopup = null} />
   {/if}
