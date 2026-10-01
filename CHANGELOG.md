@@ -4,6 +4,16 @@ Notable user-facing changes, newest first. Internal refactors and pure repo main
 
 ## Unreleased
 
+## 0.2.4 - 2026-10-01
+
+- **Show icons:** new Settings toggle (off by default) shows Grasshopper's own icon next to each captured row's name. In preview mode, clicking the icon or double clicking the name jumps the canvas to the original object and selects it.
+- **Group header appearance menu:** each group header has its own menu (⋮ button in edit mode, or right click) for a background tint and label alignment, colour, size, bold, italic and underline. The pane background popup now uses the same pastel palette and lays its patterns out in two columns.
+- Capture and Sort: Canvas Position now read the canvas in columns, left to right, top to bottom within each, so aligned stacks keep their order. Window capture of mixed selections is one interleaved pass instead of batching by type.
+- Fix undo only changing Slate's own copy: slider, toggle, panel and colour values changed by undo are now sent back to the Grasshopper objects.
+- Fix the x shortcut deleting a whole group when the cursor was anywhere over its body. It now only works on the group header.
+- Dragging a slider onto the top or bottom of a group header places it beside the group; the middle still nests it.
+- Fix preview pins not showing for recently captured widgets, and keep slider ranges and nested-group controls in sync when restoring.
+
 ## 0.2.3 - 2026-09-27 (hotfix)
 
 - Fix the right-click context menu not opening on several row types (Button, Colour Picker, Data Dam, Geometry Param, Panel, Param Viewer, Toggle, Trigger, Value List).
