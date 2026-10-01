@@ -181,15 +181,13 @@ public class SlatePanel : GH_Component
             if (capture)
             {
                 var doc = OnPingDocument();
-                // Canvas order — top-to-bottom (Pivot.Y) then left-to-right (Pivot.X) —
-                // rather than doc.Objects' internal (creation) order, and rather than
-                // grouping by type first: mixed-type selections capture interleaved
-                // exactly as they sit on the canvas.
-                var selected = doc?.Objects
-                    .Where(o => o.Attributes?.Selected == true)
-                    .OrderBy(o => o.Attributes.Pivot.Y)
-                    .ThenBy(o => o.Attributes.Pivot.X)
-                    .ToList() ?? new List<IGH_DocumentObject>();
+                // Canvas order — columns left to right, top to bottom within each
+                // (see CanvasOrder) — rather than doc.Objects' internal (creation)
+                // order, and rather than grouping by type first: mixed-type
+                // selections capture interleaved exactly as they sit on the canvas.
+                var selected = CanvasOrder.Sort(
+                    doc?.Objects.Where(o => o.Attributes?.Selected == true)
+                        ?? Enumerable.Empty<IGH_DocumentObject>());
 
                 int sliderCount = 0, toggleCount = 0, buttonCount = 0, valueListCount = 0, panelCount = 0,
                     itemPickerCount = 0, humanListCount = 0, colourPickerCount = 0, pancakeButtonCount = 0, triggerCount = 0,

@@ -293,25 +293,32 @@ public class SlateWindow : Form
     // design). Pure Slate bookkeeping, defaults to "once" whenever absent.
     private readonly Dictionary<string, string> _dataDamGateMode = new();
 
-    // Live GH canvas position for an already-captured id — checks every
-    // per-type registry above (same set RestoreState re-attaches from). Used
-    // only for the ephemeral "sort_positions_request" round trip; never
-    // cached or persisted.
+    // Live GH object for an already-captured id — checks every per-type
+    // registry above (same set RestoreState re-attaches from). Used for the
+    // ephemeral "sort_positions_request" and "goto_request" round trips;
+    // never cached or persisted.
+    private bool TryGetLiveObject(string id, out IGH_DocumentObject obj)
+    {
+        if (_sliders.TryGetValue(id, out var sl))          { obj = sl;  return true; }
+        if (_toggles.TryGetValue(id, out var tg))           { obj = tg;  return true; }
+        if (_buttons.TryGetValue(id, out var bt))           { obj = bt;  return true; }
+        if (_valueLists.TryGetValue(id, out var vl))        { obj = vl;  return true; }
+        if (_panels.TryGetValue(id, out var pn))            { obj = pn;  return true; }
+        if (_itemPickers.TryGetValue(id, out var ip))       { obj = ip;  return true; }
+        if (_humanValueLists.TryGetValue(id, out var hv))   { obj = hv;  return true; }
+        if (_colourPickers.TryGetValue(id, out var cp))     { obj = cp;  return true; }
+        if (_pancakeTrueOnlyButtons.TryGetValue(id, out var pb)) { obj = pb; return true; }
+        if (_triggers.TryGetValue(id, out var tr))          { obj = tr;  return true; }
+        if (_geometryParams.TryGetValue(id, out var gp))    { obj = gp;  return true; }
+        if (_dataDams.TryGetValue(id, out var dd))          { obj = dd;  return true; }
+        if (_paramViewers.TryGetValue(id, out var pvw))     { obj = pvw; return true; }
+        obj = null!;
+        return false;
+    }
+
     private bool TryGetLivePivot(string id, out System.Drawing.PointF pivot)
     {
-        if (_sliders.TryGetValue(id, out var sl))          { pivot = sl.Attributes.Pivot;  return true; }
-        if (_toggles.TryGetValue(id, out var tg))           { pivot = tg.Attributes.Pivot;  return true; }
-        if (_buttons.TryGetValue(id, out var bt))           { pivot = bt.Attributes.Pivot;  return true; }
-        if (_valueLists.TryGetValue(id, out var vl))        { pivot = vl.Attributes.Pivot;  return true; }
-        if (_panels.TryGetValue(id, out var pn))            { pivot = pn.Attributes.Pivot;  return true; }
-        if (_itemPickers.TryGetValue(id, out var ip))       { pivot = ip.Attributes.Pivot;  return true; }
-        if (_humanValueLists.TryGetValue(id, out var hv))   { pivot = hv.Attributes.Pivot;  return true; }
-        if (_colourPickers.TryGetValue(id, out var cp))     { pivot = cp.Attributes.Pivot;  return true; }
-        if (_pancakeTrueOnlyButtons.TryGetValue(id, out var pb)) { pivot = pb.Attributes.Pivot; return true; }
-        if (_triggers.TryGetValue(id, out var tr))          { pivot = tr.Attributes.Pivot;  return true; }
-        if (_geometryParams.TryGetValue(id, out var gp))    { pivot = gp.Attributes.Pivot;  return true; }
-        if (_dataDams.TryGetValue(id, out var dd))          { pivot = dd.Attributes.Pivot;  return true; }
-        if (_paramViewers.TryGetValue(id, out var pvw))     { pivot = pvw.Attributes.Pivot; return true; }
+        if (TryGetLiveObject(id, out var obj)) { pivot = obj.Attributes.Pivot; return true; }
         pivot = default;
         return false;
     }
@@ -2407,8 +2414,11 @@ public class SlateWindow : Form
                     {
                         var positions = new Dictionary<string, float[]>();
                         foreach (var sortId in sortIds)
-                            if (TryGetLivePivot(sortId, out var pivot))
-                                positions[sortId] = new[] { pivot.X, pivot.Y };
+                            if (TryGetLiveObject(sortId, out var sortObj))
+                                // [left, y, width] — the horizontal extent (not just the pivot)
+                                // is what lets JS group items into columns regardless of
+                                // left/right/centre alignment (see rankByColumns).
+                                positions[sortId] = new[] { sortObj.Attributes.Bounds.Left, sortObj.Attributes.Pivot.Y, sortObj.Attributes.Bounds.Width };
                         PostToJs(SlateEvent.SortPositionsResult(sortTabId, positions));
                     });
                     break;
@@ -2495,69 +2505,41 @@ public class SlateWindow : Form
                ?? Grasshopper.Instances.ActiveCanvas?.Document;
         if (doc == null) return;
 
-        var selected = doc.Objects.Where(o => o.Attributes?.Selected == true).ToList();
-
-        var sliders = selected.OfType<GH_NumberSlider>().ToList();
-        foreach (var s in sliders)
-            AddSlider(tabId, groupId, s);
-
-        var toggles = selected.OfType<GH_BooleanToggle>().ToList();
-        foreach (var t in toggles)
-            AddToggle(tabId, groupId, t);
-
-        var buttons = selected.OfType<GH_ButtonObject>().ToList();
-        foreach (var b in buttons)
-            AddButton(tabId, groupId, b);
-
-        var valueLists = selected.OfType<GH_ValueList>().ToList();
-        foreach (var v in valueLists)
-            AddValueList(tabId, groupId, v);
-
-        var panels = selected.OfType<GH_Panel>().ToList();
-        foreach (var p in panels)
-            AddPanel(tabId, groupId, p);
-
-        var itemPickers = selected.OfType<GH_ItemPicker>().ToList();
-        foreach (var ip in itemPickers)
-            AddItemPicker(tabId, groupId, ip);
+        // Canvas order (columns left to right, top to bottom — see CanvasOrder),
+        // one interleaved pass: same order Capture on the component uses and
+        // Sort: Canvas Position produces. Used to batch by type (all sliders,
+        // then all toggles, ...) in doc.Objects' creation order, which put
+        // mixed selections in an order that matched neither.
+        var selected = CanvasOrder.Sort(doc.Objects.Where(o => o.Attributes?.Selected == true));
 
         EnsureHumanReflection();
-        var humanLists = _humanValueListType != null
-            ? selected.Where(o => _humanValueListType.IsInstanceOfType(o)).ToList()
-            : new List<IGH_DocumentObject>();
-        foreach (var h in humanLists)
-            if (h is IGH_Param hp) AddHumanValueList(tabId, groupId, hp);
-
-        var colourPickers = selected.OfType<GH_ColourSwatch>().ToList();
-        foreach (var c in colourPickers)
-            AddColourPicker(tabId, groupId, c);
-
         EnsurePancakeReflection();
-        var pancakeButtons = _pancakeTrueOnlyBtnType != null
-            ? selected.Where(o => _pancakeTrueOnlyBtnType.IsInstanceOfType(o)).ToList()
-            : new List<IGH_DocumentObject>();
-        foreach (var pb in pancakeButtons)
-            if (pb is IGH_Param pbp) AddPancakeTrueOnlyButton(tabId, groupId, pbp);
 
-        var triggers = selected.OfType<GH_Timer>().ToList();
-        foreach (var tr in triggers)
-            AddTrigger(tabId, groupId, tr);
+        int sliders = 0, toggles = 0, buttons = 0, valueLists = 0, panels = 0, itemPickers = 0,
+            humanLists = 0, colourPickers = 0, pancakeButtons = 0, triggers = 0,
+            geometryParams = 0, dataDams = 0, paramViewers = 0;
 
-        var geometryParams = selected.OfType<IGH_Param>()
-            .Where(p => TryGetGeometryParamKind(p, out _))
-            .ToList();
-        foreach (var gp in geometryParams)
-            if (TryGetGeometryParamKind(gp, out var gpKind)) AddGeometryParam(tabId, groupId, gp, gpKind);
+        foreach (var o in selected)
+        {
+            if (o is GH_NumberSlider s)         { AddSlider(tabId, groupId, s); sliders++; }
+            else if (o is GH_BooleanToggle t)   { AddToggle(tabId, groupId, t); toggles++; }
+            else if (o is GH_ButtonObject b)    { AddButton(tabId, groupId, b); buttons++; }
+            else if (o is GH_ValueList v)       { AddValueList(tabId, groupId, v); valueLists++; }
+            else if (o is GH_Panel p)           { AddPanel(tabId, groupId, p); panels++; }
+            else if (o is GH_ItemPicker ip)     { AddItemPicker(tabId, groupId, ip); itemPickers++; }
+            else if (_humanValueListType != null && _humanValueListType.IsInstanceOfType(o) && o is IGH_Param hp)
+                                                 { AddHumanValueList(tabId, groupId, hp); humanLists++; }
+            else if (o is GH_ColourSwatch c)    { AddColourPicker(tabId, groupId, c); colourPickers++; }
+            else if (_pancakeTrueOnlyBtnType != null && _pancakeTrueOnlyBtnType.IsInstanceOfType(o) && o is IGH_Param pbp)
+                                                 { AddPancakeTrueOnlyButton(tabId, groupId, pbp); pancakeButtons++; }
+            else if (o is GH_Timer tr)          { AddTrigger(tabId, groupId, tr); triggers++; }
+            else if (o is IGH_Param gp && TryGetGeometryParamKind(gp, out var gpKind))
+                                                 { AddGeometryParam(tabId, groupId, gp, gpKind); geometryParams++; }
+            else if (o is GH_DataDamComponent dd) { AddDataDam(tabId, groupId, dd); dataDams++; }
+            else if (o is GH_ParamViewer pv)    { AddParamViewer(tabId, groupId, pv); paramViewers++; }
+        }
 
-        var dataDams = selected.OfType<GH_DataDamComponent>().ToList();
-        foreach (var dd in dataDams)
-            AddDataDam(tabId, groupId, dd);
-
-        var paramViewers = selected.OfType<GH_ParamViewer>().ToList();
-        foreach (var pv in paramViewers)
-            AddParamViewer(tabId, groupId, pv);
-
-        Log($"Captured {sliders.Count} slider(s), {toggles.Count} toggle(s), {buttons.Count} button(s), {valueLists.Count} value list(s), {panels.Count} panel(s), {itemPickers.Count} item picker(s), {humanLists.Count} item selector(s), {colourPickers.Count} colour picker(s), {pancakeButtons.Count} true-only button(s), {triggers.Count} trigger(s), {geometryParams.Count} geometry param(s), {dataDams.Count} data dam(s), {paramViewers.Count} param viewer(s).");
+        Log($"Captured {sliders} slider(s), {toggles} toggle(s), {buttons} button(s), {valueLists} value list(s), {panels} panel(s), {itemPickers} item picker(s), {humanLists} item selector(s), {colourPickers} colour picker(s), {pancakeButtons} true-only button(s), {triggers} trigger(s), {geometryParams} geometry param(s), {dataDams} data dam(s), {paramViewers} param viewer(s).");
     }
 
     // ── Geometry param "Set Geometry" pick ──────────────────────────────────

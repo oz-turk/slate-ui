@@ -367,23 +367,47 @@
     for (const g of groups ?? []) ids.push(...collectSliderIdsDeep(g.sliders, g.groups))
     return ids
   }
-  // [y, x] sort key — a slider uses its own live pivot; a group uses the
-  // topmost (then leftmost) pivot among its slider descendants, at any
-  // nesting depth, so a group sorts to wherever its "highest" child sits.
+  // [left, y, width] sort key — a slider uses its own live bounds; a group
+  // uses the topmost (then leftmost) slider descendant's, at any nesting
+  // depth, so a group sorts to wherever its "highest" child sits.
   // Missing/unresolved positions (id no longer live in the GH doc, or an
   // empty group) sort last.
   function sortPositionKey(item, positions) {
     if (item.kind === 'slider') {
       const p = positions[item.data.sourceId ?? item.id]
-      return p ? [p[1], p[0]] : [Infinity, Infinity]
+      return p ? [p[0], p[1], p[2]] : [Infinity, Infinity, 0]
     }
-    let best = [Infinity, Infinity]
+    let best = [Infinity, Infinity, 0]
     for (const id of collectSliderIdsDeep(item.data.sliders, item.data.groups)) {
       const p = positions[id]
       if (!p) continue
-      if (p[1] < best[0] || (p[1] === best[0] && p[0] < best[1])) best = [p[1], p[0]]
+      if (p[1] < best[1] || (p[1] === best[1] && p[0] < best[0])) best = [p[0], p[1], p[2]]
     }
     return best
+  }
+  // Column-first order: GH definitions read left to right, with inputs stacked
+  // in vertical columns. Columns are decided by horizontal OVERLAP, not by
+  // comparing left edges — a narrow toggle right-aligned under a wide slider
+  // has a much larger left X than the slider but sits squarely under it, and
+  // overlap handles left/right/centre alignment alike. Items are visited
+  // left to right; one joins the current column if its [left, left+width]
+  // overlaps the column's running extent by at least half of the narrower of
+  // the two, otherwise it starts a new column. Columns go left to right, then
+  // top to bottom within each. (C# mirror: Bridge/CanvasOrder.cs — keep in step.)
+  function rankByColumns(items, positions) {
+    const keyed = items.map(it => ({ it, k: sortPositionKey(it, positions) }))
+    let colL = 0, colR = 0, col = -1
+    for (const e of [...keyed].sort((a, b) => a.k[0] - b.k[0])) {
+      if (e.k[0] === Infinity) { e.col = Infinity; continue }   // unresolved → last
+      const l = e.k[0], r = e.k[0] + e.k[2]
+      const overlap = Math.min(r, colR) - Math.max(l, colL)
+      if (col < 0 || overlap < 0.5 * Math.min(r - l, colR - colL)) { col++; colL = l; colR = r }
+      else { colL = Math.min(colL, l); colR = Math.max(colR, r) }
+      e.col = col
+    }
+    return keyed
+      .sort((a, b) => (a.col === b.col ? 0 : a.col - b.col) || a.k[1] - b.k[1] || a.k[0] - b.k[0])
+      .map(e => e.it)
   }
   // Unlike reorderTabTopLevel (used by the pane's Type/Name sorts, which
   // deliberately move a group as one untouched block), Canvas Position is
@@ -395,10 +419,7 @@
   // group), re-ranking that level's own sliders+groups by position and
   // handing each subgroup back through itself for its own contents.
   function sortContainerByPosition(container, positions) {
-    const ranked = [...orderedItems(container)].sort((a, b) => {
-      const ka = sortPositionKey(a, positions), kb = sortPositionKey(b, positions)
-      return ka[0] - kb[0] || ka[1] - kb[1]
-    })
+    const ranked = rankByColumns(orderedItems(container), positions)
     const rank = new Map(ranked.map((it, i) => [it.id, i]))
     return {
       ...container,

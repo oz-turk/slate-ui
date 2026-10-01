@@ -118,7 +118,7 @@ public static class SlateEvent
         JsonSerializer.Serialize(new { type = "paramViewer_items_result", id, path, items });
 
     // Reply to Pane's "sort_positions_request" (right-click Sort: Canvas
-    // Position) — live GH pivot per requested id, as [x, y]. Computed fresh
+    // Position) — live GH bounds-left, pivot Y + bounds width per requested id, as [left, y, width]. Computed fresh
     // for this one round trip; never stored on the C# or JS side.
     public static string SortPositionsResult(string tabId, IDictionary<string, float[]> positions) =>
         JsonSerializer.Serialize(new { type = "sort_positions_result", tabId, positions });
