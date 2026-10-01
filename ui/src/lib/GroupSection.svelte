@@ -348,10 +348,10 @@
               {activeDrag}
               depth={depth + 1}
               containerId={group.id}
-              dropHighlight={dropTarget?.type === 'group-header' && dropTarget.id === subGroup.id && activeDrag?.type === 'slider'}
+              dropHighlight={dropTarget?.type === 'group-header' && dropTarget.id === subGroup.id && dropTarget.pos === 'nest' && activeDrag?.type === 'slider'}
               dropNest={dropTarget?.type === 'group-header' && dropTarget.id === subGroup.id && dropTarget.pos === 'nest' && activeDrag?.type === 'group'}
-              dropBeforeMe={dropTarget?.type === 'group-header' && dropTarget.id === subGroup.id && dropTarget.pos === 'before' && activeDrag?.type === 'group'}
-              dropAfterMe={dropTarget?.type === 'group-header' && dropTarget.id === subGroup.id && dropTarget.pos === 'after' && activeDrag?.type === 'group'}
+              dropBeforeMe={dropTarget?.type === 'group-header' && dropTarget.id === subGroup.id && dropTarget.pos === 'before'}
+              dropAfterMe={dropTarget?.type === 'group-header' && dropTarget.id === subGroup.id && dropTarget.pos === 'after'}
               on:toggle
               on:groupSelect
               on:rename

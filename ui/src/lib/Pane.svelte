@@ -754,7 +754,7 @@
     if (dropTarget?.type === type && dropTarget.id === id) dropTarget = null
   }
 
-  function executeDrop(type, id, pos) {
+  function executeDrop(type, id, pos, groupId = null) {
     if (!activeDrag) return
     const { type: dt, id: di, ids: dragIds, fromTabId } = activeDrag
     if (type === 'tab') {
@@ -762,7 +762,11 @@
       if (dt === 'slider') moveSlidersToTab(dragIds, fromTabId, id)
       else                 moveGroupToTab(di, fromTabId, id)
     } else if (type === 'group-header') {
-      if (dt === 'slider') moveSlidersToGroup(dragIds, fromTabId, id)
+      if (dt === 'slider') {
+        // Top/bottom band = place beside the group (sibling), middle = into it.
+        if (pos === 'nest') moveSlidersToGroup(dragIds, fromTabId, id)
+        else liveReorderSlider(id, groupId, pos)
+      }
       else if (dt === 'group') { if (pos === 'nest') nestGroupInGroup(di, fromTabId, id) }
       // pos 'before'/'after' for a group source already reordered live during dragover
     }
@@ -1474,10 +1478,10 @@
             {@const group = item.data}
             <GroupSection
               {group} mode={$mode} {selectedIds} {dropTarget} {resizingSliderId} {activeDrag}
-              dropHighlight={dropTarget?.type === 'group-header' && dropTarget.id === group.id && activeDrag?.type === 'slider'}
+              dropHighlight={dropTarget?.type === 'group-header' && dropTarget.id === group.id && dropTarget.pos === 'nest' && activeDrag?.type === 'slider'}
               dropNest={dropTarget?.type === 'group-header' && dropTarget.id === group.id && dropTarget.pos === 'nest' && activeDrag?.type === 'group'}
-              dropBeforeMe={dropTarget?.type === 'group-header' && dropTarget.id === group.id && dropTarget.pos === 'before' && activeDrag?.type === 'group'}
-              dropAfterMe={dropTarget?.type === 'group-header' && dropTarget.id === group.id && dropTarget.pos === 'after' && activeDrag?.type === 'group'}
+              dropBeforeMe={dropTarget?.type === 'group-header' && dropTarget.id === group.id && dropTarget.pos === 'before'}
+              dropAfterMe={dropTarget?.type === 'group-header' && dropTarget.id === group.id && dropTarget.pos === 'after'}
               on:toggle={e              => toggleGroup(e.detail)}
               on:groupSelect={e         => onGroupSelect(e.detail.id, e.detail.shift)}
               on:rename={e              => renameGroup(e.detail.id, e.detail.label)}
@@ -1505,7 +1509,7 @@
               on:headerDragStart={e => startDrag('group', e.detail, activeTab.id, null)}
               on:headerDragOver={e => setDropTarget('group-header', e.detail.id, e.detail.pos, e.detail.groupId)}
               on:headerDragLeave={e => clearDropTarget('group-header', e.detail)}
-              on:headerDrop={e => executeDrop('group-header', e.detail.id, e.detail.pos)}
+              on:headerDrop={e => executeDrop('group-header', e.detail.id, e.detail.pos, e.detail.groupId)}
               on:groupDragEnd={endDrag}
               on:sliderDragStart={e      => startDrag('slider', e.detail.sliderId, activeTab.id, e.detail.groupId, e.detail.altKey)}
               on:sliderDragEnd={endDrag}

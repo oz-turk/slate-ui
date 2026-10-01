@@ -157,11 +157,11 @@
       }
       deleteRequest.set({ paneId: paneEl.dataset.paneId, sliderId: sliderEl.dataset.sliderId }); return
     }
-    // Mouse is over a group but not over one of its slider rows specifically
-    // (e.g. the header, or empty padding) — same target resolution as
-    // triggerCapture's groupEl below, so "x" ungroups whatever group is
-    // under the cursor, matching GroupSection's own "×" button.
-    const groupEl = el?.closest('[data-group-id]')
+    // Only the group's own header row deletes the group — hovering its body
+    // (padding, gaps between rows, a row's edge) must not, since one stray "x"
+    // there used to wipe the whole group instead of nothing.
+    const headerEl = el?.closest('.group-header')
+    const groupEl  = headerEl?.closest('[data-group-id]')
     if (groupEl) deleteRequest.set({ paneId: paneEl.dataset.paneId, groupId: groupEl.dataset.groupId })
   }
   function triggerCapture() {
