@@ -96,3 +96,19 @@ export const activeDragGroup = writable([])
 // state_snapshot — always a fresh request per drill, GH data can change
 // between opens and a branch can hold thousands of items.
 export const paramViewerItemsCache = writable({})
+
+// "Show icons" (Settings) — GH's own icon for each captured object's type
+// next to its row name, clickable in preview mode to jump to the original
+// object on the canvas. Off by default. Personal preference, plain
+// localStorage like allowMultipleCaptures. iconKeys / iconImages are the
+// live (never persisted) answers to Pane.svelte's icons_request: sourceId ->
+// GH component guid, and guid -> PNG data URI.
+function readShowParamIcons() {
+  try { return localStorage.getItem('slate-show-icons') === 'true' } catch { return false }
+}
+export const showParamIcons = writable(readShowParamIcons())
+showParamIcons.subscribe(v => {
+  try { localStorage.setItem('slate-show-icons', v ? 'true' : 'false') } catch {}
+})
+export const iconKeys   = writable({})
+export const iconImages = writable({})

@@ -12,7 +12,7 @@
     updatePane, syncControl, removeAllBySourceId, clearAllWorkspaces, resetToDefault, makeLeaf, setActiveWorkspace,
     posAppend, applyWindowEdgeResize, orderedItems, MIN_PANE_SIZE
   } from './stores/layout.js'
-  import { mode, pinned, theme, deleteRequest, captureRequest, settingsOpen, clearSelectionTick, groupSelectionTick, hoverHint, altHeld, ctrlHeld, fullscreenTreeId, paramViewerItemsCache, allowMultipleCaptures } from './stores/uiState.js'
+  import { mode, pinned, theme, deleteRequest, captureRequest, settingsOpen, clearSelectionTick, groupSelectionTick, hoverHint, altHeld, ctrlHeld, fullscreenTreeId, paramViewerItemsCache, allowMultipleCaptures, showParamIcons, iconKeys, iconImages } from './stores/uiState.js'
   import { undo, suppressDuring } from './stores/history.js'
   import { postToCs, postStateSnapshot } from './lib/ipc.js'
 
@@ -633,6 +633,11 @@
     // group (see sortContainerByPosition); the coordinates themselves are
     // never stored, only the resulting `pos` — same field every other
     // reorder already persists.
+    if (msg.type === 'icons_result') {
+      iconKeys.update(k => ({ ...k, ...msg.keys }))
+      iconImages.update(i => ({ ...i, ...msg.images }))
+    }
+
     if (msg.type === 'sort_positions_result') {
       const leaf = allLeaves(get(layout)).find(l => l.tabs.some(t => t.id === msg.tabId))
       const tab = leaf?.tabs.find(t => t.id === msg.tabId)
@@ -691,6 +696,8 @@
       // (SlateWindow.cs) — an old file saved under the since-removed 'beta'
       // theme (2026-09-22..09-24) lands on 'dark' instead of an unstyled value.
       if (msg.theme) theme.set(msg.theme === 'light' ? 'light' : 'dark')
+      // Same per-file-wins-over-localStorage-default rule as the theme above.
+      if (typeof msg.showIcons === 'boolean') showParamIcons.set(msg.showIcons)
       postStateSnapshot()
     }
   }

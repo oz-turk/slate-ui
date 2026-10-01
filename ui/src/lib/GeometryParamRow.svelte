@@ -1,4 +1,5 @@
 <script>
+  import ParamIcon from './ParamIcon.svelte'
   import { createEventDispatcher } from 'svelte'
   import { dragTranslateYFor, rowDragOver, rowDragLeave, rowDrop } from './rowDrag.js'
   const dispatch = createEventDispatcher()
@@ -88,7 +89,7 @@
     </div>
   {/if}
 
-  <span class="name" title={slider.name}>{slider.name}</span>
+  <span class="name" title={slider.name}><ParamIcon {slider} {mode} />{slider.name}</span>
 
   <!-- Empty gutter — mirrors SliderRow's "lo bound" column, same reasoning
        as TriggerRow's, so this row's pick button lines up with every

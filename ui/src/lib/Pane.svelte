@@ -22,6 +22,7 @@
   import { computeAlignedSnapTargets, snapRaw } from './splitSnap.js'
   import { mode, deleteRequest, captureRequest, clearSelectionTick, groupSelectionTick, hoverHint, theme } from '../stores/uiState.js'
   import { postToCs, postStateSnapshot } from './ipc.js'
+  import { showParamIcons } from '../stores/uiState.js'
   import { get } from 'svelte/store'
   import { flip } from 'svelte/animate'
   import { cubicOut } from 'svelte/easing'
@@ -72,7 +73,26 @@
     for (const g of groups ?? []) max = Math.max(max, maxSliderNameLen(g.sliders, g.groups))
     return max
   }
-  $: nameColWidth = Math.min(180, Math.max(70, maxSliderNameLen(activeTab?.sliders, activeTab?.groups) * 7 + 20))
+  // +18 leaves room for the 16px param icon (ParamIcon.svelte) inside the name column.
+  $: nameColWidth = Math.min(180, Math.max(70, maxSliderNameLen(activeTab?.sliders, activeTab?.groups) * 7 + 20)) + ($showParamIcons ? 18 : 0)
+
+  // "Show icons": ask C# once per captured object for its GH icon
+  // (icons_result lands in App.svelte -> iconKeys/iconImages). Tracked in
+  // requestedIcons rather than by "has a key yet", since objects with no icon
+  // never get a key and would otherwise be re-asked on every store update.
+  const requestedIcons = new Set()
+  function collectSourceIds(sliders, groups, out) {
+    for (const s of sliders ?? []) out.add(s.sourceId ?? s.id)
+    for (const g of groups ?? []) collectSourceIds(g.sliders, g.groups, out)
+    return out
+  }
+  $: if ($showParamIcons && activeTab) {
+    const missing = [...collectSourceIds(activeTab.sliders, activeTab.groups, new Set())].filter(id => !requestedIcons.has(id))
+    if (missing.length) {
+      missing.forEach(id => requestedIcons.add(id))
+      postToCs({ type: 'icons_request', ids: missing })
+    }
+  }
 
   // Driven straight from the theme store instead of the --edge-tint CSS
   // custom property — that var resolves fine for every *other* consumer
@@ -635,6 +655,16 @@
     }
     return null
   }
+  // Preview-mode "Go to": double-clicking a row's name jumps the GH canvas to
+  // the original object. Delegated here (every row type renders its label as
+  // .name inside an element carrying data-slider-id) instead of wiring 13 rows.
+  function onContentDblClick(e) {
+    if ($mode !== 'preview') return
+    if (!e.target.closest?.('.name')) return
+    const id = e.target.closest('[data-slider-id]')?.dataset.sliderId
+    if (id) postToCs({ type: 'goto_request', id: sourceIdFor(id) })
+  }
+
   function sourceIdFor(sliderId) {
     for (const t of tabs) {
       const found = findSliderDeep(t, sliderId)
@@ -1384,6 +1414,7 @@
     on:dragover|preventDefault={e  => activeDrag && (e.dataTransfer.dropEffect = 'move')}
     on:mouseover={onContentMouseOver}
     on:mouseout={onContentMouseOut}
+    on:dblclick={onContentDblClick}
   >
     {#if !activeTab || (activeTab.sliders.length === 0 && activeTab.groups.length === 0)}
       <div class="empty">

@@ -1,4 +1,5 @@
 <script>
+  import ParamIcon from './ParamIcon.svelte'
   import { createEventDispatcher } from 'svelte'
   import { dragTranslateYFor, rowDragOver, rowDragLeave, rowDrop } from './rowDrag.js'
   const dispatch = createEventDispatcher()
@@ -112,7 +113,7 @@
     </div>
   {/if}
 
-  <span class="name" title={slider.name}>{slider.name}</span>
+  <span class="name" title={slider.name}><ParamIcon {slider} {mode} />{slider.name}</span>
 
   <span class="bound lo">{fmt(slider.min)}</span>
 

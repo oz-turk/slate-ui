@@ -1,4 +1,5 @@
 <script>
+  import ParamIcon from './ParamIcon.svelte'
   import { createEventDispatcher } from 'svelte'
   import { dragTranslateYFor, rowDragOver, rowDragLeave, rowDrop } from './rowDrag.js'
   import { fullscreenTreeId } from '../stores/uiState.js'
@@ -95,7 +96,7 @@
       </div>
     {/if}
 
-    <span class="name" title={slider.name}>{slider.name}</span>
+    <span class="name" title={slider.name}><ParamIcon {slider} {mode} />{slider.name}</span>
 
     <span class="summary">{branches} branch{branches === 1 ? '' : 'es'} · {items} item{items === 1 ? '' : 's'}</span>
 
@@ -217,6 +218,9 @@
   }
   .handle:hover  { color: rgba(var(--text-rgb), 0.43); }
   .handle:active { cursor: grabbing; }
+  /* .row is flex with gap: 10px (the other rows are grid, gap 0) — cancel the
+     gap after the handle so the name column starts at the same x as theirs. */
+  .row.edit .handle { margin-right: -10px; }
 
   .name {
     flex: 0 0 var(--name-col-w, 110px);

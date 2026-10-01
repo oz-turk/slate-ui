@@ -1,4 +1,5 @@
 <script>
+  import ParamIcon from './ParamIcon.svelte'
   import { onMount, tick } from 'svelte'
   import { createEventDispatcher } from 'svelte'
   import { hoverHint, mode as modeStore } from '../stores/uiState.js'
@@ -298,7 +299,7 @@
 
   {#if showHeader && !showAsHeader}
   <div class="header">
-    <span class="name" title={slider.name}>{slider.name}</span>
+    <span class="name" title={slider.name}><ParamIcon {slider} {mode} />{slider.name}</span>
 
     <div class="spacer"></div>
 

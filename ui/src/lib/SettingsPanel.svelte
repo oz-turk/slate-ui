@@ -1,5 +1,5 @@
 <script>
-  import { settingsOpen, theme, allowMultipleCaptures } from '../stores/uiState.js'
+  import { settingsOpen, theme, allowMultipleCaptures, showParamIcons } from '../stores/uiState.js'
   import { undoLimit } from '../stores/history.js'
   import { postStateSnapshot } from './ipc.js'
   import { clickOutside } from './actions.js'
@@ -80,6 +80,15 @@
     <label class="switch">
       <input id="allow-multi-capture" type="checkbox" checked={$allowMultipleCaptures}
           on:change={e => allowMultipleCaptures.set(e.target.checked)} />
+      <span class="switch-track"></span>
+    </label>
+  </div>
+
+  <div class="setting-row">
+    <label for="show-icons">Show icons</label>
+    <label class="switch">
+      <input id="show-icons" type="checkbox" checked={$showParamIcons}
+          on:change={e => { showParamIcons.set(e.target.checked); postStateSnapshot() }} />
       <span class="switch-track"></span>
     </label>
   </div>

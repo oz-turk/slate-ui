@@ -323,6 +323,51 @@ public class SlateWindow : Form
         return false;
     }
 
+    // Param-type icons ("Show icons" setting). Keyed by ComponentGuid so a
+    // given object type is converted to PNG once, however many rows use it.
+    // null = the object type has no Icon_24x24 (custom/third-party objects).
+    private readonly Dictionary<Guid, string?> _iconPngByType = new();
+
+    private string? GetIconDataUri(IGH_DocumentObject obj)
+    {
+        if (_iconPngByType.TryGetValue(obj.ComponentGuid, out var cached)) return cached;
+        string? uri = null;
+        try
+        {
+            var bmp = obj.Icon_24x24;
+            if (bmp != null)
+            {
+                using var ms = new System.IO.MemoryStream();
+                bmp.Save(ms, System.Drawing.Imaging.ImageFormat.Png);
+                uri = "data:image/png;base64," + Convert.ToBase64String(ms.ToArray());
+            }
+        }
+        catch { /* leave null — row just shows no icon */ }
+        return _iconPngByType[obj.ComponentGuid] = uri;
+    }
+
+    // "Go to" — centres the GH canvas on the captured object at 100% zoom and selects it
+    // (GH's own "Jump to" equivalent). Silently ignores an object that's gone
+    // from the document (deleted after capture) or that lives in a document
+    // other than the one on screen.
+    private void GoToObject(string id)
+    {
+        if (!TryGetLiveObject(id, out var obj)) return;
+        var doc    = obj.OnPingDocument();
+        var canvas = Grasshopper.Instances.ActiveCanvas;
+        if (doc == null || canvas == null || canvas.Document != doc) return;
+
+        doc.DeselectAll();
+        obj.Attributes.Selected = true;
+        canvas.Viewport.Zoom = 1f;   // 100%
+        var b = obj.Attributes.Bounds;
+        canvas.Viewport.MidPoint = new System.Drawing.PointF(b.X + b.Width / 2f, b.Y + b.Height / 2f);
+        // Setting Viewport.Zoom/MidPoint directly doesn't raise ViewportChanged
+        // (mouse-wheel zoom does), so GH's zoom readout would keep the old value.
+        canvas.OnViewportChanged();
+        canvas.Refresh();
+    }
+
     // ── Data Dam capture + Select Gate ──────────────────────────────────────
 
     // Select Gate source restriction — Boolean/Integer params and Panel are
@@ -2421,6 +2466,38 @@ public class SlateWindow : Form
                                 positions[sortId] = new[] { sortObj.Attributes.Bounds.Left, sortObj.Attributes.Pivot.Y, sortObj.Attributes.Bounds.Width };
                         PostToJs(SlateEvent.SortPositionsResult(sortTabId, positions));
                     });
+                    break;
+                }
+
+                case "icons_request":
+                {
+                    var iconIds = new List<string>();
+                    if (root.TryGetProperty("ids", out var iconIdsEl))
+                        foreach (var idEl in iconIdsEl.EnumerateArray())
+                            iconIds.Add(idEl.GetString() ?? "");
+
+                    Invoke(() =>
+                    {
+                        var keys   = new Dictionary<string, string>();
+                        var images = new Dictionary<string, string>();
+                        foreach (var iconId in iconIds)
+                        {
+                            if (!TryGetLiveObject(iconId, out var iconObj)) continue;
+                            var uri = GetIconDataUri(iconObj);
+                            if (uri == null) continue;
+                            string key = iconObj.ComponentGuid.ToString();
+                            keys[iconId] = key;
+                            images[key]  = uri;
+                        }
+                        PostToJs(SlateEvent.IconsResult(keys, images));
+                    });
+                    break;
+                }
+
+                case "goto_request":
+                {
+                    string gotoId = root.GetProperty("id").GetString() ?? "";
+                    Invoke(() => GoToObject(gotoId));
                     break;
                 }
 

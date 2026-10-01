@@ -120,6 +120,9 @@ public static class SlateEvent
     // Reply to Pane's "sort_positions_request" (right-click Sort: Canvas
     // Position) — live GH bounds-left, pivot Y + bounds width per requested id, as [left, y, width]. Computed fresh
     // for this one round trip; never stored on the C# or JS side.
+    public static string IconsResult(IDictionary<string, string> keys, IDictionary<string, string> images) =>
+        JsonSerializer.Serialize(new { type = "icons_result", keys, images });
+
     public static string SortPositionsResult(string tabId, IDictionary<string, float[]> positions) =>
         JsonSerializer.Serialize(new { type = "sort_positions_result", tabId, positions });
 
