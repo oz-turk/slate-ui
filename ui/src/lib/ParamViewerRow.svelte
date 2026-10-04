@@ -4,11 +4,14 @@
   import { dragTranslateYFor, rowDragOver, rowDragLeave, rowDrop } from './rowDrag.js'
   import { fullscreenTreeId } from '../stores/uiState.js'
   import { totalCount, branchCount } from './treeLayout.js'
+  import { commitReorder } from './mapperActions.js'
+  import PathMapperPanel from './PathMapperPanel.svelte'
+  import SectionHead from './SectionHead.svelte'
   import DataTreeSunburst from './DataTreeSunburst.svelte'
-  import ParamViewerSettingsPopup from './ParamViewerSettingsPopup.svelte'
+  import GraphControls from './GraphControls.svelte'
   const dispatch = createEventDispatcher()
 
-  export let slider    = {}   // { id, name, tree, paramViewerSize?, showCounts? }
+  export let slider    = {}   // { id, name, tree, paramViewerSize?, showCounts?, source?, mapping?, mapperOrders?, mapperOpen?, graphOpen? }
   export let mode      = 'preview'
   export let selected  = false
   export let isFirst   = false
@@ -27,22 +30,25 @@
   // Per-capture override (2026-09-26 kullanıcı: "bazı tree'lerde daha büyük
   // olmak isteyebilir" — a deep/wide tree needs more room than the shared
   // default). null means "use AUTO_SIZE"; set once the +/- stepper in
-  // ParamViewerSettingsPopup is used, persisted on the slider like Text
+  // GraphControls is used, persisted on the slider like Text
   // Panel's textFontSize etc.
   $: sunburstSize = slider.paramViewerSize ?? AUTO_SIZE
   // "(N = X)" on the graph — default ON (2026-09-26 kullanıcı: "default
   // açık olsun"), so only an explicit `false` turns it off.
   $: showCounts = slider.showCounts !== false
 
-  let settingsPopup = null   // { x, y } | null
-  function openSettings(e) {
-    const rect = e.currentTarget.getBoundingClientRect()
-    const w = 176, h = 140
-    settingsPopup = {
-      x: Math.min(rect.left, window.innerWidth  - w - 8),
-      y: Math.min(rect.bottom + 4, window.innerHeight - h - 8),
-    }
-  }
+  // Same row type for a captured Param Viewer AND a captured Path Mapper
+  // (2026-10-04 kullanıcı: "path mapper'ı capture ettiğimde de aynı graph'ı
+  // görelim"). Viewer: graph is the point, no mapper section, read-only.
+  // Mapper: mapper section on top (open by default), graph below collapsed
+  // by default — but openable, since the radial reorder gesture lives on it.
+  $: isMapper   = slider.source === 'mapper'
+  $: graphOpen  = isMapper ? slider.graphOpen === true : true
+  $: manual     = slider.mapperManual === true
+  function toggleGraph()  { dispatch('patch', { graphOpen: !graphOpen }) }
+
+  function onReorder(e) { dispatch('patch', { mapperOrders: commitReorder(slider, e.detail) }) }
+
   function onSizeChange(e)       { dispatch('paramViewerSize', e.detail) }
   function onShowCountsChange(e) { dispatch('paramViewerShowCounts', e.detail) }
 
@@ -96,25 +102,13 @@
       </div>
     {/if}
 
-    <span class="name" title={slider.name}><ParamIcon {slider} {mode} />{slider.name}</span>
+    <span class="name" class:wide={isMapper} title={slider.name}><ParamIcon {slider} {mode} />{slider.name}</span>
 
     <span class="summary">{branches} branch{branches === 1 ? '' : 'es'} · {items} item{items === 1 ? '' : 's'}</span>
 
-    <!-- Action cluster order (2026-09-27 kullanıcı: "3 nokta, tam ekran,
-         boşluk, çarpı"): settings and fullscreen sit together on the left of
-         the cluster, remove (×) is pushed off with extra spacing on its own
-         (see .del's margin-left) so it can't be fat-fingered right after the
-         other two. Only rendered once there's actually a tree to configure —
-         matches this button previously only existing inside the
-         `{#if slider.tree}` body block. -->
-    {#if mode === 'edit' && slider.tree}
-      <button class="corner-btn" on:click|stopPropagation={openSettings} title="Graph settings">
-        <svg width="3" height="12" viewBox="0 0 3 12" fill="currentColor">
-          <circle cx="1.5" cy="1.5" r="1.5"/><circle cx="1.5" cy="6" r="1.5"/><circle cx="1.5" cy="10.5" r="1.5"/>
-        </svg>
-      </button>
-    {/if}
-
+    <!-- Fullscreen + remove (×) as one tight cluster (4px apart, like the other
+         rows' ×) — the .row's own 10px flex gap used to push them 20px apart. -->
+    <div class="cluster">
     <button class="expand" on:click|stopPropagation={openFullscreen} title="Open in fullscreen">
       <!-- Lucide "maximize-2" icon (ISC license) — https://lucide.dev/icons/maximize-2 -->
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -125,17 +119,22 @@
     {#if mode === 'edit'}
       <button class="del" on:click|stopPropagation={() => dispatch('remove')} title="Remove">×</button>
     {/if}
+    </div>
   </div>
 
-  {#if slider.tree}
+  {#if isMapper}
+    <PathMapperPanel {slider} {mode} on:patch />
+    <SectionHead label="Graph" open={graphOpen} on:click={toggleGraph} />
+  {/if}
+
+  {#if slider.tree && graphOpen}
     <div class="body" style="height:{sunburstSize}px">
-      <DataTreeSunburst tree={slider.tree} size={sunburstSize} id={slider.sourceId ?? slider.id} {showCounts} />
-      {#if settingsPopup}
-        <ParamViewerSettingsPopup x={settingsPopup.x} y={settingsPopup.y}
-          size={sunburstSize} isCustom={slider.paramViewerSize != null} {showCounts}
+      <DataTreeSunburst tree={slider.tree} size={sunburstSize} id={slider.sourceId ?? slider.id} {showCounts}
+        reorderable={isMapper && !manual} on:reorder={onReorder} />
+      {#if mode === 'edit'}
+        <GraphControls size={sunburstSize} {showCounts}
           on:sizeChange={onSizeChange}
-          on:showCountsChange={onShowCountsChange}
-          on:close={() => settingsPopup = null} />
+          on:showCountsChange={onShowCountsChange} />
       {/if}
     </div>
   {/if}
@@ -184,7 +183,9 @@
      boyutları da tutarlı olsun". Opaque background (not just a border) so
      each one also fully occludes whatever's behind it without needing a
      separate knockout-shadow trick. */
-  .corner-btn, .expand, .del {
+  .cluster { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+
+  .expand {
     width: 24px;
     height: 24px;
     display: flex;
@@ -199,7 +200,32 @@
     flex-shrink: 0;
     transition: background 0.1s, color 0.15s;
   }
-  .corner-btn:hover, .expand:hover, .del:hover { background: var(--border); color: rgba(var(--text-rgb), 0.85); }
+  .expand:hover { background: var(--border); color: rgba(var(--text-rgb), 0.85); }
+
+  /* Same remove × as every other row (20px, unboxed, very faint until hover) —
+     2026-10-04 kullanıcı: "box'a gerek yok, diğer componentlardaki gibi". */
+  .del {
+    width: 20px;
+    height: 20px;
+    border: none;
+    background: transparent;
+    color: rgba(var(--text-rgb), 0.21);
+    font-size: 14px;
+    cursor: pointer;
+    border-radius: 3px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    padding: 0;
+    text-shadow:
+      2px 0 1.5px var(--pane-pattern-mask, transparent), -2px 0 1.5px var(--pane-pattern-mask, transparent),
+      0 2px 1.5px var(--pane-pattern-mask, transparent), 0 -2px 1.5px var(--pane-pattern-mask, transparent),
+      2px 2px 1.5px var(--pane-pattern-mask, transparent), -2px -2px 1.5px var(--pane-pattern-mask, transparent),
+      2px -2px 1.5px var(--pane-pattern-mask, transparent), -2px 2px 1.5px var(--pane-pattern-mask, transparent);
+    transition: background 0.1s, color 0.1s;
+  }
+  .del:hover { background: var(--grid); color: rgba(var(--text-rgb), 0.58); }
 
   .handle {
     display: flex;
@@ -232,6 +258,12 @@
     white-space: nowrap;
   }
 
+  /* A Path Mapper row has nothing else beside its title, so it isn't held to
+     the shared name column (110px truncated "Path Mapp...") — it takes what it
+     needs and only shrinks (with an ellipsis) when the summary needs room too
+     (2026-10-04 kullanıcı). */
+  .name.wide { flex: 0 1 auto; min-width: 0; }
+
   .summary {
     flex: 1 1 auto;
     min-width: 0;
@@ -243,8 +275,4 @@
     font-variant-numeric: tabular-nums;
   }
 
-  /* Extra breathing room past the settings/fullscreen pair (2026-09-27
-     kullanıcı: "çarpıdan biraz uzaklaştır") — keeps remove out of easy
-     fat-finger range of the other two. */
-  .del { margin-left: 10px; }
 </style>

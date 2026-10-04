@@ -79,6 +79,7 @@ if (import.meta.env.DEV) {
   _initialLayout.tabs[0].sliders.push(
     { id: 'dev_paramviewer_sample', type: 'paramViewer', name: 'Data tree (sample)', tree: generateMockTree(), pos: 0 },
     { id: 'dev_paramviewer_dense',  type: 'paramViewer', name: 'Data tree (dense)',  tree: generateDenseMockTree(), pos: 1 },
+    { id: 'dev_pathmapper_sample', type: 'paramViewer', source: 'mapper', name: 'Path Mapper (sample)', tree: generateMockTree(), mapping: [], pos: 2 },
   )
 }
 export const workspaces = writable([

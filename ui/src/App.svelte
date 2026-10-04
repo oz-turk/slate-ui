@@ -556,11 +556,11 @@
     // (paramViewer_update) since the wired source's data can change freely,
     // same reasoning as panel_text_update.
     if (msg.type === 'paramViewer_added') {
-      addCapturedControl({ id: msg.id, type: 'paramViewer', name: msg.name, tree: msg.tree }, msg)
+      addCapturedControl({ id: msg.id, type: 'paramViewer', name: msg.name, tree: msg.tree, source: msg.source ?? undefined, mapping: msg.mapping ?? undefined }, msg)
     }
 
     if (msg.type === 'paramViewer_update') {
-      syncControl(msg.id, { name: msg.name, tree: msg.tree })
+      syncControl(msg.id, msg.mapping ? { name: msg.name, tree: msg.tree, mapping: msg.mapping } : { name: msg.name, tree: msg.tree })
     }
 
     if (msg.type === 'slider_name_update') {

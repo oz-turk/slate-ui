@@ -278,6 +278,14 @@ public class SlateWindow : Form
     // BuildParamViewerTree). See yapilacaklar/data-tree-editor.md.
     private readonly Dictionary<string, GH_ParamViewer> _paramViewers = new();
 
+    // Native "Path Mapper" (Grasshopper.Kernel.Special.GH_PathMapper) — shares
+    // the paramViewer ROW TYPE on the JS side (source = "mapper"), but is the
+    // one that can actually rewrite the data: dragging a wedge in the graph
+    // regenerates its Lexers (see ApplyPathMapperOrders). Its tree is read
+    // from the mapper's OWN VolatileData (the mapped output), not a
+    // GraphicTree. See yapilacaklar/data-tree-editor.md.
+    private readonly Dictionary<string, GH_PathMapper> _pathMappers = new();
+
     // Optional "Select Gate" link, one per captured Data Dam id — the source
     // object (Param_Boolean / Param_Integer / GH_Panel, see IsValidGateSource)
     // whose value gates an automatic release. Pure Slate bookkeeping, no
@@ -312,6 +320,7 @@ public class SlateWindow : Form
         if (_geometryParams.TryGetValue(id, out var gp))    { obj = gp;  return true; }
         if (_dataDams.TryGetValue(id, out var dd))          { obj = dd;  return true; }
         if (_paramViewers.TryGetValue(id, out var pvw))     { obj = pvw; return true; }
+        if (_pathMappers.TryGetValue(id, out var pmw))      { obj = pmw; return true; }
         obj = null!;
         return false;
     }
@@ -1502,6 +1511,19 @@ public class SlateWindow : Form
 
             win.PostToJs(SlateEvent.ParamViewerUpdated(kv.Key, name, tree));
         }
+        foreach (var kv in win._pathMappers)
+        {
+            var pm = kv.Value;
+            EnsureDefaultMapping(pm);
+            var name = pm.NickName;
+            var tree = BuildPathMapperTree(pm);
+            var mapping = BuildMappingInfo(pm);
+            var fingerprint = name + JsonSerializer.Serialize(tree) + JsonSerializer.Serialize(mapping);
+            if (_lastPushedParamViewers.TryGetValue(kv.Key, out var last) && last == fingerprint) continue;
+            _lastPushedParamViewers[kv.Key] = fingerprint;
+
+            win.PostToJs(SlateEvent.ParamViewerUpdated(kv.Key, name, tree, mapping));
+        }
     }
 
     // These pushes run on EVERY document solve — anywhere in the canvas,
@@ -2523,6 +2545,36 @@ public class SlateWindow : Form
                     break;
                 }
 
+                // Path Mapper reorder (data-tree-editor.md): the front end owns the
+                // full permutation state and sends all of it every time;
+                // ApplyPathMapperOrders rebuilds the Lexers from it.
+                case "pathMapper_apply":
+                {
+                    string pmid = root.GetProperty("id").GetString() ?? "";
+                    var orders = new Dictionary<string, List<int>>();
+                    if (root.TryGetProperty("orders", out var ordEl) && ordEl.ValueKind == JsonValueKind.Object)
+                        foreach (var prop in ordEl.EnumerateObject())
+                            orders[prop.Name] = prop.Value.EnumerateArray().Select(x => x.GetInt32()).ToList();
+
+                    Invoke(() => ApplyPathMapperOrders(pmid, orders));
+                    break;
+                }
+
+                // Hand-written Path Mapper rules from the row's Source/Target
+                // editor — replaces the whole Lexers list (empty list = clear
+                // the mapping → pass-through).
+                case "pathMapper_setLexers":
+                {
+                    string lid = root.GetProperty("id").GetString() ?? "";
+                    var rules = new List<(string src, string tgt)>();
+                    if (root.TryGetProperty("lexers", out var lxEl) && lxEl.ValueKind == JsonValueKind.Array)
+                        foreach (var el in lxEl.EnumerateArray())
+                            rules.Add((el.GetProperty("source").GetString() ?? "", el.GetProperty("target").GetString() ?? ""));
+
+                    Invoke(() => SetPathMapperLexers(lid, rules));
+                    break;
+                }
+
                 case "ui_ready":
                     // Page (re)loaded — restore state if available
                     if (NeedsFileRestore && PendingFileState is string fs && HostDocument is Grasshopper.Kernel.GH_Document fd)
@@ -2594,7 +2646,7 @@ public class SlateWindow : Form
 
         int sliders = 0, toggles = 0, buttons = 0, valueLists = 0, panels = 0, itemPickers = 0,
             humanLists = 0, colourPickers = 0, pancakeButtons = 0, triggers = 0,
-            geometryParams = 0, dataDams = 0, paramViewers = 0;
+            geometryParams = 0, dataDams = 0, paramViewers = 0, pathMappers = 0;
 
         foreach (var o in selected)
         {
@@ -2610,13 +2662,14 @@ public class SlateWindow : Form
             else if (_pancakeTrueOnlyBtnType != null && _pancakeTrueOnlyBtnType.IsInstanceOfType(o) && o is IGH_Param pbp)
                                                  { AddPancakeTrueOnlyButton(tabId, groupId, pbp); pancakeButtons++; }
             else if (o is GH_Timer tr)          { AddTrigger(tabId, groupId, tr); triggers++; }
+            else if (o is GH_PathMapper pmp)    { AddPathMapper(tabId, groupId, pmp); pathMappers++; }
             else if (o is IGH_Param gp && TryGetGeometryParamKind(gp, out var gpKind))
                                                  { AddGeometryParam(tabId, groupId, gp, gpKind); geometryParams++; }
             else if (o is GH_DataDamComponent dd) { AddDataDam(tabId, groupId, dd); dataDams++; }
             else if (o is GH_ParamViewer pv)    { AddParamViewer(tabId, groupId, pv); paramViewers++; }
         }
 
-        Log($"Captured {sliders} slider(s), {toggles} toggle(s), {buttons} button(s), {valueLists} value list(s), {panels} panel(s), {itemPickers} item picker(s), {humanLists} item selector(s), {colourPickers} colour picker(s), {pancakeButtons} true-only button(s), {triggers} trigger(s), {geometryParams} geometry param(s), {dataDams} data dam(s), {paramViewers} param viewer(s).");
+        Log($"Captured {sliders} slider(s), {toggles} toggle(s), {buttons} button(s), {valueLists} value list(s), {panels} panel(s), {itemPickers} item picker(s), {humanLists} item selector(s), {colourPickers} colour picker(s), {pancakeButtons} true-only button(s), {triggers} trigger(s), {geometryParams} geometry param(s), {dataDams} data dam(s), {paramViewers} param viewer(s), {pathMappers} path mapper(s).");
     }
 
     // ── Geometry param "Set Geometry" pick ──────────────────────────────────
@@ -3082,9 +3135,13 @@ public class SlateWindow : Form
     // needed); null slots inside a branch print literally as "null".
     private List<string> GetParamViewerLeafItems(string id, List<int> pathIndices)
     {
-        if (!_paramViewers.TryGetValue(id, out var pv) || pv.SourceCount == 0)
+        IGH_Structure source;
+        if (_paramViewers.TryGetValue(id, out var pv) && pv.SourceCount > 0)
+            source = pv.Sources[0].VolatileData;
+        else if (_pathMappers.TryGetValue(id, out var pm))
+            source = pm.VolatileData;   // the mapped OUTPUT — what the graph shows
+        else
             return new List<string>();
-        var source = pv.Sources[0].VolatileData;
         var path = new GH_Path(pathIndices.ToArray());
         if (!source.PathExists(path)) return new List<string>();
         var branch = source.get_Branch(path);
@@ -3092,6 +3149,183 @@ public class SlateWindow : Form
         foreach (var item in branch)
             result.Add(item?.ToString() ?? "null");
         return result;
+    }
+
+    // ── Path Mapper capture ──────────────────────────────────────────────────
+
+    private sealed class MapperNode
+    {
+        public int Count;
+        public readonly SortedDictionary<int, MapperNode> Kids = new();
+    }
+
+    // Generic { kids } / { count } tree from the mapper's OWN VolatileData
+    // (its mapped output, so a reorder shows up here after the solve). Built
+    // as a trie over the real path indices; a missing index in a run (e.g.
+    // {0},{2}) is filled with an empty leaf so the front end's positional
+    // labels ({0},{1},{2}) stay equal to the true path indices. Such a filler
+    // carries gap=true so the front end gives it zero width and no label (it
+    // isn't a real branch — 2026-10-04: {5;4}..{5;7} fillers piled their labels
+    // on top of each other). Known limit:
+    // if a path is a strict prefix of another ({0} next to {0;1}) the deeper
+    // one wins and the shorter one's own items aren't drawn.
+    private static object BuildPathMapperTree(GH_PathMapper pm)
+    {
+        var data = pm.VolatileData;
+        var root = new MapperNode();
+        for (int i = 0; i < data.PathCount; i++)
+        {
+            var p = data.get_Path(i);
+            var node = root;
+            for (int j = 0; j < p.Length; j++)
+            {
+                if (!node.Kids.TryGetValue(p[j], out var next)) node.Kids[p[j]] = next = new MapperNode();
+                node = next;
+            }
+            node.Count = data.get_Branch(i).Count;
+        }
+        return new { kids = ConvertMapperKids(root) };
+    }
+
+    private static object[] ConvertMapperKids(MapperNode node)
+    {
+        if (node.Kids.Count == 0) return Array.Empty<object>();
+        int max = node.Kids.Keys.Max();
+        var list = new List<object>();
+        for (int i = 0; i <= max && i < 100000; i++)
+        {
+            if (!node.Kids.TryGetValue(i, out var k)) { list.Add(new { count = 0, gap = true }); continue; }
+            list.Add(k.Kids.Count == 0 ? new { count = k.Count } : (object)new { kids = ConvertMapperKids(k) });
+        }
+        return list.ToArray();
+    }
+
+    // A captured mapper with no rules gets the identity rule per source path
+    // length ({A;B} → {A;B}) — native CreateDefaultMapping, same thing the
+    // component's own "Default" menu item makes (2026-10-04 kullanıcı: "default
+    // olarak da bir rule eklenmiş olsun"). Output is unchanged (identity), so
+    // no solve is forced; it just gives the Source | Target grid a real first
+    // row and the drag a rule set to build on. Needs a connected source (the
+    // lengths come from its data) — retried on every solve until one is.
+    // Was switched off briefly (2026-10-04) while chasing a UI crash that
+    // turned out to be PathMapperPanel's own init bug, not this. Kept as a
+    // switch in case it ever needs turning off again.
+    private const bool AutoDefaultMapping = true;
+
+    private static void EnsureDefaultMapping(GH_PathMapper pm)
+    {
+        if (AutoDefaultMapping && pm.Lexers.Count == 0 && pm.SourceCount > 0)
+            pm.CreateDefaultMapping();
+    }
+
+    private static object BuildMappingInfo(GH_PathMapper pm) =>
+        pm.Lexers.Select(l => new { source = l.Source.Mask, target = l.Target.Mask }).ToArray();
+
+    public void AddPathMapper(string tabId, string? groupId, GH_PathMapper pm)
+    {
+        string id = pm.InstanceGuid.ToString();
+        _pathMappers[id] = pm;
+        EnsureDefaultMapping(pm);
+
+        PostToJs(SlateEvent.ParamViewerAdded(tabId, id, pm.NickName, BuildPathMapperTree(pm), groupId,
+            "mapper", BuildMappingInfo(pm)));
+    }
+
+    // Placeholder names GH's own default mappings use (no 'I' — that's the item
+    // variable in "(i)").
+    private const string MapperNames = "ABCDEFGHJKLMNOPQRSTUVWXYZ";
+
+    // Regenerates the mapper's Lexers FROM SCRATCH out of the front end's full
+    // reorder state (data-tree-editor.md: never incremental diffs). `orders`
+    // is keyed by the SOURCE-index prefix of a parent ("" = root, "1" = under
+    // source {1}, "1;0" ...); value[outPos] = srcIndex. One lexer per distinct
+    // source path length (a branch whose length no lexer covers is dropped by
+    // PerformLexicalReplace, so every length present must be listed).
+    //
+    // Source masks can't carry conditions (matching is by path LENGTH only —
+    // decompiled GH_Lexer), so the "only under this parent" test lives in the
+    // target element's expression: If(prefixKey=N, lookup, fallthrough), with
+    // the prefix packed into one number (base 100000) so the fallthrough is
+    // written once instead of once per nested level. Only ASCII operators
+    // (= + * ) and If() are used — the engine's and/or are unicode glyphs.
+    private void ApplyPathMapperOrders(string id, Dictionary<string, List<int>> orders)
+    {
+        if (!_pathMappers.TryGetValue(id, out var pm)) return;
+
+        var lengths = new SortedSet<int>();
+        foreach (var src in pm.Sources)
+            foreach (var path in src.VolatileData.Paths)
+                if (path.Length > 0 && path.Length <= MapperNames.Length) lengths.Add(path.Length);
+        if (lengths.Count == 0) return;
+
+        // (prefix, src->out map for the non-identity entries only)
+        var entries = new List<(int[] prefix, Dictionary<int, int> map)>();
+        foreach (var kv in orders)
+        {
+            var prefix = kv.Key.Length == 0
+                ? Array.Empty<int>()
+                : kv.Key.Split(';').Select(int.Parse).ToArray();
+            var map = new Dictionary<int, int>();
+            for (int outPos = 0; outPos < kv.Value.Count; outPos++)
+                if (kv.Value[outPos] != outPos) map[kv.Value[outPos]] = outPos;
+            if (map.Count > 0) entries.Add((prefix, map));
+        }
+
+        pm.RecordUndoEvent("Slate: reorder branches");
+        pm.Lexers.Clear();
+        foreach (int n in lengths)
+        {
+            var names = MapperNames.Take(n).Select(c => c.ToString()).ToArray();
+            var elements = new string[n];
+            for (int j = 0; j < n; j++)
+            {
+                string e = names[j];
+                foreach (var (prefix, map) in entries.Where(x => x.prefix.Length == j))
+                {
+                    string lookup = names[j];
+                    foreach (var kv in map.OrderByDescending(m => m.Key))
+                        lookup = $"If({names[j]}={kv.Key},{kv.Value},{lookup})";
+                    if (j == 0) { e = lookup; continue; }
+                    string keyExpr = names[0];
+                    long acc = prefix[0];
+                    for (int q = 1; q < j; q++)
+                    {
+                        keyExpr = $"({keyExpr}*100000+{names[q]})";
+                        acc = acc * 100000 + prefix[q];
+                    }
+                    e = $"If(({keyExpr})={acc},{lookup},{e})";
+                }
+                elements[j] = e;
+            }
+            string source = "{" + string.Join(";", names) + "}";
+            string target = "{" + string.Join(";", elements) + "}";
+            pm.Lexers.Add(new GH_LexerCombo(source, target));
+        }
+        pm.ExpireSolution(true);
+    }
+
+    // Rules that don't parse (GH_Lexer needs at least one path element, which
+    // ParseMask only yields for a {...}-wrapped mask) are skipped and logged
+    // rather than written — a rule GH can't read would just silently drop
+    // that path length's branches from the output.
+    private void SetPathMapperLexers(string id, List<(string src, string tgt)> rules)
+    {
+        if (!_pathMappers.TryGetValue(id, out var pm)) return;
+        var lexers = new List<GH_LexerCombo>();
+        foreach (var (src, tgt) in rules)
+        {
+            var combo = new GH_LexerCombo(src, tgt);
+            if (combo.Source.Path.Count == 0 || combo.Target.Path.Count == 0)
+            {
+                Log($"Path Mapper rule skipped (not a valid mask): {src}  →  {tgt}");
+                continue;
+            }
+            lexers.Add(combo);
+        }
+        pm.RecordUndoEvent("Slate: edit mapping rules");
+        pm.Lexers.Clear();
+        pm.Lexers.AddRange(lexers);
+        pm.ExpireSolution(true);
     }
 
     public void AddParamViewer(string tabId, string? groupId, GH_ParamViewer pv)
@@ -3147,6 +3381,7 @@ public class SlateWindow : Form
         _geometryParams.Clear();
         _dataDams.Clear();
         _paramViewers.Clear();
+        _pathMappers.Clear();
         _dataDamGates.Clear();
         _dataDamGateLastValue.Clear();
         _dataDamGateMode.Clear();
@@ -3203,6 +3438,9 @@ public class SlateWindow : Form
             var docParamViewers = doc.Objects
                 .OfType<GH_ParamViewer>()
                 .ToDictionary(p => p.InstanceGuid.ToString(), p => p);
+            var docPathMappers = doc.Objects
+                .OfType<GH_PathMapper>()
+                .ToDictionary(p => p.InstanceGuid.ToString(), p => p);
             // Candidate pool for resolving a saved "gateId" — see the
             // "dataDam" branch below. Same 3 types as IsValidGateSource.
             var docGateSources = doc.Objects
@@ -3223,6 +3461,7 @@ public class SlateWindow : Form
             _geometryParams.Clear();
             _dataDams.Clear();
             _paramViewers.Clear();
+            _pathMappers.Clear();
             _dataDamGates.Clear();
             _dataDamGateLastValue.Clear();
             _dataDamGateMode.Clear();
@@ -3416,6 +3655,14 @@ public class SlateWindow : Form
                             _paramViewers[id] = pv;
                             s["name"] = pv.NickName;
                             s["tree"] = JsonNode.Parse(JsonSerializer.Serialize(BuildParamViewerTree(pv)));
+                        }
+                        else if (docPathMappers.TryGetValue(id, out var pmr))
+                        {
+                            _pathMappers[id] = pmr;
+                            EnsureDefaultMapping(pmr);
+                            s["name"] = pmr.NickName;
+                            s["tree"] = JsonNode.Parse(JsonSerializer.Serialize(BuildPathMapperTree(pmr)));
+                            s["mapping"] = JsonNode.Parse(JsonSerializer.Serialize(BuildMappingInfo(pmr)));
                         }
                         else { Log($"RestoreState: dropped {kind} id={id} — no matching live object in doc.Objects."); arr.RemoveAt(i); }
                     }

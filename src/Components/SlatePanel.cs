@@ -191,7 +191,7 @@ public class SlatePanel : GH_Component
 
                 int sliderCount = 0, toggleCount = 0, buttonCount = 0, valueListCount = 0, panelCount = 0,
                     itemPickerCount = 0, humanListCount = 0, colourPickerCount = 0, pancakeButtonCount = 0, triggerCount = 0,
-                    geometryParamCount = 0, dataDamCount = 0, paramViewerCount = 0;
+                    geometryParamCount = 0, dataDamCount = 0, paramViewerCount = 0, pathMapperCount = 0;
 
                 if (selected.Count == 0)
                     log += "Nothing selected.";
@@ -210,6 +210,7 @@ public class SlatePanel : GH_Component
                         else if (o is GH_ColourSwatch c)        { win.AddColourPicker(tab, null, c); colourPickerCount++; }
                         else if (SlateWindow.IsPancakeTrueOnlyButton(o) && o is IGH_Param pb)  { win.AddPancakeTrueOnlyButton(tab, null, pb); pancakeButtonCount++; }
                         else if (o is GH_Timer tr)              { win.AddTrigger(tab, null, tr); triggerCount++; }
+                        else if (o is Grasshopper.Kernel.Special.GH_PathMapper pm) { win.AddPathMapper(tab, null, pm); pathMapperCount++; }
                         else if (o is IGH_Param gp && gp.SourceCount == 0 && SlateWindow.TryGetGeometryParamKind(gp, out var gpKind))
                                                                  { win.AddGeometryParam(tab, null, gp, gpKind); geometryParamCount++; }
                         else if (o is Grasshopper.Kernel.Components.GH_DataDamComponent dd)
@@ -217,10 +218,10 @@ public class SlatePanel : GH_Component
                         else if (o is GH_ParamViewer pv)        { win.AddParamViewer(tab, null, pv); paramViewerCount++; }
                     }
 
-                    if (sliderCount == 0 && toggleCount == 0 && buttonCount == 0 && valueListCount == 0 && panelCount == 0 && itemPickerCount == 0 && humanListCount == 0 && colourPickerCount == 0 && pancakeButtonCount == 0 && triggerCount == 0 && geometryParamCount == 0 && dataDamCount == 0 && paramViewerCount == 0)
+                    if (sliderCount == 0 && toggleCount == 0 && buttonCount == 0 && valueListCount == 0 && panelCount == 0 && itemPickerCount == 0 && humanListCount == 0 && colourPickerCount == 0 && pancakeButtonCount == 0 && triggerCount == 0 && geometryParamCount == 0 && dataDamCount == 0 && paramViewerCount == 0 && pathMapperCount == 0)
                         log += "Nothing selected.";
                     else
-                        log += $"Captured {sliderCount} slider(s), {toggleCount} toggle(s), {buttonCount} button(s), {valueListCount} value list(s), {panelCount} panel(s), {itemPickerCount} item picker(s), {humanListCount} item selector(s), {colourPickerCount} colour picker(s), {pancakeButtonCount} true-only button(s), {triggerCount} trigger(s), {geometryParamCount} geometry param(s), {dataDamCount} data dam(s), {paramViewerCount} param viewer(s) → \"{tab}\".";
+                        log += $"Captured {sliderCount} slider(s), {toggleCount} toggle(s), {buttonCount} button(s), {valueListCount} value list(s), {panelCount} panel(s), {itemPickerCount} item picker(s), {humanListCount} item selector(s), {colourPickerCount} colour picker(s), {pancakeButtonCount} true-only button(s), {triggerCount} trigger(s), {geometryParamCount} geometry param(s), {dataDamCount} data dam(s), {paramViewerCount} param viewer(s), {pathMapperCount} path mapper(s) → \"{tab}\".";
                 }
             }
 

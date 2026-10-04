@@ -100,14 +100,19 @@ public static class SlateEvent
     // shape built from GH's own GraphicTree (see BuildParamViewerTree in
     // SlateWindow.cs) — not GH-specific, so the front end's sunburst/layout
     // code isn't tied to this one capture path. See yapilacaklar/data-tree-editor.md.
-    public static string ParamViewerAdded(string tabId, string id, string name, object tree, string? groupId = null) =>
-        JsonSerializer.Serialize(new { type = "paramViewer_added", tabId, id, name, tree, groupId });
+    //
+    // The same row type also carries a captured native Path Mapper
+    // (`source` = "mapper", `mapping` = its Lexers as {source,target} pairs) —
+    // for a plain Param Viewer both stay null/absent. See data-tree-editor.md.
+    public static string ParamViewerAdded(string tabId, string id, string name, object tree, string? groupId = null,
+        string? source = null, object? mapping = null) =>
+        JsonSerializer.Serialize(new { type = "paramViewer_added", tabId, id, name, tree, groupId, source, mapping });
 
     // Periodic push (OnDocSolutionEnd) — a Param Viewer's tree changes
     // whenever its wired source's data changes, same "recompute every solve"
     // reasoning as PanelTextUpdated.
-    public static string ParamViewerUpdated(string id, string name, object tree) =>
-        JsonSerializer.Serialize(new { type = "paramViewer_update", id, name, tree });
+    public static string ParamViewerUpdated(string id, string name, object tree, object? mapping = null) =>
+        JsonSerializer.Serialize(new { type = "paramViewer_update", id, name, tree, mapping });
 
     // Reply to "paramViewer_request_items" (Data Tree Explorer's leaf item
     // view, drilling all the way into a real branch's actual values, not just

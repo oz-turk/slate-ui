@@ -329,6 +329,7 @@
               on:textUnderline={e => dispatch('sliderTextUnderline', { id: slider.id, value: e.detail })}
               on:paramViewerSize={e       => dispatch('sliderParamViewerSize',       { id: slider.id, size: e.detail })}
               on:paramViewerShowCounts={e => dispatch('sliderParamViewerShowCounts', { id: slider.id, value: e.detail })}
+              on:patch={e => dispatch('sliderPatch', { id: slider.id, patch: e.detail })}
               on:remove={()      => dispatch('sliderRemove',     { groupId: group.id, sliderId: slider.id })}
               on:dragStart={e   => dispatch('sliderDragStart',   { sliderId: slider.id, groupId: group.id, altKey: e.detail })}
               on:contextMenu={e => dispatch('sliderContextMenu', { pos: e.detail, slider })}

@@ -497,6 +497,12 @@
     patchSlider(sliderId, { paramViewerSize: size })
     postStateSnapshot()
   }
+  // Generic persisted-field patch from a row (Param Viewer / Path Mapper's
+  // collapse states + reorder state) — same path as the settings above.
+  function onSliderPatch(sliderId, patch) {
+    patchSlider(sliderId, patch)
+    postStateSnapshot()
+  }
   function onParamViewerShowCountsChange(sliderId, value) {
     patchSlider(sliderId, { showCounts: value })
     postStateSnapshot()
@@ -1466,6 +1472,7 @@
               on:textUnderline={e => onTextUnderlineChange(slider.id, e.detail)}
               on:paramViewerSize={e       => onParamViewerSizeChange(slider.id, e.detail)}
               on:paramViewerShowCounts={e => onParamViewerShowCountsChange(slider.id, e.detail)}
+              on:patch={e => onSliderPatch(slider.id, e.detail)}
               on:remove={() => removeSlider(activeTab.id, slider.id)}
               on:dragStart={e => startDrag('slider', slider.id, activeTab.id, null, e.detail)}
               on:contextMenu={e => onSliderContextMenu(e.detail, slider)}
@@ -1504,6 +1511,7 @@
               on:sliderTextUnderline={e => onTextUnderlineChange(e.detail.id, e.detail.value)}
               on:sliderParamViewerSize={e       => onParamViewerSizeChange(e.detail.id, e.detail.size)}
               on:sliderParamViewerShowCounts={e => onParamViewerShowCountsChange(e.detail.id, e.detail.value)}
+              on:sliderPatch={e => onSliderPatch(e.detail.id, e.detail.patch)}
               on:sliderRemove={e        => removeSlider(activeTab.id, e.detail.sliderId)}
               on:sliderContextMenu={e   => onSliderContextMenu(e.detail.pos, e.detail.slider)}
               on:headerDragStart={e => startDrag('group', e.detail, activeTab.id, null)}

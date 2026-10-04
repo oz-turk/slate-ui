@@ -1,6 +1,9 @@
 <script>
-  import { computeSunburst, nodeAtPath, totalCount, branchCount, pathLabel, polar } from './treeLayout.js'
+  import { createEventDispatcher, onDestroy } from 'svelte'
+  import { computeSunburst, nodeAtPath, isLeaf, totalCount, branchCount, pathLabel, polar, reorderKids } from './treeLayout.js'
   import { postToCs } from './ipc.js'
+
+  const dispatch = createEventDispatcher()
   import { paramViewerItemsCache } from '../stores/uiState.js'
 
   export let tree        // root node: { kids: [...] } — see treeLayout.js
@@ -11,6 +14,9 @@
   // everything else (path labels, pins, leader lines) untouched, only the
   // count text itself.
   export let showCounts = true
+  // Radial reorder only makes sense where the graph is backed by a Path Mapper
+  // (data-tree-editor.md) — a plain Param Viewer has nothing to write back to.
+  export let reorderable = false
 
   // Drill-in (design exploration turn 3, option "3a"): clicking any non-leaf
   // arc recenters the view on it, filling the whole circle with just that
@@ -19,7 +25,29 @@
   // handed in (e.g. a different captured param).
   let focusPath = []
   let prevTree = null
-  $: if (tree !== prevTree) { prevTree = tree; focusPath = []; itemsPath = null }
+  // A fresh `tree` arrives on every solve. Keep the drill-in when the focused
+  // node still exists as a branch (otherwise a reorder inside a drilled view
+  // would dump you back to the root after every drop); the draft is always
+  // superseded by the real tree.
+  $: if (tree !== prevTree) {
+    prevTree = tree; itemsPath = null; draft = null; endDrag()
+    const f = nodeAtPath(tree, focusPath)
+    if (!f || isLeaf(f)) focusPath = []
+  }
+
+  // Radial sibling reorder (2026-10-04) — grab any wedge and swing it around
+  // its own ring; the other wedges in the same ring part to make room (live
+  // preview via `draft`, applied on top of the real `tree`). Radial-only on
+  // purpose: the angle alone picks the slot, so "siblings only" falls out of
+  // the gesture instead of needing a rule. Commit fires `reorder` with an
+  // ABSOLUTE parent path; `draft` stays applied until a new `tree` arrives
+  // (the backend's Path Mapper round-trip, once wired, replaces it).
+  let draft = null         // { parentPath, from, to } — absolute
+  let drag = null          // gesture in progress (pre-threshold or active)
+  let svgEl
+  let suppressClick = false
+  const DRAG_THRESHOLD = 4 // px before a press becomes a drag (below it: plain click → drill)
+  $: displayTree = draft ? reorderKids(tree, draft.parentPath, draft.from, draft.to) : tree
 
   // Drilling into a LEAF (2026-09-26: "bir level daha içeri girip dilimler
   // halinde görmek istiyordum") — reuses the exact same ring engine, just
@@ -40,7 +68,7 @@
   }
   $: itemsNode = itemsPath ? { kids: (items ?? []).map(() => ({ count: 1 })) } : null
 
-  $: focusNode = itemsNode ?? nodeAtPath(tree, focusPath) ?? tree
+  $: focusNode = itemsNode ?? nodeAtPath(displayTree, focusPath) ?? displayTree
 
   // Same 520×520/center-260 coordinate scale as design exploration turn 3's
   // "inside {2}" (option 3a, zoomB) — OUTER_R matches its leaf ring's own r1
@@ -76,7 +104,11 @@
     return level < 2 ? '#1a1a1a' : '#f0f0f0'
   }
 
-  $: ({ arcs } = computeSunburst(focusNode, { cx: CX, cy: CY, holeR: HOLE_R, outerR: OUTER_R }))
+  // `allArcs` keeps zero-width gap fillers (missing path indices — see
+  // SlateWindow.ConvertMapperKids) so reorder slot math still counts real
+  // indices; everything drawn/laid out uses `arcs` without them.
+  $: ({ arcs: allArcs } = computeSunburst(focusNode, { cx: CX, cy: CY, holeR: HOLE_R, outerR: OUTER_R }))
+  $: arcs = allArcs.filter(a => !a.gap)
   $: totalItems = totalCount(focusNode)
   $: totalBranches = branchCount(focusNode)
 
@@ -91,6 +123,69 @@
     }
     focusPath = [...focusPath, ...arc.path]
   }
+  // Siblings' ORIGINAL mid-angles are snapshotted at press time and used for
+  // the whole gesture — recomputing from the live (already reordered) layout
+  // would make slots jitter, since wedge widths differ and every reorder
+  // shifts everyone's midpoint.
+  function onArcDown(e, arc) {
+    if (!reorderable || itemsPath || e.button !== 0) return
+    const parentRel = arc.path.slice(0, -1)
+    const sibs = allArcs.filter(a => a.level === arc.level && a.path.length === arc.path.length &&
+      parentRel.every((v, i) => a.path[i] === v))
+    if (sibs.length < 2) return
+    e.preventDefault()
+    drag = {
+      level: arc.level, parentRel,
+      parentAbs: [...focusPath, ...parentRel],
+      from: arc.path[arc.path.length - 1],
+      startX: e.clientX, startY: e.clientY, active: false,
+      mids: sibs.map(s => ({ idx: s.path[s.path.length - 1], mid: s.mid })),
+    }
+    window.addEventListener('pointermove', onDragMove)
+    window.addEventListener('pointerup', onDragUp)
+    window.addEventListener('pointercancel', endDrag)
+  }
+  // Pointer angle around the centre, on the same scale computeSunburst uses
+  // (starts at 12 o'clock = -π/2, runs clockwise, so [-π/2, 3π/2)).
+  function pointerAngle(e) {
+    const r = svgEl.getBoundingClientRect()
+    const x = ((e.clientX - r.left) / r.width) * 520 - CX
+    const y = ((e.clientY - r.top) / r.height) * 520 - CY
+    let t = Math.atan2(y, x)
+    if (t < -Math.PI / 2) t += 2 * Math.PI
+    return t
+  }
+  function onDragMove(e) {
+    if (!drag) return
+    if (!drag.active) {
+      if (Math.hypot(e.clientX - drag.startX, e.clientY - drag.startY) < DRAG_THRESHOLD) return
+      drag.active = true
+    }
+    const theta = pointerAngle(e)
+    const to = drag.mids.filter(m => m.idx !== drag.from && m.mid < theta).length
+    const cur = draft ? draft.to : drag.from
+    if (to === cur) return
+    draft = to === drag.from ? null : { parentPath: drag.parentAbs, from: drag.from, to }
+    hoveredKey = drag.level + ':' + [...drag.parentRel, to].join(',')
+  }
+  function onDragUp() {
+    const was = drag
+    if (was?.active) {
+      if (draft) dispatch('reorder', { ...draft })
+      suppressClick = true            // the click that follows this release isn't a drill
+      setTimeout(() => (suppressClick = false), 0)
+    }
+    endDrag()
+  }
+  function endDrag() {
+    window.removeEventListener('pointermove', onDragMove)
+    window.removeEventListener('pointerup', onDragUp)
+    window.removeEventListener('pointercancel', endDrag)
+    if (drag?.active) hoveredKey = null
+    drag = null
+  }
+  onDestroy(endDrag)
+
   function goBack() {
     if (itemsPath) { itemsPath = null; return }
     focusPath = focusPath.slice(0, -1)
@@ -241,7 +336,7 @@
 </script>
 
 <div class="tree-sunburst" style="width:{size}px; height:{size}px">
-  <svg viewBox="0 0 520 520" width={size} height={size}>
+  <svg bind:this={svgEl} class:dragging={drag?.active} viewBox="0 0 520 520" width={size} height={size}>
     <!-- Fill pass — every arc's solid area, click/hover/tooltip live here.
          Border is a SEPARATE pass below: SVG paints in document order, so
          drawing fill+stroke together per arc let whichever sibling/child
@@ -258,9 +353,10 @@
         class:empty={arc.empty}
         class:drillable={!arc.isLeaf}
         fill={arc.empty ? 'transparent' : hoveredKey === arcKey(arc) ? '#ec3013' : levelFill(arc.level)}
-        on:click={() => drillTo(arc)}
-        on:mouseenter={() => hoveredKey = arcKey(arc)}
-        on:mouseleave={() => hoveredKey = null}
+        on:pointerdown={e => onArcDown(e, arc)}
+        on:click={() => { if (!suppressClick) drillTo(arc) }}
+        on:mouseenter={() => { if (!drag?.active) hoveredKey = arcKey(arc) }}
+        on:mouseleave={() => { if (!drag?.active) hoveredKey = null }}
       >
         <title>{arc.isLeaf ? (itemsPath ? arcLabel(arc) : arcLabel(arc) + arcCountSuffix(arc)) : `${arcLabel(arc)} — ${arc.count} item${arc.count === 1 ? '' : 's'}`}</title>
       </path>
@@ -455,7 +551,8 @@
 <style>
   .tree-sunburst { display: flex; justify-content: center; }
 
-  svg { display: block; overflow: visible; }
+  svg { display: block; overflow: visible; user-select: none; }
+  svg.dragging, svg.dragging .arc-fill { cursor: grabbing; }
 
   .arc-fill.drillable { cursor: pointer; }
   .arc-fill { transition: fill 0.08s; }

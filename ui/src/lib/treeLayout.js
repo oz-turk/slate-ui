@@ -17,6 +17,7 @@ export function totalCount(node) {
 }
 
 export function branchCount(node) {
+  if (node.gap) return 0   // filler for a missing path index, not a real branch
   return isLeaf(node) ? 1 : node.kids.reduce((s, k) => s + branchCount(k), 0)
 }
 
@@ -33,6 +34,54 @@ export function nodeAtPath(root, path) {
   return n
 }
 
+// Cascading sibling reorder (2026-10-04: "diğer dilimleri itecek ve yerine
+// geçebilecek") — moves `parentPath`'s child `from` to index `to`, everything
+// between shifts by one (file-explorer style, NOT a swap). Immutable: returns
+// a new root sharing every untouched subtree. Moving a branch carries its
+// whole subtree with it (`{0;*}` → `{1;*}`), since kids live under the node.
+export function reorderKids(root, parentPath, from, to) {
+  if (from === to) return root
+  function rec(node, depth) {
+    if (!node.kids) return node
+    if (depth === parentPath.length) {
+      const kids = node.kids.slice()
+      const [moved] = kids.splice(from, 1)
+      kids.splice(to, 0, moved)
+      return { ...node, kids }
+    }
+    const i = parentPath[depth]
+    if (!node.kids[i]) return node
+    const kids = node.kids.slice()
+    kids[i] = rec(kids[i], depth + 1)
+    return { ...node, kids }
+  }
+  return rec(root, 0)
+}
+
+// Folds one drag (`from`→`to` among `parentPath`'s children, all in DISPLAY
+// coordinates — the mapper's output tree is what's on screen) into the full
+// persisted reorder state sent to Path Mapper (SlateWindow.ApplyPathMapperOrders):
+//   orders[key] = array where arr[outPos] = srcIndex, key = the SOURCE-index
+//   prefix of the parent joined by ';' ("" = root). Absent key = identity.
+// Ancestors are translated display→source through their own entries first,
+// since the lexer's conditions are evaluated on source indices.
+export function applyReorderToOrders(orders, tree, parentPath, from, to) {
+  let srcPrefix = []
+  for (const o of parentPath) {
+    const arr = orders[srcPrefix.join(';')]
+    srcPrefix = [...srcPrefix, arr?.[o] ?? o]
+  }
+  const key = srcPrefix.join(';')
+  const n = nodeAtPath(tree, parentPath)?.kids?.length ?? 0
+  const arr = (orders[key] ?? Array.from({ length: n }, (_, i) => i)).slice()
+  const [moved] = arr.splice(from, 1)
+  arr.splice(to, 0, moved)
+  const next = { ...orders }
+  if (arr.every((v, i) => v === i)) delete next[key]
+  else next[key] = arr
+  return next
+}
+
 export function pathLabel(path) {
   return '{' + path.join(';') + '}'
 }
@@ -41,6 +90,7 @@ export function pathLabel(path) {
 // collapsing to zero width and disappearing from the ring entirely.
 const EMPTY_WEIGHT = 0.35
 function weight(node) {
+  if (node.gap) return 0   // zero width: keeps its index slot, takes no room on the ring
   return isLeaf(node) ? node.count + EMPTY_WEIGHT : node.kids.reduce((s, k) => s + weight(k), 0)
 }
 
@@ -92,6 +142,7 @@ export function computeSunburst(root, { cx, cy, holeR, outerR, ringGap = 3 }) {
       d: arcPath(cx, cy, r0, r1, a0, a1),
       count: leaf ? node.count : totalCount(node),
       empty: leaf && node.count === 0,
+      gap: !!node.gap,
       isLeaf: leaf,
     })
     if (leaf) return
