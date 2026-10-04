@@ -24,7 +24,7 @@
   import { postToCs, postStateSnapshot } from './ipc.js'
   import { showParamIcons } from '../stores/uiState.js'
   import { get } from 'svelte/store'
-  import { flip } from 'svelte/animate'
+  import { flipTranslate as flip } from './flipTranslate.js'
   import { cubicOut } from 'svelte/easing'
 
   export let paneId

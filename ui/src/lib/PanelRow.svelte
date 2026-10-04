@@ -380,7 +380,7 @@
     background: var(--edge-tint);
     pointer-events: none;
   }
-  .row.edit            { padding: 0 68px 3px 26px; }
+  .row.edit            { padding: 0 70px 3px 26px; }
   /* Without a header, the recessed text box is the row's very first thing —
      flush against the divider line above it (the previous row's .row::after)
      with nothing to hold it off, unlike the bottom edge which already has
@@ -487,10 +487,12 @@
   }
   .corner-btn:hover, .del:hover { background: var(--border); color: rgba(var(--text-rgb), 0.85); }
 
-  .del { right: 6px; }
+  /* 8px like every other row's × (was 6px, 2px off) — and the settings button
+     and the text's reserved right padding below move with it. */
+  .del { right: 8px; }
   /* Left of .del with extra breathing room past it (2026-09-27 kullanıcı:
      "çarpıdan biraz uzaklaştır") — keeps remove out of easy fat-finger range. */
-  .corner-btn { right: 40px; z-index: 1; }
+  .corner-btn { right: 42px; z-index: 1; }
 
   /* code-block look: monospace, recessed fill, thin accent rule on the left —
      no height cap here, .text-wrap's inline height (module-based) governs it. */

@@ -1,6 +1,6 @@
 <script>
   import { createEventDispatcher } from 'svelte'
-  import { flip } from 'svelte/animate'
+  import { flipTranslate as flip } from './flipTranslate.js'
   import { cubicOut } from 'svelte/easing'
   import SliderRow from './SliderRow.svelte'
   import ToggleRow from './ToggleRow.svelte'
@@ -596,13 +596,15 @@
   }
   .capture-btn:hover { border-color: rgba(var(--accent-rgb), 0.53); color: var(--accent-light); }
 
+  /* 20px / 14px — same as every row's .del (2026-10-04 kullanıcı: slider'ın
+     × işareti group'unkinden büyüktü; group's was 16px / 13px). */
   .del-group {
-    width: 16px;
-    height: 16px;
+    width: 20px;
+    height: 20px;
     border: none;
     background: transparent;
     color: rgba(var(--text-rgb), 0.21);
-    font-size: 13px;
+    font-size: 14px;
     cursor: pointer;
     border-radius: 3px;
     display: flex;
@@ -611,6 +613,9 @@
     padding: 0;
     transition: background 0.1s, color 0.1s;
     flex-shrink: 0;
+    /* Header's right padding is 6px, every row's × ends 8px from the edge —
+       2px more so the two line up (2026-10-04 kullanıcı: "group x'i biraz daha sağda"). */
+    margin-right: 2px;
   }
   .del-group:hover { background: var(--grid); color: rgba(var(--text-rgb), 0.58); }
 

@@ -223,14 +223,22 @@
   })
 
   onMount(() => {
+    // Tab is ONLY the Edit/Preview toggle — never focus traversal, anywhere,
+    // including inside a text field (2026-10-04 kullanıcı: "tab'a bastığımda
+    // yandaki component'ı seçmesin... text edit'teyken de preview'a geçsin").
+    // Capture phase so no element's own keydown handler can swallow it before
+    // we get to preventDefault the browser's default focus move; the focused
+    // field is blurred so the keys that follow aren't treated as typing.
+    function onTab(e) {
+      if (e.key !== 'Tab' || e.ctrlKey || e.altKey || e.metaKey) return
+      e.preventDefault()
+      const el = document.activeElement
+      if (isTextEditable(el)) el.blur()
+      mode.update(m => m === 'edit' ? 'preview' : 'edit')
+    }
+
     function onKeydown(e) {
       if (isTextEditable(document.activeElement)) return
-
-      if (e.key === 'Tab') {
-        e.preventDefault()
-        mode.update(m => m === 'edit' ? 'preview' : 'edit')
-        return
-      }
 
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
         e.preventDefault()
@@ -257,7 +265,11 @@
       if (e.key === 'g') { groupSelectionTick.update(n => n + 1); return }
     }
     window.addEventListener('keydown', onKeydown)
-    return () => window.removeEventListener('keydown', onKeydown)
+    window.addEventListener('keydown', onTab, true)
+    return () => {
+      window.removeEventListener('keydown', onKeydown)
+      window.removeEventListener('keydown', onTab, true)
+    }
   })
 
   // Spans every workspace, not just the active one — a GH object already
