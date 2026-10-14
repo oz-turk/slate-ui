@@ -10,22 +10,28 @@
   // Fullscreen: its display size comes from the window, not from the row's own
   // paramViewerSize, so +/− would do nothing visible there — only N is shown.
   export let sizeLocked = false
+  // MdSliderRow / GraphMapperRow reuse the +/− pair without the N toggle (no
+  // item counts there) and with their own smallest size (3 modules).
+  export let countsToggle = true
+  export let minSize      = 44
 
   // Must match ParamViewerRow's MODULE (one slider row per step).
   const MODULE = 44
-  const step = d => dispatch('sizeChange', Math.max(MODULE, size + d * MODULE))
+  const step = d => dispatch('sizeChange', Math.max(minSize, size + d * MODULE))
 </script>
 
 <!-- svelte-ignore a11y-click-events-have-key-events -->
 <!-- svelte-ignore a11y-no-static-element-interactions -->
 <div class="graph-controls" on:click|stopPropagation>
-  <button class="gc" class:on={showCounts} aria-pressed={showCounts}
-      title="Show item counts (N)" on:click={() => dispatch('showCountsChange', !showCounts)}>N</button>
+  {#if countsToggle}
+    <button class="gc" class:on={showCounts} aria-pressed={showCounts}
+        title="Show item counts (N)" on:click={() => dispatch('showCountsChange', !showCounts)}>N</button>
+  {/if}
   {#if !sizeLocked}
     <button class="gc" title="Larger graph" aria-label="Larger graph" on:click={() => step(1)}>
       <svg width="8" height="8" viewBox="0 0 8 8" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M4 0.5v7M0.5 4h7"/></svg>
     </button>
-    <button class="gc" title="Smaller graph" aria-label="Smaller graph" disabled={size <= MODULE} on:click={() => step(-1)}>
+    <button class="gc" title="Smaller graph" aria-label="Smaller graph" disabled={size <= minSize} on:click={() => step(-1)}>
       <svg width="8" height="8" viewBox="0 0 8 8" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M0.5 4h7"/></svg>
     </button>
   {/if}

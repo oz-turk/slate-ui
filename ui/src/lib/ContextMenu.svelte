@@ -33,6 +33,8 @@
     padding: 4px;
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
     z-index: 1000;
+    max-height: calc(100vh - 16px);
+    overflow-y: auto;
     display: flex;
     flex-direction: column;
     gap: 1px;

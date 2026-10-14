@@ -58,7 +58,7 @@ export function suppressDuring(fn) {
 // sourceIdFor) — one message per underlying GH object. multiSelect lists and
 // non-value types (trigger/geometry/dataDam/button) are skipped: their
 // "value" isn't a plain scalar C# can be set to directly.
-const MSG_TYPE = { panel: 'panel_change', colourPicker: 'colour_change' }
+const MSG_TYPE = { panel: 'panel_change', colourPicker: 'colour_change', mdSlider: 'md_change', graphMapper: 'graph_change' }
 const SKIP_TYPES = new Set(['button', 'pancakeButton', 'trigger', 'geometryParam', 'dataDam', 'paramViewer'])
 
 function collectControlValues(workspaceList, out = new Map()) {
@@ -79,7 +79,9 @@ function pushChangedValues(before, after) {
   const was = collectControlValues(before)
   for (const [id, { type, value }] of collectControlValues(after)) {
     const old = was.get(id)
-    if (!old || old.value === value || value === undefined) continue
+    if (!old || value === undefined) continue
+    // MD slider's value is an { x, y } object — compare by content, not identity
+    if (old.value === value || JSON.stringify(old.value) === JSON.stringify(value)) continue
     postToCs({ type: MSG_TYPE[type] ?? 'slider_change', id, value })
   }
 }

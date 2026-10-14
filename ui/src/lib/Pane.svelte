@@ -6,6 +6,8 @@
   import ValueListRow from './ValueListRow.svelte'
   import PanelRow     from './PanelRow.svelte'
   import ColourPickerRow from './ColourPickerRow.svelte'
+  import MdSliderRow from './MdSliderRow.svelte'
+  import GraphMapperRow from './GraphMapperRow.svelte'
   import TriggerRow   from './TriggerRow.svelte'
   import GeometryParamRow from './GeometryParamRow.svelte'
   import DataDamRow   from './DataDamRow.svelte'
@@ -33,12 +35,12 @@
   // itemPicker reuses ValueListRow — same "pick one from a list" UI, the only
   // difference (candidate list from a wired input vs manually authored) lives
   // entirely on the C# side.
-  const ROW_COMPONENTS = { toggle: ToggleRow, button: ButtonRow, valueList: ValueListRow, panel: PanelRow, itemPicker: ValueListRow, humanValueList: ValueListRow, colourPicker: ColourPickerRow, pancakeButton: ButtonRow, trigger: TriggerRow, geometryParam: GeometryParamRow, dataDam: DataDamRow, paramViewer: ParamViewerRow }
+  const ROW_COMPONENTS = { toggle: ToggleRow, button: ButtonRow, valueList: ValueListRow, panel: PanelRow, itemPicker: ValueListRow, humanValueList: ValueListRow, colourPicker: ColourPickerRow, mdSlider: MdSliderRow, graphMapper: GraphMapperRow, pancakeButton: ButtonRow, trigger: TriggerRow, geometryParam: GeometryParamRow, dataDam: DataDamRow, paramViewer: ParamViewerRow }
 
   // Fixed type order for the pane's manual "Sort: Type" menu item — same
   // priority SlatePanel.cs's capture loop checks types in, just reused here
   // as an explicit ranking rather than a type-check chain.
-  const TYPE_ORDER = ['slider', 'toggle', 'button', 'valueList', 'panel', 'itemPicker', 'humanValueList', 'colourPicker', 'pancakeButton', 'trigger', 'geometryParam', 'dataDam']
+  const TYPE_ORDER = ['slider', 'toggle', 'button', 'valueList', 'panel', 'itemPicker', 'humanValueList', 'colourPicker', 'mdSlider', 'graphMapper', 'pancakeButton', 'trigger', 'geometryParam', 'dataDam']
 
   // ── derive pane state reactively (not derived() — paneId must stay live) ─────
   $: pane        = findLeaf($layout, paneId)
@@ -279,15 +281,28 @@
   // removeAllBySourceId in layout.js). The second entry only makes sense,
   // and only shows, when this control actually has more than one widget.
   function onSliderContextMenu(pos, slider) {
-    const menuW = 170, menuH = 80
     const sourceId = slider.sourceId ?? slider.id
-    const items = [{ label: 'Delete', action: () => removeSlider(activeTab.id, slider.id) }]
+    const items = []
+    // Graph Mapper: the graph type lives here (not in the row) — one entry per
+    // type GH knows, the current one ticked.
+    if (slider.type === 'graphMapper') {
+      for (const t of slider.types ?? []) {
+        const current = t.id === slider.value?.typeId
+        items.push({
+          label: `${current ? '✓' : ' '} ${t.name}`,
+          action: () => { if (!current) onSliderChange(slider.id, { ...slider.value, typeId: t.id }, 'graphMapper') }
+        })
+      }
+      items.push('sep')
+    }
+    items.push({ label: 'Delete', action: () => removeSlider(activeTab.id, slider.id) })
     if (countBySourceId(sourceId) > 1) {
       items.push({ label: 'Delete All Copies', danger: true, action: () => { removeAllBySourceId(sourceId); postStateSnapshot() } })
     }
+    const menuW = 170, menuH = items.reduce((h, it) => h + (it === 'sep' ? 9 : 30), 8)
     contextMenu = {
       x: Math.min(pos.x, window.innerWidth  - menuW - 8),
-      y: Math.min(pos.y, window.innerHeight - menuH - 8),
+      y: Math.max(8, Math.min(pos.y, window.innerHeight - menuH - 8)),
       items
     }
   }
@@ -422,6 +437,8 @@
   function changeMessageType(controlType) {
     if (controlType === 'panel') return 'panel_change'
     if (controlType === 'colourPicker') return 'colour_change'
+    if (controlType === 'mdSlider') return 'md_change'
+    if (controlType === 'graphMapper') return 'graph_change'
     return 'slider_change'
   }
   function onSliderChange(sliderId, value, controlType, multiSelect) {
@@ -437,6 +454,10 @@
       onDataDamChange(sliderId, value)
       return
     }
+    if (controlType === 'graphMapper') {
+      onGraphMapperChange(sliderId, value)
+      return
+    }
     if (multiSelect) {
       updateSliderValue(sliderId, prev => {
         const arr = Array.isArray(prev) ? prev : []
@@ -446,6 +467,16 @@
       updateSliderValue(sliderId, value)
     }
     postToCs({ type: changeMessageType(controlType), id: sourceIdFor(sliderId), value })
+  }
+
+  // Graph Mapper: `only` (index of the grip being dragged) is a hint for C# —
+  // many graph types move OTHER grips themselves, so only the dragged one may
+  // be written back. It must not end up in the stored value (undo re-posts
+  // stored values), hence split off here.
+  function onGraphMapperChange(sliderId, value) {
+    const { only, ...clean } = value
+    updateSliderValue(sliderId, clean)
+    postToCs({ type: 'graph_change', id: sourceIdFor(sliderId), value: clean, only })
   }
 
   // Trigger has no single scalar "value" — its row dispatches one of three
@@ -595,6 +626,10 @@
     }
   }
   function onSliderCommit(sliderId, value, controlType) {
+    if (controlType === 'graphMapper') {
+      onGraphMapperChange(sliderId, value)
+      return
+    }
     updateSliderValue(sliderId, value)
     postToCs({ type: changeMessageType(controlType), id: sourceIdFor(sliderId), value })
   }

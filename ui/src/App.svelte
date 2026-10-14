@@ -510,6 +510,17 @@
       addCapturedControl({ id: msg.id, type: 'colourPicker', name: msg.name, value: msg.value }, msg)
     }
 
+    // Native MD Slider — value is an { x, y } pair, xMin..yMax the axis domains.
+    if (msg.type === 'mdSlider_added') {
+      addCapturedControl({ id: msg.id, type: 'mdSlider', name: msg.name, value: msg.value, xMin: msg.xMin, xMax: msg.xMax, yMin: msg.yMin, yMax: msg.yMax }, msg)
+    }
+
+    // Native Graph Mapper — value is { typeId, grips: [{x,y,c}], path: [[x,y]...] },
+    // types the list of graph types GH knows ({ id, name }).
+    if (msg.type === 'graphMapper_added') {
+      addCapturedControl({ id: msg.id, type: 'graphMapper', name: msg.name, value: msg.value, types: msg.types }, msg)
+    }
+
     // Pancake plugin's "True Only Button" — same shape as a core button on the
     // wire, kept as its own type so it round-trips through RestoreState correctly.
     if (msg.type === 'pancakeButton_added') {
@@ -618,6 +629,14 @@
     }
 
     if (msg.type === 'colourPicker_update') {
+      syncControl(msg.id, { name: msg.name, value: msg.value })
+    }
+
+    if (msg.type === 'mdSlider_update') {
+      syncControl(msg.id, { name: msg.name, value: msg.value, xMin: msg.xMin, xMax: msg.xMax, yMin: msg.yMin, yMax: msg.yMax })
+    }
+
+    if (msg.type === 'graphMapper_update') {
       syncControl(msg.id, { name: msg.name, value: msg.value })
     }
 

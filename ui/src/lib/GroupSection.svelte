@@ -8,6 +8,8 @@
   import ValueListRow from './ValueListRow.svelte'
   import PanelRow from './PanelRow.svelte'
   import ColourPickerRow from './ColourPickerRow.svelte'
+  import MdSliderRow from './MdSliderRow.svelte'
+  import GraphMapperRow from './GraphMapperRow.svelte'
   import TriggerRow from './TriggerRow.svelte'
   import GeometryParamRow from './GeometryParamRow.svelte'
   import DataDamRow from './DataDamRow.svelte'
@@ -18,7 +20,7 @@
   const dispatch = createEventDispatcher()
 
   // slider.type → row component (falls back to SliderRow when unset/unknown)
-  const ROW_COMPONENTS = { toggle: ToggleRow, button: ButtonRow, valueList: ValueListRow, panel: PanelRow, itemPicker: ValueListRow, humanValueList: ValueListRow, colourPicker: ColourPickerRow, pancakeButton: ButtonRow, trigger: TriggerRow, geometryParam: GeometryParamRow, dataDam: DataDamRow, paramViewer: ParamViewerRow }
+  const ROW_COMPONENTS = { toggle: ToggleRow, button: ButtonRow, valueList: ValueListRow, panel: PanelRow, itemPicker: ValueListRow, humanValueList: ValueListRow, colourPicker: ColourPickerRow, mdSlider: MdSliderRow, graphMapper: GraphMapperRow, pancakeButton: ButtonRow, trigger: TriggerRow, geometryParam: GeometryParamRow, dataDam: DataDamRow, paramViewer: ParamViewerRow }
 
   export let group        = {}
   export let mode         = 'preview'

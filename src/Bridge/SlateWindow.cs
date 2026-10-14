@@ -239,6 +239,8 @@ public class SlateWindow : Form
     // builds and runs fine on a machine without Human installed.
     private readonly Dictionary<string, IGH_Param> _humanValueLists = new();
     private readonly Dictionary<string, GH_ColourSwatch> _colourPickers = new();
+    private readonly Dictionary<string, GH_MultiDimensionalSlider> _mdSliders = new();
+    private readonly Dictionary<string, GH_GraphMapper> _graphMappers = new();
 
     // Pancake plugin's "True Only Button" (Pancake.GH.Params.TrueOnlyBtn) — a
     // GH_Param subclass with the same ButtonDown shape as core GH_ButtonObject,
@@ -315,6 +317,8 @@ public class SlateWindow : Form
         if (_itemPickers.TryGetValue(id, out var ip))       { obj = ip;  return true; }
         if (_humanValueLists.TryGetValue(id, out var hv))   { obj = hv;  return true; }
         if (_colourPickers.TryGetValue(id, out var cp))     { obj = cp;  return true; }
+        if (_mdSliders.TryGetValue(id, out var md))         { obj = md;  return true; }
+        if (_graphMappers.TryGetValue(id, out var gmp))     { obj = gmp; return true; }
         if (_pancakeTrueOnlyButtons.TryGetValue(id, out var pb)) { obj = pb; return true; }
         if (_triggers.TryGetValue(id, out var tr))          { obj = tr;  return true; }
         if (_geometryParams.TryGetValue(id, out var gp))    { obj = gp;  return true; }
@@ -717,6 +721,8 @@ public class SlateWindow : Form
             _hostDocument = value;
             _latestValues.Clear();
             _latestColourValues.Clear();
+            _latestMdValues.Clear();
+            _latestGraphValues.Clear();
             _solveRunning = false;
 
             // The live GH object references (_sliders etc.) belong to whichever
@@ -1278,6 +1284,14 @@ public class SlateWindow : Form
     // shares the _solveRunning gate so a drag on either kind of control coalesces
     // into the same single-solve cycle instead of flooding ExpireSolution calls.
     private static readonly Dictionary<string, string> _latestColourValues = new();
+    // MD Slider's (x, y) pair — same batching, same _solveRunning gate.
+    private static readonly Dictionary<string, (double X, double Y)> _latestMdValues = new();
+    // Graph Mapper: the graph type to be on + the grip positions (index order).
+    // Only >= 0 means "just this grip moved" (a pointer drag); -1 = apply every
+    // grip that differs (undo / restore). Needed because many graph types
+    // reposition OTHER grips themselves when one moves (Gaussian, Perlin...) —
+    // writing back the UI's stale copy of those would fight the graph.
+    private static readonly Dictionary<string, (Guid TypeId, List<(double X, double Y)> Grips, int Only)> _latestGraphValues = new();
     private static bool _solveRunning;
 
     private static void OnDocSolutionEnd(object sender, Grasshopper.Kernel.GH_SolutionEventArgs e)
@@ -1286,7 +1300,7 @@ public class SlateWindow : Form
         var win = _instance;
         win?.BeginInvoke((Action)(() =>
         {
-            if (_latestValues.Count == 0 && _latestColourValues.Count == 0) _solveRunning = false;
+            if (_latestValues.Count == 0 && _latestColourValues.Count == 0 && _latestMdValues.Count == 0 && _latestGraphValues.Count == 0) _solveRunning = false;
             else ApplyLatestValues();
             PushSliderNameUpdates();
             PushSliderRangeUpdates();
@@ -1296,6 +1310,8 @@ public class SlateWindow : Form
             PushHumanValueListUpdates();
             PushValueListUpdates();
             PushColourPickerUpdates();
+            PushMdSliderUpdates();
+            PushGraphMapperUpdates();
             PushTriggerUpdates();
             PushGeometryParamUpdates();
             PushDataDamGateUpdates();
@@ -1345,6 +1361,224 @@ public class SlateWindow : Form
             }));
         }
     }
+
+    // Catches value/domain changes made directly on the canvas (dragging the
+    // MD Slider's own grip, or editing its intervals) — same reasoning as
+    // PushColourPickerUpdates. Z is not shown in the row; sent anyway so a 3D
+    // slider's third axis can be added later without a protocol change.
+    private static void PushMdSliderUpdates()
+    {
+        var win = _instance;
+        if (win == null) return;
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
+        foreach (var kv in win._mdSliders)
+        {
+            var md = kv.Value;
+            var payload = MdSliderPayload(md);
+            var fingerprint = md.NickName + "|" + string.Join("|", new[] {
+                payload.x, payload.y, payload.xMin, payload.xMax, payload.yMin, payload.yMax
+            }.Select(d => d.ToString("R", inv)));
+            if (_lastPushedMdSliders.TryGetValue(kv.Key, out var last) && last == fingerprint) continue;
+            _lastPushedMdSliders[kv.Key] = fingerprint;
+
+            win.PostToJs(System.Text.Json.JsonSerializer.Serialize(new {
+                type = "mdSlider_update",
+                id = kv.Key,
+                name = md.NickName,
+                value = new { x = payload.x, y = payload.y },
+                payload.xMin, payload.xMax, payload.yMin, payload.yMax
+            }));
+        }
+    }
+
+    // ── Graph Mapper ────────────────────────────────────────────────────────
+    // Fallback sample count for the curve preview (only used when a graph's own
+    // GDI_GraphPath yields nothing): GH's own IGH_Graph is the only thing that
+    // knows each type's maths, so JS gets points, never a formula.
+    private const int GraphCurveSamples = 64;
+
+    // Virtual width handed to GDI_GraphPath — ~3 samples per pixel of the pad
+    // (~200-400 px on screen), the point past which more samples are invisible.
+    private const float GraphPathResolution = 1000f;
+    // Douglas-Peucker tolerance in unit-box terms: 0.0005 of a ~300 px pad is
+    // ~0.15 px, so the simplified line is visually identical but a smooth curve
+    // shrinks from ~1000 points to a few dozen (the path is re-sent on every solve).
+    private const double GraphPathTolerance = 0.0005;
+
+    // Douglas-Peucker, iterative (no recursion depth to worry about on 1000+ points).
+    // Keeps the first and last point; works for any polyline, including curves that
+    // double back on themselves (Interpolated / Polyline graphs).
+    private static List<double[]> SimplifyPath(List<double[]> pts, double tol)
+    {
+        if (pts.Count < 3) return pts;
+        var keep = new bool[pts.Count];
+        keep[0] = keep[pts.Count - 1] = true;
+        var stack = new Stack<(int Lo, int Hi)>();
+        stack.Push((0, pts.Count - 1));
+        while (stack.Count > 0)
+        {
+            var (lo, hi) = stack.Pop();
+            double ax = pts[lo][0], ay = pts[lo][1], dx = pts[hi][0] - ax, dy = pts[hi][1] - ay;
+            double len = Math.Sqrt(dx * dx + dy * dy), maxD = -1;
+            int idx = -1;
+            for (int i = lo + 1; i < hi; i++)
+            {
+                double px = pts[i][0] - ax, py = pts[i][1] - ay;
+                double d = len < 1e-12 ? Math.Sqrt(px * px + py * py) : Math.Abs(px * dy - py * dx) / len;
+                if (d > maxD) { maxD = d; idx = i; }
+            }
+            if (maxD > tol && idx > 0)
+            {
+                keep[idx] = true;
+                stack.Push((lo, idx));
+                stack.Push((idx, hi));
+            }
+        }
+        var result = new List<double[]>(pts.Count / 4 + 2);
+        for (int i = 0; i < pts.Count; i++) if (keep[i]) result.Add(pts[i]);
+        return result;
+    }
+
+    private static System.Reflection.MethodInfo? _rememberGraphMi, _recallGraphMi;
+
+    // Same two private helpers the native "graph type" menu uses, so Slate keeps
+    // a type's last grip positions across switches exactly like the canvas does.
+    private static void EnsureGraphMapperReflection()
+    {
+        if (_rememberGraphMi != null) return;
+        var f = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
+        _rememberGraphMi = typeof(GH_GraphMapper).GetMethod("RememberGraph", f);
+        _recallGraphMi   = typeof(GH_GraphMapper).GetMethod("RecallGraph", f);
+    }
+
+    private static IEnumerable<object> GraphTypeList() =>
+        Grasshopper.Instances.ComponentServer.GraphProxies
+            .Select(p => (object)new { id = p.GUID.ToString(), name = p.Name });
+
+    private static object GraphMapperState(GH_GraphMapper gm)
+    {
+        var graph = gm.Graph;   // null = fresh mapper in the native "no graph" state
+        var grips = new List<object>();
+        var path  = new List<double[]>();
+        if (graph != null)
+        {
+            foreach (var g in graph.Grips)
+                grips.Add(new { x = g.X, y = g.Y, c = g.Constraint.ToString() });
+
+            // The curve the CANVAS draws: GDI_GraphPath returns the graph's own
+            // polyline in the unit box (y up) — the rectangle argument is ignored,
+            // the container remaps afterwards (RemapPointsToGraphRegion). This is
+            // NOT the same as sampling ValueAt(x): graphs defined by a curve through
+            // their grips (Interpolated, Polyline...) stop being functions of x as
+            // soon as a grip passes its neighbour, ValueAt then returns only the
+            // first intersection and a sampled plot skips whole stretches — a point
+            // looks stranded off the curve while GH still draws it through it.
+            //
+            // The rectangle's WIDTH still matters though, even though the returned
+            // coordinates are unit-box: function graphs (Sine, Perlin, Sinc, Curve
+            // Mapper...) are sampled by GH_AbstractGraph.GHGraphToPointArray at
+            // ~one ValueAt per pixel of width, Sine scaling that with its wave
+            // count too (a 1px-wide rect gives a 2-point straight line, and 25 waves
+            // need ~1000 samples to stay smooth). Curve graphs (Bezier, Interpolated,
+            // Polyline) turn their Rhino curve into points and ignore the width.
+            try
+            {
+                foreach (var p in graph.GDI_GraphPath(new System.Drawing.RectangleF(0, 0, GraphPathResolution, 1)))
+                    if (!float.IsNaN(p.X) && !float.IsNaN(p.Y) && !float.IsInfinity(p.X) && !float.IsInfinity(p.Y))
+                        path.Add(new double[] { Math.Round(p.X, 4), Math.Round(p.Y, 4) });
+                path = SimplifyPath(path, GraphPathTolerance);
+            }
+            catch { /* fall through to the ValueAt fallback */ }
+
+            if (path.Count < 2)
+            {
+                path.Clear();
+                for (int i = 0; i <= GraphCurveSamples; i++)
+                {
+                    double x = (double)i / GraphCurveSamples, y;
+                    try { y = graph.ValueAt(x); } catch { y = 0; }
+                    path.Add(new double[] { x, double.IsNaN(y) || double.IsInfinity(y) ? 0 : y });
+                }
+            }
+        }
+        return new { typeId = graph?.GraphTypeID.ToString() ?? "", grips, path, locked = gm.Container?.LockGrips ?? false };
+    }
+
+    private static void PushGraphMapperUpdates()
+    {
+        var win = _instance;
+        if (win == null) return;
+        foreach (var kv in win._graphMappers)
+        {
+            var state = System.Text.Json.JsonSerializer.Serialize(GraphMapperState(kv.Value));
+            var fingerprint = kv.Value.NickName + state;
+            if (_lastPushedGraphMappers.TryGetValue(kv.Key, out var last) && last == fingerprint) continue;
+            _lastPushedGraphMappers[kv.Key] = fingerprint;
+
+            win.PostToJs(System.Text.Json.JsonSerializer.Serialize(new {
+                type = "graphMapper_update",
+                id = kv.Key,
+                name = kv.Value.NickName,
+                value = GraphMapperState(kv.Value)
+            }));
+        }
+    }
+
+    // Returns true when the type actually changed (caller then ignores the
+    // grips that came with the message — they belong to the old type).
+    private static bool ApplyGraphValue(GH_GraphMapper gm, Guid typeId, List<(double X, double Y)> grips, int only)
+    {
+        var current = gm.Graph;
+
+        // Same sequence as the native graph-type menu (Menu_GraphTypeItemClicked).
+        // A freshly dropped Graph Mapper has NO graph and no container at all
+        // ("no graph" state) — the container is only created on the first pick,
+        // so a null container is the normal starting point, not an error.
+        if (current == null || current.GraphTypeID != typeId)
+        {
+            var next = Grasshopper.Instances.ComponentServer.EmitGraph(typeId);
+            if (next == null) return false;
+            EnsureGraphMapperReflection();
+            if (current != null) _rememberGraphMi?.Invoke(gm, new object[] { current });
+            next.PrepareForUse();
+            _recallGraphMi?.Invoke(gm, new object[] { next });
+            var fresh = gm.Container ?? new Grasshopper.Kernel.Graphs.GH_GraphContainer(next);
+            fresh.Graph = next;
+            // set_Container re-hooks GraphChanged, runs PrepareForUse and fires
+            // OnGraphChanged itself (which expires the mapper) — nothing to add.
+            gm.Container = fresh;
+            return true;
+        }
+
+        // Same sequence as GH_GraphContainer.RespondToMouseMove: set X/Y, then
+        // grip.OnGripChanged(true) — the graph subscribes to every grip's
+        // GripChanged (GH_AbstractGraph.AddGrip), that is where Bezier handles,
+        // grip constraints and the curve caches get updated — then ONE
+        // container.OnGraphChanged(true), which clears the caches and expires
+        // the mapper (GH_GraphMapper.GraphChanged -> ExpireSolution(true)).
+        // Writing X/Y alone (what this used to do) left the graph's internal
+        // state stale: the points moved but the curve did not follow.
+        var container = gm.Container!;
+        var list = container.Graph.Grips;
+        if (list.Count == grips.Count)
+        {
+            bool changed = false;
+            for (int i = 0; i < list.Count; i++)
+            {
+                if (only >= 0 && i != only) continue;
+                if (list[i].X == grips[i].X && list[i].Y == grips[i].Y) continue;
+                list[i].X = grips[i].X;
+                list[i].Y = grips[i].Y;
+                list[i].OnGripChanged(true);
+                changed = true;
+            }
+            if (changed) container.OnGraphChanged(true);
+        }
+        return false;
+    }
+
+    private static (double x, double y, double xMin, double xMax, double yMin, double yMax) MdSliderPayload(GH_MultiDimensionalSlider md) =>
+        (md.X, md.Y, md.XInterval.Min, md.XInterval.Max, md.YInterval.Min, md.YInterval.Max);
 
     // Catches Interval/LockTargets changes made directly on the canvas (the
     // native ModeBox/LockBox, or the right-click Interval submenu) — same
@@ -1538,6 +1772,8 @@ public class SlateWindow : Form
     private static readonly Dictionary<string, string> _lastPushedHumanLists = new();
     private static readonly Dictionary<string, string> _lastPushedValueLists = new();
     private static readonly Dictionary<string, string> _lastPushedColours = new();
+    private static readonly Dictionary<string, string> _lastPushedMdSliders = new();
+    private static readonly Dictionary<string, string> _lastPushedGraphMappers = new();
     private static readonly Dictionary<string, string> _lastPushedTriggers = new();
     private static readonly Dictionary<string, string> _lastPushedGeometryParams = new();
     private static readonly Dictionary<string, string> _lastPushedDataDams = new();
@@ -1555,6 +1791,8 @@ public class SlateWindow : Form
         _lastPushedHumanLists.Clear();
         _lastPushedValueLists.Clear();
         _lastPushedColours.Clear();
+        _lastPushedMdSliders.Clear();
+        _lastPushedGraphMappers.Clear();
         _lastPushedPickers.Clear();
         _lastPushedTriggers.Clear();
         _lastPushedGeometryParams.Clear();
@@ -1798,7 +2036,7 @@ public class SlateWindow : Form
     private static void ApplyLatestValues()
     {
         var win = _instance;
-        if (win == null) { _latestValues.Clear(); _latestColourValues.Clear(); _solveRunning = false; return; }
+        if (win == null) { _latestValues.Clear(); _latestColourValues.Clear(); _latestMdValues.Clear(); _latestGraphValues.Clear(); _solveRunning = false; return; }
 
         foreach (var kv in _latestValues)
         {
@@ -1849,8 +2087,35 @@ public class SlateWindow : Form
             }
         }
 
+        foreach (var kv in _latestMdValues)
+        {
+            if (win._mdSliders.TryGetValue(kv.Key, out var md))
+            {
+                // X/Y have no setter — Value (Point3d) is the write path; keep Z.
+                md.Value = new Rhino.Geometry.Point3d(kv.Value.X, kv.Value.Y, md.Z);
+                md.ExpireSolution(false);
+            }
+        }
+
+        foreach (var kv in _latestGraphValues)
+        {
+            if (win._graphMappers.TryGetValue(kv.Key, out var gm))
+            {
+                // No ExpireSolution here — the graph's own change notification
+                // (see ApplyGraphValue) already expires the mapper.
+                // try/catch: this runs inside the _solveRunning gate — an exception
+                // escaping here (a graph type from a plug-in that is not installed,
+                // a third-party graph throwing) would leave the gate closed and Slate
+                // would silently stop applying every later change.
+                try { ApplyGraphValue(gm, kv.Value.TypeId, kv.Value.Grips, kv.Value.Only); }
+                catch (Exception ex) { Log($"Graph mapper \"{gm.NickName}\": could not apply change — {ex.Message}"); }
+            }
+        }
+
         _latestValues.Clear();
         _latestColourValues.Clear();
+        _latestMdValues.Clear();
+        _latestGraphValues.Clear();
         _hostDocument?.ScheduleSolution(1, null);
     }
 
@@ -2309,6 +2574,31 @@ public class SlateWindow : Form
                     }
                     break;
 
+                case "md_change":
+                    string mid = root.GetProperty("id").GetString() ?? "";
+                    if (_mdSliders.ContainsKey(mid))
+                    {
+                        var mv = root.GetProperty("value");
+                        _latestMdValues[mid] = (mv.GetProperty("x").GetDouble(), mv.GetProperty("y").GetDouble());
+                        if (!_solveRunning) { _solveRunning = true; ApplyLatestValues(); }
+                    }
+                    break;
+
+                case "graph_change":
+                    string gid = root.GetProperty("id").GetString() ?? "";
+                    if (_graphMappers.ContainsKey(gid))
+                    {
+                        var gv = root.GetProperty("value");
+                        var gTypeId = Guid.TryParse(gv.GetProperty("typeId").GetString(), out var gt) ? gt : Guid.Empty;
+                        var gGrips = new List<(double X, double Y)>();
+                        foreach (var gg in gv.GetProperty("grips").EnumerateArray())
+                            gGrips.Add((gg.GetProperty("x").GetDouble(), gg.GetProperty("y").GetDouble()));
+                        int gOnly = root.TryGetProperty("only", out var gOnlyEl) && gOnlyEl.ValueKind == JsonValueKind.Number ? gOnlyEl.GetInt32() : -1;
+                        _latestGraphValues[gid] = (gTypeId, gGrips, gOnly);
+                        if (!_solveRunning) { _solveRunning = true; ApplyLatestValues(); }
+                    }
+                    break;
+
                 case "colour_change":
                     string cid = root.GetProperty("id").GetString() ?? "";
                     string hex = root.GetProperty("value").GetString() ?? "";
@@ -2646,7 +2936,7 @@ public class SlateWindow : Form
 
         int sliders = 0, toggles = 0, buttons = 0, valueLists = 0, panels = 0, itemPickers = 0,
             humanLists = 0, colourPickers = 0, pancakeButtons = 0, triggers = 0,
-            geometryParams = 0, dataDams = 0, paramViewers = 0, pathMappers = 0;
+            geometryParams = 0, dataDams = 0, paramViewers = 0, pathMappers = 0, mdSliders = 0, graphMappers = 0;
 
         foreach (var o in selected)
         {
@@ -2659,6 +2949,8 @@ public class SlateWindow : Form
             else if (_humanValueListType != null && _humanValueListType.IsInstanceOfType(o) && o is IGH_Param hp)
                                                  { AddHumanValueList(tabId, groupId, hp); humanLists++; }
             else if (o is GH_ColourSwatch c)    { AddColourPicker(tabId, groupId, c); colourPickers++; }
+            else if (o is GH_MultiDimensionalSlider mdp) { AddMdSlider(tabId, groupId, mdp); mdSliders++; }
+            else if (o is GH_GraphMapper gmp2)  { AddGraphMapper(tabId, groupId, gmp2); graphMappers++; }
             else if (_pancakeTrueOnlyBtnType != null && _pancakeTrueOnlyBtnType.IsInstanceOfType(o) && o is IGH_Param pbp)
                                                  { AddPancakeTrueOnlyButton(tabId, groupId, pbp); pancakeButtons++; }
             else if (o is GH_Timer tr)          { AddTrigger(tabId, groupId, tr); triggers++; }
@@ -2669,7 +2961,7 @@ public class SlateWindow : Form
             else if (o is GH_ParamViewer pv)    { AddParamViewer(tabId, groupId, pv); paramViewers++; }
         }
 
-        Log($"Captured {sliders} slider(s), {toggles} toggle(s), {buttons} button(s), {valueLists} value list(s), {panels} panel(s), {itemPickers} item picker(s), {humanLists} item selector(s), {colourPickers} colour picker(s), {pancakeButtons} true-only button(s), {triggers} trigger(s), {geometryParams} geometry param(s), {dataDams} data dam(s), {paramViewers} param viewer(s), {pathMappers} path mapper(s).");
+        Log($"Captured {sliders} slider(s), {toggles} toggle(s), {buttons} button(s), {valueLists} value list(s), {panels} panel(s), {itemPickers} item picker(s), {humanLists} item selector(s), {colourPickers} colour picker(s), {mdSliders} MD slider(s), {graphMappers} graph mapper(s), {pancakeButtons} true-only button(s), {triggers} trigger(s), {geometryParams} geometry param(s), {dataDams} data dam(s), {paramViewers} param viewer(s), {pathMappers} path mapper(s).");
     }
 
     // ── Geometry param "Set Geometry" pick ──────────────────────────────────
@@ -3060,6 +3352,23 @@ public class SlateWindow : Form
         PostToJs(SlateEvent.ColourPickerAdded(tabId, id, picker.NickName, ColorToHex(picker.SwatchColour), groupId));
     }
 
+    public void AddMdSlider(string tabId, string? groupId, GH_MultiDimensionalSlider md)
+    {
+        string id = md.InstanceGuid.ToString();
+        _mdSliders[id] = md;
+
+        var p = MdSliderPayload(md);
+        PostToJs(SlateEvent.MdSliderAdded(tabId, id, md.NickName, p.x, p.y, p.xMin, p.xMax, p.yMin, p.yMax, groupId));
+    }
+
+    public void AddGraphMapper(string tabId, string? groupId, GH_GraphMapper gm)
+    {
+        string id = gm.InstanceGuid.ToString();
+        _graphMappers[id] = gm;
+
+        PostToJs(SlateEvent.GraphMapperAdded(tabId, id, gm.NickName, GraphMapperState(gm), GraphTypeList(), groupId));
+    }
+
     public void AddPancakeTrueOnlyButton(string tabId, string? groupId, IGH_Param button)
     {
         string id = button.InstanceGuid.ToString();
@@ -3376,6 +3685,8 @@ public class SlateWindow : Form
         _itemPickers.Clear();
         _humanValueLists.Clear();
         _colourPickers.Clear();
+        _mdSliders.Clear();
+        _graphMappers.Clear();
         _pancakeTrueOnlyButtons.Clear();
         _triggers.Clear();
         _geometryParams.Clear();
@@ -3420,6 +3731,12 @@ public class SlateWindow : Form
             var docColourPickers = doc.Objects
                 .OfType<GH_ColourSwatch>()
                 .ToDictionary(c => c.InstanceGuid.ToString(), c => c);
+            var docMdSliders = doc.Objects
+                .OfType<GH_MultiDimensionalSlider>()
+                .ToDictionary(m => m.InstanceGuid.ToString(), m => m);
+            var docGraphMappers = doc.Objects
+                .OfType<GH_GraphMapper>()
+                .ToDictionary(g => g.InstanceGuid.ToString(), g => g);
             EnsurePancakeReflection();
             var docPancakeButtons = (_pancakeTrueOnlyBtnType != null
                     ? doc.Objects.Where(o => _pancakeTrueOnlyBtnType.IsInstanceOfType(o)).OfType<IGH_Param>()
@@ -3456,6 +3773,8 @@ public class SlateWindow : Form
             _itemPickers.Clear();
             _humanValueLists.Clear();
             _colourPickers.Clear();
+            _mdSliders.Clear();
+            _graphMappers.Clear();
             _pancakeTrueOnlyButtons.Clear();
             _triggers.Clear();
             _geometryParams.Clear();
@@ -3561,6 +3880,30 @@ public class SlateWindow : Form
                             _colourPickers[id] = cp;
                             s["value"] = ColorToHex(cp.SwatchColour);
                             s["name"]  = cp.NickName;
+                        }
+                        else { Log($"RestoreState: dropped {kind} id={id} — no matching live object in doc.Objects."); arr.RemoveAt(i); }
+                    }
+                    else if (kind == "mdSlider")
+                    {
+                        if (docMdSliders.TryGetValue(id, out var mds))
+                        {
+                            _mdSliders[id] = mds;
+                            var mp = MdSliderPayload(mds);
+                            s["value"] = new JsonObject { ["x"] = mp.x, ["y"] = mp.y };
+                            s["name"]  = mds.NickName;
+                            s["xMin"] = mp.xMin; s["xMax"] = mp.xMax;
+                            s["yMin"] = mp.yMin; s["yMax"] = mp.yMax;
+                        }
+                        else { Log($"RestoreState: dropped {kind} id={id} — no matching live object in doc.Objects."); arr.RemoveAt(i); }
+                    }
+                    else if (kind == "graphMapper")
+                    {
+                        if (docGraphMappers.TryGetValue(id, out var gmr))
+                        {
+                            _graphMappers[id] = gmr;
+                            s["value"] = JsonNode.Parse(System.Text.Json.JsonSerializer.Serialize(GraphMapperState(gmr)));
+                            s["types"] = JsonNode.Parse(System.Text.Json.JsonSerializer.Serialize(GraphTypeList()));
+                            s["name"]  = gmr.NickName;
                         }
                         else { Log($"RestoreState: dropped {kind} id={id} — no matching live object in doc.Objects."); arr.RemoveAt(i); }
                     }

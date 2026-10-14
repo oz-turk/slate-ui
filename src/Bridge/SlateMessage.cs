@@ -30,6 +30,17 @@ public static class SlateEvent
     public static string ColourPickerAdded(string tabId, string id, string name, string hex, string? groupId = null) =>
         JsonSerializer.Serialize(new { type = "colourPicker_added", tabId, id, name, value = hex, groupId });
 
+    // GH_MultiDimensionalSlider — value is the (x, y) pair, xMin..yMax are the
+    // X/Y domains. Z (3D mode) is deliberately not part of v1.
+    public static string MdSliderAdded(string tabId, string id, string name, double x, double y, double xMin, double xMax, double yMin, double yMax, string? groupId = null) =>
+        JsonSerializer.Serialize(new { type = "mdSlider_added", tabId, id, name, value = new { x, y }, xMin, xMax, yMin, yMax, groupId });
+
+    // GH_GraphMapper — state is { typeId, grips: [{x,y,c}], path: [[x,y]...], locked };
+    // types is the full list of graph types GH knows (native + third-party), so
+    // the row can offer the same type picker as the canvas right-click menu.
+    public static string GraphMapperAdded(string tabId, string id, string name, object state, IEnumerable<object> types, string? groupId = null) =>
+        JsonSerializer.Serialize(new { type = "graphMapper_added", tabId, id, name, value = state, types, groupId });
+
     // GH_Timer ("Trigger") — interval's sign IS the mode (negative = Manual,
     // positive = cyclic, value = ms); intervalString is GH's own formatted
     // display text ("1 second", "----------" for Manual), sent so Slate never
