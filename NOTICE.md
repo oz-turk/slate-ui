@@ -29,8 +29,11 @@ Icons used:
   baked/internalized-geometry icon)
 - `x` — geometry param's "Clear captured values" button
   (`ui/src/lib/GeometryParamRow.svelte`), used as-is
-- `egg-fried` — geometry param's "Bake to Rhino" button
-  (`ui/src/lib/GeometryParamRow.svelte`), used as-is, standing in for "bake"
+- `camera` / `camera-off` — Custom Preview's "Render" on/off toggle
+  (`ui/src/lib/CustomPreviewRow.svelte`), used as-is
+- `egg-fried` — geometry param's and Custom Preview's "Bake" buttons
+  (`ui/src/lib/GeometryParamRow.svelte`, `ui/src/lib/CustomPreviewRow.svelte`),
+  used as-is, standing in for "bake"
   (Lucide has no dedicated bake icon)
 
 ## Lucide — ISC License

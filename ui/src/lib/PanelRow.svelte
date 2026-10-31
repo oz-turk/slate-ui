@@ -215,6 +215,16 @@
   $: textAlign     = slider.textAlign ?? 'left'
   $: textColor     = slider.textColor ?? null
   $: textFontSize  = slider.textFontSize ?? null
+  // Header look keeps the box's fixed height (no adaptive growth — rows below
+  // would overlap): text that doesn't fit is cut with an ellipsis instead.
+  // Line count = how many lines of the header's font fit in the box.
+  const HEADER_LINE_HEIGHT = 1.25
+  $: headerClamp = (() => {
+    const fs = textFontSize ?? naturalDefaultSize
+    const boxH = resizing ? liveHeight : bodyHeight
+    const lines = Math.max(1, Math.floor(boxH / (fs * HEADER_LINE_HEIGHT)))
+    return `line-height: ${HEADER_LINE_HEIGHT}; -webkit-line-clamp: ${lines}`
+  })()
   $: textBold      = !!slider.textBold
   $: textItalic    = !!slider.textItalic
   $: textUnderline = !!slider.textUnderline
@@ -313,7 +323,7 @@
     {#if showAsHeader}
       <div class="standalone-header level-{wholeHeader.level}"
           class:align-center={textAlign === 'center'} class:align-right={textAlign === 'right'}
-          style={textStyle}>{wholeHeader.text}</div>
+          style={textStyle}><span class="header-text" style={headerClamp}>{wholeHeader.text}</span></div>
     {:else if slider.readOnly}
       <div class="text-display" bind:this={textEl} style={textStyle}>{slider.value || '—'}</div>
     {:else}
@@ -539,12 +549,22 @@
     width: 100%;
     height: 100%;
     display: flex;
-    align-items: center;
+    /* `safe`: if the wrapped text is ever taller than the box, overflow goes
+       downward only instead of spilling up over the divider above. */
+    align-items: safe center;
     box-sizing: border-box;
     padding: 0 4px;
     font-family: 'Segoe UI', system-ui, sans-serif;
     white-space: normal;
     word-break: break-word;
+  }
+  .header-text {
+    max-width: 100%;
+    min-width: 0;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .standalone-header.level-1 { font-size: 15px; font-weight: 700; letter-spacing: 0.02em; color: rgba(var(--text-rgb), 0.92); }
   .standalone-header.level-2 { font-size: 13px; font-weight: 600; color: rgba(var(--text-rgb), 0.78); }

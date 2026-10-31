@@ -1,5 +1,5 @@
 <script>
-  import { workspaces, activeWorkspaceId, addWorkspace, removeWorkspace, renameWorkspace, setActiveWorkspace } from '../stores/layout.js'
+  import { workspaces, activeWorkspaceId, addWorkspace, removeWorkspace, renameWorkspace, setActiveWorkspace, reorderWorkspaces } from '../stores/layout.js'
   import { postStateSnapshot } from './ipc.js'
   import { hoverHint } from '../stores/uiState.js'
   import { tabDrag, itemDrag } from '../stores/dragState.js'
@@ -44,6 +44,30 @@
     if (!$tabDrag && !$itemDrag) return
     if (id !== $activeWorkspaceId) activate(id)
   }
+  // ── workspace reorder ────────────────────────────────────────────────────────
+  // Separate from tabDrag/itemDrag on purpose: those stores drive the
+  // "hover a workspace to switch to it" behaviour above, which must not
+  // fire while the workspace tabs themselves are being dragged.
+  let dragWsId = null
+  let overWsId = null
+  let overSide = 'before'
+
+  function onWsDragStart(e, w) {
+    if (mode !== 'edit' || editingId === w.id) { e.preventDefault(); return }
+    dragWsId = w.id
+    e.dataTransfer.effectAllowed = 'move'
+    e.dataTransfer.setData('text/plain', w.id)
+  }
+  function onWsDragEnd() { dragWsId = null; overWsId = null }
+  function onWsDrop(w) {
+    if (!dragWsId) return
+    if (w.id !== dragWsId) {
+      reorderWorkspaces(dragWsId, w.id)
+      postStateSnapshot()
+    }
+    dragWsId = null
+    overWsId = null
+  }
   function remove(id) {
     removeWorkspace(id)
     postStateSnapshot()
@@ -58,6 +82,13 @@
   {#each $workspaces as w (w.id)}
     <!-- svelte-ignore a11y-no-static-element-interactions -->
     <div class="ws-tab" class:active={w.id === $activeWorkspaceId}
+        class:being-dragged={dragWsId === w.id}
+        class:ins-before={overWsId === w.id && overSide === 'before'}
+        class:ins-after={overWsId === w.id && overSide === 'after'}
+        draggable={mode === 'edit' && editingId !== w.id}
+        on:dragstart={e => onWsDragStart(e, w)}
+        on:dragend={onWsDragEnd}
+        on:drop|preventDefault={() => onWsDrop(w)}
         role="tab"
         tabindex="0"
         on:click={() => activate(w.id)}
@@ -66,7 +97,13 @@
         on:mouseenter={() => hoverHint.set(mode === 'edit' ? 'Double-click: rename  ·  Ctrl+1–9: switch workspace' : 'Ctrl+1–9: switch workspace')}
         on:mouseleave={() => hoverHint.set(null)}
         on:dragenter|preventDefault={() => onDragEnterTab(w.id)}
-        on:dragover|preventDefault
+        on:dragover|preventDefault={() => {
+          if (!dragWsId) return
+          overWsId = w.id !== dragWsId ? w.id : null
+          const list = $workspaces
+          overSide = list.findIndex(x => x.id === dragWsId) > list.findIndex(x => x.id === w.id) ? 'before' : 'after'
+        }}
+        on:dragleave={e => { if (!e.currentTarget.contains(e.relatedTarget) && overWsId === w.id) overWsId = null }}
     >
       {#if editingId === w.id}
         <input class="rename-input" bind:value={editValue} use:focusAndSelect
@@ -120,6 +157,23 @@
   }
   .ws-tab:hover  { color: rgba(var(--text-rgb), 0.65); background: var(--ws-tab-bg-hover, rgba(0, 0, 0, 0.25)); }
   .ws-tab.active { color: var(--text); background: var(--ws-tab-bg-active, rgba(255, 255, 255, 0.14)); }
+
+  .ws-tab.being-dragged { opacity: 0.4; }
+  .ws-tab { position: relative; }
+  /* Reorder insertion marker: vertical accent line in the gap beside the hovered tab */
+  .ws-tab.ins-before::before,
+  .ws-tab.ins-after::after {
+    content: '';
+    position: absolute;
+    top: -3px; bottom: -3px;
+    width: 2px;
+    border-radius: 1px;
+    background: var(--accent);
+    box-shadow: 0 0 4px rgba(var(--accent-rgb), 0.8);
+    pointer-events: none;
+  }
+  .ws-tab.ins-before::before { left: -3px; }
+  .ws-tab.ins-after::after   { right: -3px; }
 
   .label { pointer-events: none; }
 

@@ -59,7 +59,7 @@ export function suppressDuring(fn) {
 // non-value types (trigger/geometry/dataDam/button) are skipped: their
 // "value" isn't a plain scalar C# can be set to directly.
 const MSG_TYPE = { panel: 'panel_change', colourPicker: 'colour_change', mdSlider: 'md_change', graphMapper: 'graph_change' }
-const SKIP_TYPES = new Set(['button', 'pancakeButton', 'trigger', 'geometryParam', 'dataDam', 'paramViewer'])
+const SKIP_TYPES = new Set(['button', 'pancakeButton', 'trigger', 'geometryParam', 'dataDam', 'customPreview', 'paramViewer'])
 
 function collectControlValues(workspaceList, out = new Map()) {
   const visit = (sliders, groups) => {

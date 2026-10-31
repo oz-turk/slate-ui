@@ -11,6 +11,7 @@
   import TriggerRow   from './TriggerRow.svelte'
   import GeometryParamRow from './GeometryParamRow.svelte'
   import DataDamRow   from './DataDamRow.svelte'
+  import CustomPreviewRow from './CustomPreviewRow.svelte'
   import ParamViewerRow from './ParamViewerRow.svelte'
   import GroupSection from './GroupSection.svelte'
   import ActionBar    from './ActionBar.svelte'
@@ -35,12 +36,12 @@
   // itemPicker reuses ValueListRow — same "pick one from a list" UI, the only
   // difference (candidate list from a wired input vs manually authored) lives
   // entirely on the C# side.
-  const ROW_COMPONENTS = { toggle: ToggleRow, button: ButtonRow, valueList: ValueListRow, panel: PanelRow, itemPicker: ValueListRow, humanValueList: ValueListRow, colourPicker: ColourPickerRow, mdSlider: MdSliderRow, graphMapper: GraphMapperRow, pancakeButton: ButtonRow, trigger: TriggerRow, geometryParam: GeometryParamRow, dataDam: DataDamRow, paramViewer: ParamViewerRow }
+  const ROW_COMPONENTS = { toggle: ToggleRow, button: ButtonRow, valueList: ValueListRow, panel: PanelRow, itemPicker: ValueListRow, humanValueList: ValueListRow, colourPicker: ColourPickerRow, mdSlider: MdSliderRow, graphMapper: GraphMapperRow, pancakeButton: ButtonRow, trigger: TriggerRow, geometryParam: GeometryParamRow, dataDam: DataDamRow, customPreview: CustomPreviewRow, paramViewer: ParamViewerRow }
 
   // Fixed type order for the pane's manual "Sort: Type" menu item — same
   // priority SlatePanel.cs's capture loop checks types in, just reused here
   // as an explicit ranking rather than a type-check chain.
-  const TYPE_ORDER = ['slider', 'toggle', 'button', 'valueList', 'panel', 'itemPicker', 'humanValueList', 'colourPicker', 'mdSlider', 'graphMapper', 'pancakeButton', 'trigger', 'geometryParam', 'dataDam']
+  const TYPE_ORDER = ['slider', 'toggle', 'button', 'valueList', 'panel', 'itemPicker', 'humanValueList', 'colourPicker', 'mdSlider', 'graphMapper', 'pancakeButton', 'trigger', 'geometryParam', 'dataDam', 'customPreview']
 
   // ── derive pane state reactively (not derived() — paneId must stay live) ─────
   $: pane        = findLeaf($layout, paneId)
@@ -53,6 +54,10 @@
   // agrees with what's actually being shown — otherwise TabBar could show no
   // tab as active at all while this pane still renders tabs[0]'s content, and
   // capture/cross-pane-drop would silently target a tab id that doesn't exist.
+  // "Show Tab Bar" off (pane context menu) hides the bar's contents in preview
+  // mode for a single-tab pane (its height stays). Edit mode always keeps it: + / Capture / tab drops live
+  // there. With more than one tab it's the navigation, so the flag is ignored.
+  $: tabBarHidden = $mode !== 'edit' && pane?.showTabBar === false && tabs.length <= 1
   $: activeTab   = tabs.find(t => t.id === pane?.activeTabId) ?? tabs[0]
   $: activeTabId = activeTab?.id ?? null
   $: activeItems = activeTab ? orderedItems(activeTab) : []
@@ -68,7 +73,7 @@
   // width (see TriggerRow.svelte / GeometryParamRow.svelte), so their names
   // count toward the measurement too — every other typed row (toggle/
   // button/...) stays right-anchored and excluded.
-  function isSliderRowType(s) { return !ROW_COMPONENTS[s.type] || s.type === 'trigger' || s.type === 'geometryParam' || s.type === 'dataDam' }
+  function isSliderRowType(s) { return !ROW_COMPONENTS[s.type] || s.type === 'trigger' || s.type === 'geometryParam' || s.type === 'dataDam' || s.type === 'customPreview' }
   function maxSliderNameLen(sliders, groups) {
     let max = 0
     for (const s of sliders ?? []) if (isSliderRowType(s)) max = Math.max(max, (s.name ?? '').length)
@@ -218,6 +223,7 @@
   let reorderRaf      = null // pending rAF for the deferred live reorder (see setDropTarget)
 
   // ── tab drag (cross-pane) drop state ─────────────────────────────────────────
+  let headerEl
   let edgeZone     = null   // 'left' | 'right' | 'top' | 'bottom' | 'center' | null
   let itemDragHover = false  // true only while a cross-pane item drag is hovering this pane
   let paneEl
@@ -256,7 +262,7 @@
   function onPaneContextMenu(e) {
     e.preventDefault()
     const { clientX, clientY } = e
-    const menuW = 170, menuH = 240
+    const menuW = 170, menuH = 270
     const items = [
       { label: 'Split Vertically',   action: () => splitEven('h') },
       { label: 'Split Horizontally', action: () => splitEven('v') },
@@ -267,6 +273,15 @@
       'sep',
       { label: 'Pane Settings…', action: () => openPaneSettings(clientX, clientY) },
     ]
+    // Only offered while it can matter: with several tabs the bar is the
+    // navigation, so the setting is ignored (see tabBarHidden). Ticked = shown;
+    // same "✓ " idiom as the Graph Mapper type menu (ContextMenu has no checkbox).
+    if (tabs.length <= 1 || pane?.showTabBar === false) {
+      items.push({
+        label: `${pane?.showTabBar === false ? '   ' : '✓ '}Show Tab Bar`,
+        action: () => { updatePane(paneId, () => ({ showTabBar: pane?.showTabBar === false })); postStateSnapshot() },
+      })
+    }
     items.push('sep', { label: 'Close Pane', danger: true, action: () => { collapsePane(paneId); postStateSnapshot() } })
     contextMenu = {
       x: Math.min(clientX, window.innerWidth  - menuW - 8),
@@ -454,6 +469,10 @@
       onDataDamChange(sliderId, value)
       return
     }
+    if (controlType === 'customPreview') {
+      onCustomPreviewChange(sliderId, value)
+      return
+    }
     if (controlType === 'graphMapper') {
       onGraphMapperChange(sliderId, value)
       return
@@ -591,6 +610,21 @@
     }
   }
 
+  // CustomPreviewRow dispatches { field, value } for one of preview/render/
+  // enabled/filter. Patched locally (so the button flips immediately and the
+  // value persists with the snapshot) and sent to C#, which sets the matching
+  // native property. RestoreState re-reads the real values on load anyway.
+  function onCustomPreviewChange(sliderId, detail) {
+    if (detail.field === 'bake') {
+      // Action, not state: opens GH's own bake dialog on the C# side.
+      postToCs({ type: 'custompreview_bake', id: sourceIdFor(sliderId) })
+      return
+    }
+    patchSlider(sliderId, { [detail.field]: detail.value })
+    postStateSnapshot()
+    postToCs({ type: 'custompreview_change', id: sourceIdFor(sliderId), field: detail.field, value: detail.value })
+  }
+
   // DataDamRow dispatches one of five discrete actions, same shape as
   // TriggerRow's. "selectGate" doesn't patch anything locally — C# resolves
   // the canvas selection async and replies with dataDam_gate_selected (see
@@ -662,6 +696,18 @@
 
   function renameTab(id, label) {
     mutateTabs(tabs => tabs.map(t => t.id === id ? { ...t, label } : t))
+  }
+
+  // Move tab `from` to the slot currently held by tab `to` (same pane).
+  function reorderTabs(from, to) {
+    mutateTabs(tabs => {
+      const fi = tabs.findIndex(t => t.id === from)
+      const ti = tabs.findIndex(t => t.id === to)
+      if (fi < 0 || ti < 0 || fi === ti) return tabs
+      const [moved] = tabs.splice(fi, 1)
+      tabs.splice(ti, 0, moved)
+      return tabs
+    })
   }
 
   function setTabColor(id, color) {
@@ -742,6 +788,44 @@
     return cloneId
   }
 
+  // Alt-drag on a group header: same idea as duplicateSlider, for a whole
+  // group. Deep-copies the group with every nested group and slider (each gets
+  // a fresh widget id; sliders keep sharing the original's sourceId, so values
+  // and names stay in sync with the original GH objects), places the copy
+  // right after the original, and returns the copy's id so the drag carries it.
+  function cloneGroupDeep(g) {
+    return {
+      ...g,
+      id: crypto.randomUUID(),
+      sliders: g.sliders.map(s => ({ ...s, id: crypto.randomUUID(), sourceId: s.sourceId ?? s.id })),
+      groups: (g.groups ?? []).map(cloneGroupDeep),
+    }
+  }
+  // Finds the group and the id of the group that directly contains it
+  // (null = it sits at the tab's top level).
+  function findGroupWithParent(groups, groupId, parentId = null) {
+    for (const g of groups) {
+      if (g.id === groupId) return { group: g, parentId }
+      const hit = findGroupWithParent(g.groups ?? [], groupId, g.id)
+      if (hit) return hit
+    }
+    return null
+  }
+  function duplicateGroup(tabId, groupId) {
+    let cloneId = null
+    mutateTabs(tabs => tabs.map(t => {
+      if (t.id !== tabId) return t
+      const hit = findGroupWithParent(t.groups, groupId)
+      if (!hit) return t
+      const clone = cloneGroupDeep(hit.group)
+      const placed = insertGroupAt(t, hit.parentId, groupId, 'after', clone)
+      if (!placed) return t
+      cloneId = clone.id
+      return placed
+    }))
+    return cloneId
+  }
+
   function startDrag(type, id, fromTabId, fromGroupId = null, altKey = false) {
     // If the grabbed row is part of the current multi-selection, drag the whole
     // selection together — otherwise just this one item.
@@ -750,6 +834,10 @@
       : [id]
     if (altKey && type === 'slider' && ids.length === 1) {
       const cloneId = duplicateSlider(fromTabId, fromGroupId, id)
+      if (cloneId) { id = cloneId; ids = [cloneId] }
+    }
+    if (altKey && type === 'group') {
+      const cloneId = duplicateGroup(fromTabId, id)
       if (cloneId) { id = cloneId; ids = [cloneId] }
     }
     activeDrag = { type, id, ids, fromTabId, fromGroupId }
@@ -1350,8 +1438,12 @@
     if (isItemDrag) itemDragHover = true
     if (!paneEl || !isTabDrag) return
     const rect = paneEl.getBoundingClientRect()
+    // Over the tab bar = always "add to this pane"; split zones are measured
+    // on the area below it, so the top 20% isn't eaten by the tab bar.
+    const headerBottom = headerEl ? headerEl.getBoundingClientRect().bottom : rect.top
+    if (e.clientY <= headerBottom) { edgeZone = 'center'; return }
     const x = (e.clientX - rect.left) / rect.width
-    const y = (e.clientY - rect.top)  / rect.height
+    const y = (e.clientY - headerBottom) / Math.max(1, rect.bottom - headerBottom)
     const edge = 0.2
     if      (x < edge)       edgeZone = 'left'
     else if (x > 1 - edge)   edgeZone = 'right'
@@ -1431,7 +1523,12 @@
     <CornerHandle corner="br" on:preview={e => onCornerPreview(e.detail)} on:commit={e => onCornerCommit(e.detail)} />
   {/if}
 
-  <header>
+  <header bind:this={headerEl}>
+    {#if tabBarHidden}
+      <!-- Keeps the bar's height (TabBar's .tabbar is 20px) so the content doesn't
+           jump when switching between preview and edit mode. -->
+      <div class="tabbar-spacer"></div>
+    {:else}
     <TabBar
       {tabs} {activeTabId} mode={$mode}
       isDragging={activeDrag !== null}
@@ -1448,11 +1545,13 @@
       on:tabDrop={e       => executeDrop('tab', e.detail)}
       on:tabDragStart={e  => onTabDragStart(e.detail.tabId, e.detail.label)}
       on:tabDragEnd={onTabDragEnd}
+      on:tabReorder={e    => reorderTabs(e.detail.from, e.detail.to)}
       on:itemDragOverTab={e  => itemDropTabId = e.detail}
       on:itemDragLeaveTab={e => { if (itemDropTabId === e.detail) itemDropTabId = null }}
       on:itemDropOnTab={e    => dropItemOnTab(e.detail)}
       on:capture={() => postToCs({ type: 'capture', tabId: activeTabId })}
     />
+    {/if}
 
     {#if $mode === 'edit' && selectedIds.size > 0}
       <ActionBar
@@ -1549,7 +1648,7 @@
               on:sliderPatch={e => onSliderPatch(e.detail.id, e.detail.patch)}
               on:sliderRemove={e        => removeSlider(activeTab.id, e.detail.sliderId)}
               on:sliderContextMenu={e   => onSliderContextMenu(e.detail.pos, e.detail.slider)}
-              on:headerDragStart={e => startDrag('group', e.detail, activeTab.id, null)}
+              on:headerDragStart={e => startDrag('group', e.detail.groupId, activeTab.id, null, e.detail.altKey)}
               on:headerDragOver={e => setDropTarget('group-header', e.detail.id, e.detail.pos, e.detail.groupId)}
               on:headerDragLeave={e => clearDropTarget('group-header', e.detail)}
               on:headerDrop={e => executeDrop('group-header', e.detail.id, e.detail.pos, e.detail.groupId)}
@@ -1634,6 +1733,7 @@
     flex-shrink: 0;
     background: transparent;
   }
+  .tabbar-spacer { height: 20px; }
 
   .content {
     flex: 1;

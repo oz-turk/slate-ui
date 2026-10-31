@@ -13,6 +13,7 @@
   import TriggerRow from './TriggerRow.svelte'
   import GeometryParamRow from './GeometryParamRow.svelte'
   import DataDamRow from './DataDamRow.svelte'
+  import CustomPreviewRow from './CustomPreviewRow.svelte'
   import ParamViewerRow from './ParamViewerRow.svelte'
   import TextSettingsPopup from './TextSettingsPopup.svelte'
   import { hoverHint } from '../stores/uiState.js'
@@ -20,7 +21,7 @@
   const dispatch = createEventDispatcher()
 
   // slider.type → row component (falls back to SliderRow when unset/unknown)
-  const ROW_COMPONENTS = { toggle: ToggleRow, button: ButtonRow, valueList: ValueListRow, panel: PanelRow, itemPicker: ValueListRow, humanValueList: ValueListRow, colourPicker: ColourPickerRow, mdSlider: MdSliderRow, graphMapper: GraphMapperRow, pancakeButton: ButtonRow, trigger: TriggerRow, geometryParam: GeometryParamRow, dataDam: DataDamRow, paramViewer: ParamViewerRow }
+  const ROW_COMPONENTS = { toggle: ToggleRow, button: ButtonRow, valueList: ValueListRow, panel: PanelRow, itemPicker: ValueListRow, humanValueList: ValueListRow, colourPicker: ColourPickerRow, mdSlider: MdSliderRow, graphMapper: GraphMapperRow, pancakeButton: ButtonRow, trigger: TriggerRow, geometryParam: GeometryParamRow, dataDam: DataDamRow, customPreview: CustomPreviewRow, paramViewer: ParamViewerRow }
 
   export let group        = {}
   export let mode         = 'preview'
@@ -129,6 +130,10 @@
   function headerZone(e) {
     const rect = e.currentTarget.getBoundingClientRect()
     const frac = (e.clientY - rect.top) / rect.height
+    // Expanded: "after the group" means below its whole body (see the exit
+    // zone at the bottom of .group), not the header's lower edge — that edge
+    // sits at the TOP of the group and read as the wrong place to aim for.
+    if (!group.collapsed) return frac < 0.25 ? 'before' : 'nest'
     return frac < 0.25 ? 'before' : frac > 0.75 ? 'after' : 'nest'
   }
   // Every dispatch below carries group.id (and containerId, the container
@@ -144,6 +149,15 @@
   function headerDragLeave(e) {
     if (!e.currentTarget.contains(e.relatedTarget)) dispatch('headerDragLeave', group.id)
   }
+  // Expanded group only: strip under the last row (shown while a drag is in
+  // flight). Hovering it = place the dragged item right after this group, as
+  // its sibling — otherwise the last row's lower half only ever means "last
+  // inside this group", with no way out at the bottom of the tab.
+  function exitDragOver() { dispatch('headerDragOver', { id: group.id, pos: 'after', groupId: containerId }) }
+  function exitDragLeave(e) {
+    if (!e.currentTarget.contains(e.relatedTarget)) dispatch('headerDragLeave', group.id)
+  }
+  function exitDrop() { dispatch('headerDrop', { id: group.id, pos: 'after', groupId: containerId }) }
   function headerDrop(e) { dispatch('headerDrop', { id: group.id, pos: headerZone(e), groupId: containerId }) }
 
   // Same "fade the thing being dragged" treatment SliderRow gives its own
@@ -216,7 +230,7 @@
       <div class="handle"
           draggable="true"
           on:click|stopPropagation
-          on:dragstart={e => { e.dataTransfer.effectAllowed = 'move'; groupDragging = true; dispatch('headerDragStart', group.id) }}
+          on:dragstart={e => { e.dataTransfer.effectAllowed = 'move'; groupDragging = true; dispatch('headerDragStart', { groupId: group.id, altKey: e.altKey }) }}
           on:dragend={() => { groupDragging = false; dispatch('groupDragEnd') }}
       >
         <svg width="8" height="12" viewBox="0 0 8 12" fill="currentColor">
@@ -393,6 +407,13 @@
         </div>
       {/each}
     </div>
+    {#if activeDrag}
+      <!-- svelte-ignore a11y-no-static-element-interactions -->
+      <div class="exit-zone"
+          on:dragover|preventDefault={exitDragOver}
+          on:dragleave={exitDragLeave}
+          on:drop|preventDefault={exitDrop}></div>
+    {/if}
   {/if}
 </div>
 
@@ -431,6 +452,7 @@
     background: var(--accent);
     z-index: 1;
   }
+  .exit-zone { height: 14px; }
   .group.drop-before-me::before { top: -1px; }
   .group.drop-after-me::after   { bottom: -1px; }
 

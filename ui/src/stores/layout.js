@@ -343,6 +343,19 @@ export function renameWorkspace(id, label) {
   workspaces.update(list => list.map(w => w.id === id ? { ...w, label } : w))
 }
 
+// Move workspace `from` to the slot currently held by workspace `to`.
+export function reorderWorkspaces(from, to) {
+  workspaces.update(list => {
+    const fi = list.findIndex(w => w.id === from)
+    const ti = list.findIndex(w => w.id === to)
+    if (fi < 0 || ti < 0 || fi === ti) return list
+    const next = [...list]
+    const [moved] = next.splice(fi, 1)
+    next.splice(ti, 0, moved)
+    return next
+  })
+}
+
 export function setActiveWorkspace(id) {
   activeWorkspaceId.set(id)
 }

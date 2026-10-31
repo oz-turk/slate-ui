@@ -39,6 +39,8 @@
 
   // ── cross-pane tab drag ───────────────────────────────────────────────────────
   let dragTabId = null
+  let reorderOverId = null   // tab hovered by a same-bar tab drag (reorder target)
+  let reorderSide   = 'before'   // which side of that tab the insertion line shows
 
   // Set from dragstart (a real drag actually starting), not pointerdown —
   // pointerdown fires on every plain click too, and a click never fires
@@ -56,6 +58,7 @@
 
   function onTabDragEnd() {
     dragTabId = null
+    reorderOverId = null
     dispatch('tabDragEnd')
   }
 
@@ -123,6 +126,8 @@
       class:active={tab.id === activeTabId}
       class:drag-target={(isDragging || crossPaneItemDrag) && tab.id !== activeTabId}
       class:drag-over={dropTabId === tab.id}
+      class:ins-before={reorderOverId === tab.id && reorderSide === 'before'}
+      class:ins-after={reorderOverId === tab.id && reorderSide === 'after'}
       class:being-dragged={dragTabId === tab.id}
       draggable={canDragTabs && mode === 'edit' && editingId !== tab.id}
       style={tab.id === activeTabId && tab.color
@@ -135,9 +140,30 @@
       on:mouseleave={() => hoverHint.set(null)}
       on:dragstart={e => onTabDragStart(e, tab)}
       on:dragend={onTabDragEnd}
-      on:dragover|preventDefault={() => crossPaneItemDrag ? dispatch('itemDragOverTab', tab.id) : (isDragging && dispatch('tabDragOver', tab.id))}
-      on:dragleave={e => { if (!e.currentTarget.contains(e.relatedTarget)) dispatch(crossPaneItemDrag ? 'itemDragLeaveTab' : 'tabDragLeave', tab.id) }}
-      on:drop|preventDefault={() => dispatch(crossPaneItemDrag ? 'itemDropOnTab' : 'tabDrop', tab.id)}
+      on:dragover|preventDefault={() => {
+        if (dragTabId) {
+          reorderOverId = tab.id !== dragTabId ? tab.id : null
+          // Matches Pane.reorderTabs: dragged tab takes the hovered tab's slot,
+          // so dragging rightwards lands after it, leftwards before it.
+          reorderSide = tabs.findIndex(t => t.id === dragTabId) > tabs.findIndex(t => t.id === tab.id) ? 'before' : 'after'
+          return
+        }
+        crossPaneItemDrag ? dispatch('itemDragOverTab', tab.id) : (isDragging && dispatch('tabDragOver', tab.id))
+      }}
+      on:dragleave={e => {
+        if (e.currentTarget.contains(e.relatedTarget)) return
+        if (dragTabId) { if (reorderOverId === tab.id) reorderOverId = null; return }
+        dispatch(crossPaneItemDrag ? 'itemDragLeaveTab' : 'tabDragLeave', tab.id)
+      }}
+      on:drop|preventDefault={() => {
+        if (dragTabId) {
+          // Same-bar tab reorder; don't let the pane-level drop handler see it.
+          if (tab.id !== dragTabId) dispatch('tabReorder', { from: dragTabId, to: tab.id })
+          reorderOverId = null
+          return
+        }
+        dispatch(crossPaneItemDrag ? 'itemDropOnTab' : 'tabDrop', tab.id)
+      }}
       role="tab"
       tabindex="0"
       on:keydown={e => e.key === 'Enter' && dispatch('select', tab.id)}
@@ -217,7 +243,22 @@
     transition: color 0.15s, border-color 0.15s, background 0.1s;
     flex-shrink: 0;
     user-select: none;
+    position: relative;
   }
+  /* Reorder insertion marker: vertical accent line in the gap beside the hovered tab */
+  .tab.ins-before::before,
+  .tab.ins-after::after {
+    content: '';
+    position: absolute;
+    top: -3px; bottom: -3px;
+    width: 2px;
+    border-radius: 1px;
+    background: var(--accent);
+    box-shadow: 0 0 4px rgba(var(--accent-rgb), 0.8);
+    pointer-events: none;
+  }
+  .tab.ins-before::before { left: -3px; }
+  .tab.ins-after::after   { right: -3px; }
   .tab:hover              { color: rgba(var(--text-rgb), 0.65); background: rgba(var(--text-rgb), 0.08); }
   /* Active uses the accent hue (not another shade of the same grey wash
      hover/inactive already use) — same "this is the selected one" language
