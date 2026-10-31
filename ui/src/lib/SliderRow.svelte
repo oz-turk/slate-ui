@@ -1,7 +1,8 @@
 <script>
   import ParamIcon from './ParamIcon.svelte'
-  import { createEventDispatcher } from 'svelte'
+  import { createEventDispatcher, onDestroy } from 'svelte'
   import { dragTranslateYFor, rowDragOver, rowDragLeave, rowDrop } from './rowDrag.js'
+  import { draggingControl } from '../stores/uiState.js'
   const dispatch = createEventDispatcher()
 
   export let slider    = {}
@@ -48,9 +49,26 @@
     return fromPct((e.clientX - rect.left) / rect.width)
   }
 
+  // Keeps the GH value echo (control_value_update) from overwriting this slider
+  // mid-drag — see draggingControl. Released shortly AFTER pointer-up so the
+  // last in-flight echo (a solve behind the final value) is still ignored.
+  const RELEASE_MS = 400
+  let releaseTimer
+  function holdDragGuard() {
+    clearTimeout(releaseTimer)
+    draggingControl.set({ sourceId: slider.sourceId ?? slider.id, widgetId: slider.id })
+  }
+  function releaseDragGuard() {
+    clearTimeout(releaseTimer)
+    const wid = slider.id
+    releaseTimer = setTimeout(() => draggingControl.update(cur => cur && cur.widgetId === wid ? null : cur), RELEASE_MS)
+  }
+  onDestroy(() => { clearTimeout(releaseTimer); draggingControl.update(cur => cur && cur.widgetId === slider.id ? null : cur) })
+
   function onTrackPointerDown(e) {
     e.preventDefault()
     dragging = true
+    holdDragGuard()
     trackEl.setPointerCapture(e.pointerId)
     lastValue = getValueFromEvent(e)
     dispatch('change', lastValue)
@@ -64,6 +82,7 @@
 
   function onTrackPointerUp() {
     if (dragging) dispatch('commit', lastValue)  // guaranteed final send
+    if (dragging) releaseDragGuard()
     dragging = false
   }
 

@@ -419,46 +419,49 @@ export function clearAllWorkspaces() {
 // predate the id/sourceId split and never got a sourceId of their own.
 function matchesSource(s, id) { return (s.sourceId ?? s.id) === id }
 
-function patchGroupsIfPresent(groups, id, patch) {
+// except: widget id to leave untouched (the slider currently under the pointer).
+function patchGroupsIfPresent(groups, id, patch, except = null) {
+  const hit = s => matchesSource(s, id) && s.id !== except
   let changed = false
   const next = groups.map(g => {
-    const hasHere = g.sliders.some(s => matchesSource(s, id))
-    const [subGroups, subChanged] = patchGroupsIfPresent(g.groups ?? [], id, patch)
+    const hasHere = g.sliders.some(hit)
+    const [subGroups, subChanged] = patchGroupsIfPresent(g.groups ?? [], id, patch, except)
     if (!hasHere && !subChanged) return g
     changed = true
     return {
       ...g,
-      sliders: hasHere ? g.sliders.map(s => matchesSource(s, id) ? { ...s, ...patch } : s) : g.sliders,
+      sliders: hasHere ? g.sliders.map(s => hit(s) ? { ...s, ...patch } : s) : g.sliders,
       groups: subGroups
     }
   })
   return [changed ? next : groups, changed]
 }
 
-function patchNodeIfPresent(node, id, patch) {
+function patchNodeIfPresent(node, id, patch, except = null) {
+  const hit = s => matchesSource(s, id) && s.id !== except
   if (node.type === 'leaf') {
     let changed = false
     const tabs = node.tabs.map(t => {
-      const hasHere = t.sliders.some(s => matchesSource(s, id))
-      const [groups, subChanged] = patchGroupsIfPresent(t.groups, id, patch)
+      const hasHere = t.sliders.some(hit)
+      const [groups, subChanged] = patchGroupsIfPresent(t.groups, id, patch, except)
       if (!hasHere && !subChanged) return t
       changed = true
       return {
         ...t,
-        sliders: hasHere ? t.sliders.map(s => matchesSource(s, id) ? { ...s, ...patch } : s) : t.sliders,
+        sliders: hasHere ? t.sliders.map(s => hit(s) ? { ...s, ...patch } : s) : t.sliders,
         groups
       }
     })
     return changed ? { ...node, tabs } : node
   }
-  const a = patchNodeIfPresent(node.a, id, patch)
-  const b = patchNodeIfPresent(node.b, id, patch)
+  const a = patchNodeIfPresent(node.a, id, patch, except)
+  const b = patchNodeIfPresent(node.b, id, patch, except)
   return (a === node.a && b === node.b) ? node : { ...node, a, b }
 }
 
-export function syncControl(id, patch) {
+export function syncControl(id, patch, exceptWidgetId = null) {
   workspaces.update(list => list.map(w => {
-    const layout = patchNodeIfPresent(w.layout, id, patch)
+    const layout = patchNodeIfPresent(w.layout, id, patch, exceptWidgetId)
     return layout === w.layout ? w : { ...w, layout }
   }))
 }

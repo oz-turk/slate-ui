@@ -50,6 +50,15 @@ accent.subscribe(v => {
 // any component can set() its own hint on hover and clear it (set null) on leave.
 export const hoverHint = writable(null)
 
+// { sourceId, widgetId } of the slider the user is dragging right now (kept for
+// a short moment after release). GH pushes each control's value back after every
+// solve (control_value_update); during a drag that echo lags the pointer by a
+// solve or more, so applying it to the dragged widget would snap its thumb back
+// to an older value. App.svelte applies the echo to every OTHER copy of the same
+// control (they are not under the pointer, and C# sends each value only once, so
+// skipping it for them would leave them stale for good) and skips just this widget.
+export const draggingControl = writable(null)
+
 // "x"/"c" hotkeys act on whatever's under the mouse, resolved via
 // document.elementFromPoint() rather than wiring hover state through every
 // row/pane component. App.svelte sets these; the matching Pane instance

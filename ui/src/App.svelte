@@ -12,7 +12,7 @@
     updatePane, syncControl, removeAllBySourceId, clearAllWorkspaces, resetToDefault, makeLeaf, setActiveWorkspace,
     posAppend, applyWindowEdgeResize, orderedItems, MIN_PANE_SIZE
   } from './stores/layout.js'
-  import { ACCENTS, accent, iconCatalog, mode, pinned, theme, deleteRequest, captureRequest, settingsOpen, clearSelectionTick, groupSelectionTick, hoverHint, altHeld, ctrlHeld, fullscreenTreeId, paramViewerItemsCache, allowMultipleCaptures, showParamIcons, iconKeys, iconImages } from './stores/uiState.js'
+  import { ACCENTS, accent, iconCatalog, mode, pinned, theme, deleteRequest, captureRequest, settingsOpen, clearSelectionTick, groupSelectionTick, hoverHint, draggingControl, altHeld, ctrlHeld, fullscreenTreeId, paramViewerItemsCache, allowMultipleCaptures, showParamIcons, iconKeys, iconImages } from './stores/uiState.js'
   import { undo, suppressDuring } from './stores/history.js'
   import { postToCs, postStateSnapshot } from './lib/ipc.js'
 
@@ -618,7 +618,11 @@
     // every sibling copy (and a value changed by hand on the canvas itself),
     // and syncControl's sourceId-based match fans it out to all of them.
     if (msg.type === 'control_value_update') {
-      syncControl(msg.id, { value: msg.value })
+      // Not into the widget being dragged: the echo is a solve (or more) behind
+      // the pointer and would snap its thumb back. Its own value is already what
+      // GH was last given. Sibling copies still get it.
+      const d = $draggingControl
+      syncControl(msg.id, { value: msg.value }, d && d.sourceId === msg.id ? d.widgetId : null)
     }
 
     // Panels, item pickers and Item Selectors can change on their own between
