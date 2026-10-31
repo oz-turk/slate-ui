@@ -80,9 +80,13 @@ public class SlateWindow : Form
     const int VK_C = 0x43, VK_X = 0x58, VK_G = 0x47;
     private bool _cHeld, _xHeld, _gHeld;
 
-    static Icon? _iconLight, _iconDark;
+    // Icons are cached per (theme, fill colour): the fill follows the user's
+    // accent (Settings > Accent), sent from JS as "accent_changed". null = the
+    // original blue.
+    static readonly Dictionary<(bool dark, int argb), Icon> _iconCache = new();
+    Color? _accentIconFill;
 
-    static void ApplyWindowIcon(IntPtr hWnd, bool dark)
+    static void ApplyWindowIcon(IntPtr hWnd, bool dark, Color? accentFill = null)
     {
         // Built once and cached — see SlateLogo.ToIcon's own note on the
         // one-time GDI handle cost.
@@ -96,10 +100,15 @@ public class SlateWindow : Form
         // assumed). favicon.svg's own dark-theme variant already solved this
         // the right way (light outline + accent-blue fill, see app.css
         // --accent: #74a2ff) — mirrored here instead of true monochrome.
-        _iconLight ??= SlateLogo.ToIcon(32, outline: Color.FromArgb(0x20, 0x1e, 0x1d), fill: Color.FromArgb(0x5b, 0x8e, 0xf5));
-        _iconDark  ??= SlateLogo.ToIcon(32, outline: Color.FromArgb(0xe8, 0xeb, 0xf0), fill: Color.FromArgb(0x74, 0xa2, 0xff));
+        var fill = accentFill ?? (dark ? Color.FromArgb(0x74, 0xa2, 0xff) : Color.FromArgb(0x5b, 0x8e, 0xf5));
+        var key  = (dark, fill.ToArgb());
+        if (!_iconCache.TryGetValue(key, out var cached))
+        {
+            var outline = dark ? Color.FromArgb(0xe8, 0xeb, 0xf0) : Color.FromArgb(0x20, 0x1e, 0x1d);
+            cached = _iconCache[key] = SlateLogo.ToIcon(32, outline: outline, fill: fill);
+        }
 
-        var icon = (dark ? _iconDark : _iconLight).Handle;
+        var icon = cached.Handle;
         SendMessage(hWnd, WM_SETICON, (IntPtr)ICON_SMALL, icon);
         SendMessage(hWnd, WM_SETICON, (IntPtr)ICON_BIG,   icon);
 
@@ -135,7 +144,7 @@ public class SlateWindow : Form
         DwmSetWindowAttribute(Handle, DWMWA_CAPTION_COLOR, ref caption, sizeof(int));
         DwmSetWindowAttribute(Handle, DWMWA_BORDER_COLOR, ref caption, sizeof(int));
         DwmSetWindowAttribute(Handle, DWMWA_TEXT_COLOR, ref text, sizeof(int));
-        ApplyWindowIcon(Handle, dark);
+        ApplyWindowIcon(Handle, dark, _accentIconFill);
 
         // Form.BackColor was hardcoded near-black regardless of theme — it's
         // what shows through for a frame before WebView2 has painted (or in
@@ -273,6 +282,11 @@ public class SlateWindow : Form
     // _barika/.../data-dam-capture.md.
     private readonly Dictionary<string, GH_DataDamComponent> _dataDams = new();
 
+    // Native "Custom Preview" (GH_CustomPreviewComponent): Preview (Hidden,
+    // inverted), Render (IncludeInRender), Enabled (Locked, inverted) and
+    // ViewportFilter are all plain public properties - see the context menu.
+    private readonly Dictionary<string, GH_CustomPreviewComponent> _customPreviews = new();
+
     // Native "Param Viewer" (Grasshopper.Kernel.Special.GH_ParamViewer) — an
     // IGH_Param whose own value type (GH_StructurePath) isn't the data we
     // actually want; what we read instead is GraphicTree, the recursive
@@ -323,6 +337,7 @@ public class SlateWindow : Form
         if (_triggers.TryGetValue(id, out var tr))          { obj = tr;  return true; }
         if (_geometryParams.TryGetValue(id, out var gp))    { obj = gp;  return true; }
         if (_dataDams.TryGetValue(id, out var dd))          { obj = dd;  return true; }
+        if (_customPreviews.TryGetValue(id, out var cpv))   { obj = cpv; return true; }
         if (_paramViewers.TryGetValue(id, out var pvw))     { obj = pvw; return true; }
         if (_pathMappers.TryGetValue(id, out var pmw))      { obj = pmw; return true; }
         obj = null!;
@@ -436,6 +451,29 @@ public class SlateWindow : Form
 
         var (mode, delaySeconds, delayLabel) = DescribeDam(dam);
         PostToJs(SlateEvent.DataDamAdded(tabId, id, dam.NickName, mode, delaySeconds, delayLabel, dam.TransferPossible, gateLinked: false, gateName: null, groupId));
+    }
+
+    public void AddCustomPreview(string tabId, string? groupId, GH_CustomPreviewComponent cp)
+    {
+        string id = cp.InstanceGuid.ToString();
+        _customPreviews[id] = cp;
+        PostToJs(SlateEvent.CustomPreviewAdded(tabId, id, cp.NickName, !cp.Hidden, cp.IncludeInRender, !cp.Locked, cp.ViewportFilter ?? "", groupId));
+    }
+
+    // Catches Preview/Render/Enabled/filter/name changes made on the native
+    // canvas - same fingerprint-diff idea as PushDataDamUpdates.
+    private static void PushCustomPreviewUpdates()
+    {
+        var win = _instance;
+        if (win == null) return;
+        foreach (var kv in win._customPreviews)
+        {
+            var cp = kv.Value;
+            var fingerprint = cp.NickName + "|" + cp.Hidden + "|" + cp.IncludeInRender + "|" + cp.Locked + "|" + cp.ViewportFilter;
+            if (_lastPushedCustomPreviews.TryGetValue(kv.Key, out var last) && last == fingerprint) continue;
+            _lastPushedCustomPreviews[kv.Key] = fingerprint;
+            win.PostToJs(SlateEvent.CustomPreviewUpdated(kv.Key, cp.NickName, !cp.Hidden, cp.IncludeInRender, !cp.Locked, cp.ViewportFilter ?? ""));
+        }
     }
 
     // Reads the currently-selected canvas object (same "select on canvas,
@@ -1316,6 +1354,7 @@ public class SlateWindow : Form
             PushGeometryParamUpdates();
             PushDataDamGateUpdates();
             PushDataDamUpdates();
+            PushCustomPreviewUpdates();
             PushParamViewerUpdates();
         }));
     }
@@ -1777,6 +1816,7 @@ public class SlateWindow : Form
     private static readonly Dictionary<string, string> _lastPushedTriggers = new();
     private static readonly Dictionary<string, string> _lastPushedGeometryParams = new();
     private static readonly Dictionary<string, string> _lastPushedDataDams = new();
+    private static readonly Dictionary<string, string> _lastPushedCustomPreviews = new();
     private static readonly Dictionary<string, string> _lastPushedParamViewers = new();
     // Slider/toggle/button VALUE — see PushSliderValueUpdates below.
     private static readonly Dictionary<string, string> _lastPushedControlValues = new();
@@ -1797,6 +1837,7 @@ public class SlateWindow : Form
         _lastPushedTriggers.Clear();
         _lastPushedGeometryParams.Clear();
         _lastPushedDataDams.Clear();
+        _lastPushedCustomPreviews.Clear();
         _lastPushedParamViewers.Clear();
         _lastPushedControlValues.Clear();
     }
@@ -2684,6 +2725,48 @@ public class SlateWindow : Form
                 // (PushDataDamGateUpdates): that's a programmatic signal, not
                 // a manual click, and gating it the same way could silently
                 // swallow a trigger whose edge won't recur.
+                // Custom Preview: one boolean/text field per message. Preview/
+                // Render/filter only change drawing (ExpirePreview); Enabled is
+                // Locked, which changes the solution (ExpireSolution), same as
+                // the native menu items.
+                case "custompreview_change":
+                    string cpid = root.GetProperty("id").GetString() ?? "";
+                    string cpField = root.GetProperty("field").GetString() ?? "";
+                    if (_customPreviews.TryGetValue(cpid, out var cpv2))
+                    {
+                        switch (cpField)
+                        {
+                            case "preview":
+                                cpv2.Hidden = !root.GetProperty("value").GetBoolean();
+                                cpv2.ExpirePreview(true);
+                                break;
+                            case "render":
+                                cpv2.IncludeInRender = root.GetProperty("value").GetBoolean();
+                                cpv2.ExpirePreview(true);
+                                break;
+                            case "enabled":
+                                cpv2.Locked = !root.GetProperty("value").GetBoolean();
+                                cpv2.ExpireSolution(true);
+                                break;
+                            case "filter":
+                                string cpFilter = root.GetProperty("value").GetString() ?? "";
+                                cpv2.ViewportFilter = cpFilter;
+                                cpv2.Message = cpFilter;   // native shows the filter under the component
+                                cpv2.ExpirePreview(true);
+                                break;
+                        }
+                    }
+                    break;
+
+                // Same native "Bake..." flow as geometry_bake (GH's own layer
+                // dialog, modal) — see BakeGeometryParam. For Custom Preview it
+                // bakes every previewed item AND assigns the material wired into
+                // its M input (GH_CustomPreviewComponent.BakeGeometry).
+                case "custompreview_bake":
+                    string cpbid = root.GetProperty("id").GetString() ?? "";
+                    Invoke(() => BakeCustomPreview(cpbid));
+                    break;
+
                 case "datadam_fire":
                     string dfid = root.GetProperty("id").GetString() ?? "";
                     if (_dataDams.TryGetValue(dfid, out var damFire) && damFire.TransferPossible)
@@ -2778,6 +2861,12 @@ public class SlateWindow : Form
                                 positions[sortId] = new[] { sortObj.Attributes.Bounds.Left, sortObj.Attributes.Pivot.Y, sortObj.Attributes.Bounds.Width };
                         PostToJs(SlateEvent.SortPositionsResult(sortTabId, positions));
                     });
+                    break;
+                }
+
+                case "icon_catalog_request":
+                {
+                    Invoke(() => PostToJs(SlateEvent.IconCatalogResult(BuildIconCatalog())));
                     break;
                 }
 
@@ -2880,6 +2969,20 @@ public class SlateWindow : Form
                     }
                     break;
 
+                // Accent colour changed (or theme changed, which swaps the accent's
+                // dark/light variant): redraw the window icon's fill.
+                case "accent_changed":
+                {
+                    string accHex = root.TryGetProperty("color", out var accEl) ? accEl.GetString() ?? "" : "";
+                    try
+                    {
+                        _accentIconFill = ColorTranslator.FromHtml(accHex);
+                        ApplyWindowIcon(Handle, _lastAppliedTheme != "light", _accentIconFill);
+                    }
+                    catch { /* malformed colour: keep the current icon */ }
+                    break;
+                }
+
                 case "state_snapshot":
                     // Used to be guarded by an epoch check here (rejecting a
                     // snapshot generated before the most recent SyncToDocument,
@@ -2936,7 +3039,7 @@ public class SlateWindow : Form
 
         int sliders = 0, toggles = 0, buttons = 0, valueLists = 0, panels = 0, itemPickers = 0,
             humanLists = 0, colourPickers = 0, pancakeButtons = 0, triggers = 0,
-            geometryParams = 0, dataDams = 0, paramViewers = 0, pathMappers = 0, mdSliders = 0, graphMappers = 0;
+            geometryParams = 0, dataDams = 0, paramViewers = 0, pathMappers = 0, mdSliders = 0, graphMappers = 0, customPreviews = 0;
 
         foreach (var o in selected)
         {
@@ -2958,10 +3061,11 @@ public class SlateWindow : Form
             else if (o is IGH_Param gp && TryGetGeometryParamKind(gp, out var gpKind))
                                                  { AddGeometryParam(tabId, groupId, gp, gpKind); geometryParams++; }
             else if (o is GH_DataDamComponent dd) { AddDataDam(tabId, groupId, dd); dataDams++; }
+            else if (o is GH_CustomPreviewComponent cpc) { AddCustomPreview(tabId, groupId, cpc); customPreviews++; }
             else if (o is GH_ParamViewer pv)    { AddParamViewer(tabId, groupId, pv); paramViewers++; }
         }
 
-        Log($"Captured {sliders} slider(s), {toggles} toggle(s), {buttons} button(s), {valueLists} value list(s), {panels} panel(s), {itemPickers} item picker(s), {humanLists} item selector(s), {colourPickers} colour picker(s), {mdSliders} MD slider(s), {graphMappers} graph mapper(s), {pancakeButtons} true-only button(s), {triggers} trigger(s), {geometryParams} geometry param(s), {dataDams} data dam(s), {paramViewers} param viewer(s), {pathMappers} path mapper(s).");
+        Log($"Captured {sliders} slider(s), {toggles} toggle(s), {buttons} button(s), {valueLists} value list(s), {panels} panel(s), {itemPickers} item picker(s), {humanLists} item selector(s), {colourPickers} colour picker(s), {mdSliders} MD slider(s), {graphMappers} graph mapper(s), {pancakeButtons} true-only button(s), {triggers} trigger(s), {geometryParams} geometry param(s), {dataDams} data dam(s), {customPreviews} custom preview(s), {paramViewers} param viewer(s), {pathMappers} path mapper(s).");
     }
 
     // ── Geometry param "Set Geometry" pick ──────────────────────────────────
@@ -3155,6 +3259,57 @@ public class SlateWindow : Form
         if (!_geometryParams.TryGetValue(id, out var param) || param is not GH_ActiveObject activeObj)
             return;
         _bakeClickMethod?.Invoke(activeObj, new object?[] { null, EventArgs.Empty });
+    }
+
+    // Settings > "Show icons" lets the user pick which kinds of icon to show,
+  // grouped the way GH's own Params tab groups them (Category / SubCategory).
+  // Anything outside Params (Custom Preview, Data Dam, ...) is "other".
+  private static string IconGroupOf(string? category, string? subCategory)
+  {
+      if (!string.Equals(category, "Params", StringComparison.OrdinalIgnoreCase)) return "other";
+      switch (subCategory?.ToLowerInvariant())
+      {
+          case "geometry":  return "geometry";
+          case "primitive": return "primitive";
+          case "input":     return "input";
+          default:          return "other";
+      }
+  }
+
+  // Every object type the user can sensibly capture: GH's Params > Geometry /
+  // Primitive / Input, plus the component types Slate captures itself.
+  private List<object> BuildIconCatalog()
+  {
+      var extra = new HashSet<Type> { typeof(GH_DataDamComponent), typeof(GH_CustomPreviewComponent), typeof(GH_ParamViewer), typeof(GH_PathMapper) };
+      var items = new List<object>();
+      var seen  = new HashSet<Guid>();
+      foreach (var proxy in Grasshopper.Instances.ComponentServer.ObjectProxies)
+      {
+          if (proxy.Obsolete || proxy.Exposure == GH_Exposure.hidden) continue;
+          string group = IconGroupOf(proxy.Desc.Category, proxy.Desc.SubCategory);
+          if (group == "other" && !extra.Contains(proxy.Type)) continue;
+          if (!seen.Add(proxy.Guid)) continue;
+          string? icon = null;
+          try
+          {
+              var bmp = proxy.Icon;
+              if (bmp != null)
+              {
+                  using var ms = new System.IO.MemoryStream();
+                  bmp.Save(ms, System.Drawing.Imaging.ImageFormat.Png);
+                  icon = "data:image/png;base64," + Convert.ToBase64String(ms.ToArray());
+              }
+          }
+          catch { }
+          items.Add(new { guid = proxy.Guid.ToString(), name = proxy.Desc.Name, group, icon });
+      }
+      return items;
+  }
+
+  private void BakeCustomPreview(string id)
+    {
+        if (!_customPreviews.TryGetValue(id, out var cp)) return;
+        _bakeClickMethod?.Invoke(cp, new object?[] { null, EventArgs.Empty });
     }
 
     private void ClearGeometryParamData(string id)
@@ -3691,6 +3846,7 @@ public class SlateWindow : Form
         _triggers.Clear();
         _geometryParams.Clear();
         _dataDams.Clear();
+        _customPreviews.Clear();
         _paramViewers.Clear();
         _pathMappers.Clear();
         _dataDamGates.Clear();
@@ -3752,6 +3908,9 @@ public class SlateWindow : Form
             var docDataDams = doc.Objects
                 .OfType<GH_DataDamComponent>()
                 .ToDictionary(d => d.InstanceGuid.ToString(), d => d);
+            var docCustomPreviews = doc.Objects
+                .OfType<GH_CustomPreviewComponent>()
+                .ToDictionary(c => c.InstanceGuid.ToString(), c => c);
             var docParamViewers = doc.Objects
                 .OfType<GH_ParamViewer>()
                 .ToDictionary(p => p.InstanceGuid.ToString(), p => p);
@@ -3779,6 +3938,7 @@ public class SlateWindow : Form
             _triggers.Clear();
             _geometryParams.Clear();
             _dataDams.Clear();
+            _customPreviews.Clear();
             _paramViewers.Clear();
             _pathMappers.Clear();
             _dataDamGates.Clear();
@@ -3990,6 +4150,19 @@ public class SlateWindow : Form
                             }
                         }
                         else { Log($"RestoreState: dropped {kind} id={id} — no matching live object in doc.Objects."); arr.RemoveAt(i); }
+                    }
+                    else if (kind == "customPreview")
+                    {
+                        if (docCustomPreviews.TryGetValue(id, out var cpr))
+                        {
+                            _customPreviews[id] = cpr;
+                            s["name"]    = cpr.NickName;
+                            s["preview"] = !cpr.Hidden;
+                            s["render"]  = cpr.IncludeInRender;
+                            s["enabled"] = !cpr.Locked;
+                            s["filter"]  = cpr.ViewportFilter ?? "";
+                        }
+                        else { Log($"RestoreState: dropped {kind} id={id} - no matching live object in doc.Objects."); arr.RemoveAt(i); }
                     }
                     else if (kind == "paramViewer")
                     {

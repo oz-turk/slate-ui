@@ -48,6 +48,15 @@ public static class SlateEvent
     public static string TriggerAdded(string tabId, string id, string name, int interval, string intervalString, bool lockTargets, string? groupId = null) =>
         JsonSerializer.Serialize(new { type = "trigger_added", tabId, id, name, interval, intervalString, lockTargets, groupId });
 
+    // Native "Custom Preview" (GH_CustomPreviewComponent): four independent
+    // native properties - preview (!Hidden), render (IncludeInRender),
+    // enabled (!Locked) and the viewport name filter.
+    public static string CustomPreviewAdded(string tabId, string id, string name, bool preview, bool render, bool enabled, string filter, string? groupId = null) =>
+        JsonSerializer.Serialize(new { type = "customPreview_added", tabId, id, name, preview, render, enabled, filter, groupId });
+
+    public static string CustomPreviewUpdated(string id, string name, bool preview, bool render, bool enabled, string filter) =>
+        JsonSerializer.Serialize(new { type = "customPreview_update", id, name, preview, render, enabled, filter });
+
     // Native "Data Dam" (Grasshopper.Kernel.Components.GH_DataDamComponent) —
     // unlike GH_Timer this is a genuine data-carrying GH_Component, but it's
     // captured the same "not an IGH_Param" way. mode is "always"/"never"/"delay"
@@ -138,6 +147,10 @@ public static class SlateEvent
     // for this one round trip; never stored on the C# or JS side.
     public static string IconsResult(IDictionary<string, string> keys, IDictionary<string, string> images) =>
         JsonSerializer.Serialize(new { type = "icons_result", keys, images });
+
+    // Settings > Show icons: the per-type list (guid, name, group, icon PNG).
+    public static string IconCatalogResult(IEnumerable<object> items) =>
+        JsonSerializer.Serialize(new { type = "icon_catalog_result", items });
 
     public static string SortPositionsResult(string tabId, IDictionary<string, float[]> positions) =>
         JsonSerializer.Serialize(new { type = "sort_positions_result", tabId, positions });

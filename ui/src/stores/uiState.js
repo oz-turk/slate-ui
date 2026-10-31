@@ -23,6 +23,29 @@ function readDefaultTheme() {
 }
 export const theme = writable(readDefaultTheme())
 
+// Accent colour (Settings > Accent) — personal preference, plain localStorage
+// like the icon choices, not saved into the .gh. 'blue' is the original
+// look; the others are pastel/deeper variants defined in app.css
+// (:root[data-accent=...]). dark/light here are only the swatch preview colours.
+export const ACCENTS = [
+  { id: 'blue', label: 'Blue', dark: '#74a2ff', light: '#3d6fd6' },
+  { id: 'orange', label: 'Orange', dark: '#ffb27a', light: '#d9772b' },
+  { id: 'red', label: 'Red', dark: '#ff8f8f', light: '#d14b4b' },
+  { id: 'green', label: 'Green', dark: '#86d6a6', light: '#3a9a63' },
+  { id: 'purple', label: 'Purple', dark: '#b9a0ff', light: '#7a5bd6' },
+  { id: 'mono', label: 'Mono', dark: '#e6e6e6', light: '#3a3a3a' },
+]
+function readAccent() {
+  try {
+    const a = localStorage.getItem('slate-accent')
+    return ACCENTS.some(x => x.id === a) ? a : 'blue'
+  } catch { return 'blue' }
+}
+export const accent = writable(readAccent())
+accent.subscribe(v => {
+  try { localStorage.setItem('slate-accent', v) } catch {}
+})
+
 // Status bar hint — null means "show the default, mode-based shortcut list";
 // any component can set() its own hint on hover and clear it (set null) on leave.
 export const hoverHint = writable(null)
@@ -112,3 +135,22 @@ showParamIcons.subscribe(v => {
 })
 export const iconKeys   = writable({})
 export const iconImages = writable({})
+
+// Settings > Show icons lists every capturable object type under GH's own
+// Params groups; the user hides the ones whose icon isn't wanted. Stored as the
+// *hidden* guids so new types default to shown. localStorage only (personal
+// preference). iconCatalog = [{ guid, name, group, icon }] from C#.
+export const ICON_GROUPS = [
+  { id: 'geometry',  label: 'Geometry' },
+  { id: 'primitive', label: 'Primitive' },
+  { id: 'input',     label: 'Input' },
+  { id: 'other',     label: 'Other' },
+]
+export const iconCatalog = writable([])
+function readHiddenIconTypes() {
+  try { return JSON.parse(localStorage.getItem('slate-hidden-icon-types') ?? '[]') } catch { return [] }
+}
+export const hiddenIconTypes = writable(readHiddenIconTypes())
+hiddenIconTypes.subscribe(v => {
+  try { localStorage.setItem('slate-hidden-icon-types', JSON.stringify(v)) } catch {}
+})

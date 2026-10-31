@@ -12,7 +12,7 @@
     updatePane, syncControl, removeAllBySourceId, clearAllWorkspaces, resetToDefault, makeLeaf, setActiveWorkspace,
     posAppend, applyWindowEdgeResize, orderedItems, MIN_PANE_SIZE
   } from './stores/layout.js'
-  import { mode, pinned, theme, deleteRequest, captureRequest, settingsOpen, clearSelectionTick, groupSelectionTick, hoverHint, altHeld, ctrlHeld, fullscreenTreeId, paramViewerItemsCache, allowMultipleCaptures, showParamIcons, iconKeys, iconImages } from './stores/uiState.js'
+  import { ACCENTS, accent, iconCatalog, mode, pinned, theme, deleteRequest, captureRequest, settingsOpen, clearSelectionTick, groupSelectionTick, hoverHint, altHeld, ctrlHeld, fullscreenTreeId, paramViewerItemsCache, allowMultipleCaptures, showParamIcons, iconKeys, iconImages } from './stores/uiState.js'
   import { undo, suppressDuring } from './stores/history.js'
   import { postToCs, postStateSnapshot } from './lib/ipc.js'
 
@@ -28,6 +28,10 @@
   // inherit upward from <main> to <body>/<html>), so <html> itself needs
   // the attribute too, not just the <main data-theme> below.
   $: document.documentElement.dataset.theme = $theme
+  $: document.documentElement.dataset.accent = $accent
+  // The window icon (drawn in C#) takes the accent too; re-sent on theme change
+  // since each accent has a separate dark/light colour.
+  $: postToCs({ type: 'accent_changed', color: (ACCENTS.find(a => a.id === $accent) ?? ACCENTS[0])[$theme === 'light' ? 'light' : 'dark'] })
 
   // ── C# ↔ JS ───────────────────────────────────────────────────────────────────
   onMount(() => {
@@ -573,6 +577,18 @@
       postStateSnapshot()
     }
 
+    // Native "Custom Preview" (GH_CustomPreviewComponent) — preview/render/
+    // enabled are booleans (preview = !Hidden, enabled = !Locked), filter is
+    // the viewport name pattern. customPreview_update catches changes made on
+    // the native canvas (see PushCustomPreviewUpdates in SlateWindow.cs).
+    if (msg.type === 'customPreview_added') {
+      addCapturedControl({ id: msg.id, type: 'customPreview', name: msg.name, preview: msg.preview, render: msg.render, enabled: msg.enabled, filter: msg.filter }, msg)
+    }
+
+    if (msg.type === 'customPreview_update') {
+      syncControl(msg.id, { name: msg.name, preview: msg.preview, render: msg.render, enabled: msg.enabled, filter: msg.filter })
+    }
+
     // Native "Param Viewer" (GH_ParamViewer) — tree is the generic
     // { kids: [...] } / { count } shape built from GH's own GraphicTree
     // (see BuildParamViewerTree in SlateWindow.cs). Re-pushed on every solve
@@ -664,9 +680,12 @@
     // group (see sortContainerByPosition); the coordinates themselves are
     // never stored, only the resulting `pos` — same field every other
     // reorder already persists.
+    if (msg.type === 'icon_catalog_result') iconCatalog.set(msg.items)
+
     if (msg.type === 'icons_result') {
       iconKeys.update(k => ({ ...k, ...msg.keys }))
       iconImages.update(i => ({ ...i, ...msg.images }))
+
     }
 
     if (msg.type === 'sort_positions_result') {

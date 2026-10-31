@@ -80,6 +80,23 @@
   color-scheme: light;
 }
 
+
+/* Accent colour choice (Settings > Accent). `data-accent` on <html>; the
+   default blue is simply the base values above. Dark/light variants are
+   separate: dark = pastel and light-on-dark, light = deeper for contrast on
+   the paper-toned surfaces. Selector order matters: data-theme + data-accent
+   (3 parts) beats :root[data-theme="light"]'s own accent. */
+:root[data-theme="dark"][data-accent="orange"]  { --accent: #ffb27a; --accent-rgb: 255, 178, 122; --accent-light: #ffcaa1; }
+:root[data-theme="light"][data-accent="orange"] { --accent: #d9772b; --accent-rgb: 217, 119, 43; --accent-light: #b85d17; }
+:root[data-theme="dark"][data-accent="red"]  { --accent: #ff8f8f; --accent-rgb: 255, 143, 143; --accent-light: #ffb0b0; }
+:root[data-theme="light"][data-accent="red"] { --accent: #d14b4b; --accent-rgb: 209, 75, 75; --accent-light: #b03030; }
+:root[data-theme="dark"][data-accent="green"]  { --accent: #86d6a6; --accent-rgb: 134, 214, 166; --accent-light: #aae5c1; }
+:root[data-theme="light"][data-accent="green"] { --accent: #3a9a63; --accent-rgb: 58, 154, 99; --accent-light: #277a4a; }
+:root[data-theme="dark"][data-accent="purple"]  { --accent: #b9a0ff; --accent-rgb: 185, 160, 255; --accent-light: #d0bfff; }
+:root[data-theme="light"][data-accent="purple"] { --accent: #7a5bd6; --accent-rgb: 122, 91, 214; --accent-light: #5f3fb8; }
+:root[data-theme="dark"][data-accent="mono"]  { --accent: #e6e6e6; --accent-rgb: 230, 230, 230; --accent-light: #ffffff; }
+:root[data-theme="light"][data-accent="mono"] { --accent: #3a3a3a; --accent-rgb: 58, 58, 58; --accent-light: #1a1a1a; }
+
 body {
   margin: 0;
 }

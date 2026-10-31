@@ -1,12 +1,13 @@
 <script>
-  import { showParamIcons, iconKeys, iconImages } from '../stores/uiState.js'
+  import { showParamIcons, iconKeys, iconImages, hiddenIconTypes } from '../stores/uiState.js'
   import { postToCs } from './ipc.js'
 
   export let slider = {}
   export let mode   = 'preview'
 
   $: sourceId = slider.sourceId ?? slider.id
-  $: src = $showParamIcons ? $iconImages[$iconKeys[sourceId]] : null
+  $: guid = $iconKeys[sourceId]
+  $: src = $showParamIcons && !$hiddenIconTypes.includes(guid) ? $iconImages[guid] : null
 
   // Preview mode only: single click jumps to the original object. Edit mode
   // keeps the icon purely informational so it can't fight row selection.
