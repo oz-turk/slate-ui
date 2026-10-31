@@ -1,5 +1,6 @@
 <script>
   import ParamIcon from './ParamIcon.svelte'
+  import SceneDot from './SceneDot.svelte'
   import { createEventDispatcher, onDestroy } from 'svelte'
   import { dragTranslateYFor, rowDragOver, rowDragLeave, rowDrop } from './rowDrag.js'
   import { draggingControl } from '../stores/uiState.js'
@@ -132,7 +133,7 @@
     </div>
   {/if}
 
-  <span class="name" title={slider.name}><ParamIcon {slider} {mode} />{slider.name}</span>
+  <span class="name" title={slider.name}><ParamIcon {slider} {mode} />{slider.name}<SceneDot {slider} /></span>
 
   <span class="bound lo">{fmt(slider.min)}</span>
 

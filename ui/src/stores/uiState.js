@@ -142,6 +142,15 @@ export const showParamIcons = writable(readShowParamIcons())
 showParamIcons.subscribe(v => {
   try { localStorage.setItem('slate-show-icons', v ? 'true' : 'false') } catch {}
 })
+// Scenes > "Show changes": a small dot next to every control whose value differs
+// from the active scene. Personal preference, localStorage only, off by default.
+function readShowSceneChanges() {
+  try { return localStorage.getItem('slate-show-scene-changes') === 'true' } catch { return false }
+}
+export const showSceneChanges = writable(readShowSceneChanges())
+showSceneChanges.subscribe(v => {
+  try { localStorage.setItem('slate-show-scene-changes', v ? 'true' : 'false') } catch {}
+})
 export const iconKeys   = writable({})
 export const iconImages = writable({})
 

@@ -1,5 +1,6 @@
 <script>
   import ParamIcon from './ParamIcon.svelte'
+  import SceneDot from './SceneDot.svelte'
   import { createEventDispatcher } from 'svelte'
   import { dragTranslateYFor, rowDragOver, rowDragLeave, rowDrop } from './rowDrag.js'
   const dispatch = createEventDispatcher()
@@ -55,7 +56,7 @@
     </div>
   {/if}
 
-  <span class="name" title={slider.name}><ParamIcon {slider} {mode} />{slider.name}</span>
+  <span class="name" title={slider.name}><ParamIcon {slider} {mode} />{slider.name}<SceneDot {slider} /></span>
 
   <div class="spacer"></div>
 
@@ -147,17 +148,17 @@
     flex-shrink: 0;
     transition: background 0.15s, border-color 0.15s;
   }
-  .switch.on { background: rgba(var(--accent-rgb), 0.4); border-color: var(--accent); }
+  .switch.on { background: rgba(var(--accent-rgb), 0.35); border-color: var(--accent); }
 
   .knob {
     position: absolute;
-    top: 1px; left: 1px;
+    top: 2px; left: 2px;
     width: 14px; height: 14px;
     border-radius: 50%;
-    background: rgba(var(--text-rgb), 0.7);
+    background: rgba(var(--text-rgb), 0.55);
     transition: transform 0.15s, background 0.15s;
   }
-  .switch.on .knob { transform: translateX(14px); background: var(--text); }
+  .switch.on .knob { transform: translateX(14px); background: var(--accent-light); }
 
   .del {
     width: 20px;

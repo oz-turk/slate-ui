@@ -1,6 +1,7 @@
 <script>
   import { createEventDispatcher } from 'svelte'
   import { hoverHint, settingsOpen } from '../stores/uiState.js'
+  import SceneMenu from './SceneMenu.svelte'
   const dispatch = createEventDispatcher()
 
   export let mode   = 'preview'
@@ -12,6 +13,8 @@
 
 <div class="toolbar">
   <div class="spacer"></div>
+
+  <SceneMenu />
 
   <button class="mode-btn" class:active={mode === 'edit'} on:click={toggleMode}
       on:mouseenter={() => hoverHint.set('Tab: switch between Edit and Preview')}

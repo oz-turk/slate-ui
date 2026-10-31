@@ -15,6 +15,8 @@
   import { ACCENTS, accent, iconCatalog, mode, pinned, theme, deleteRequest, captureRequest, settingsOpen, clearSelectionTick, groupSelectionTick, hoverHint, draggingControl, altHeld, ctrlHeld, fullscreenTreeId, paramViewerItemsCache, allowMultipleCaptures, showParamIcons, iconKeys, iconImages } from './stores/uiState.js'
   import { undo, suppressDuring } from './stores/history.js'
   import { postToCs, postStateSnapshot } from './lib/ipc.js'
+  import { scenes, activeSceneId } from './stores/sceneStore.js'
+  import { pruneOrphanScenes } from './stores/scenes.js'
 
   // Driven from the theme store directly rather than var(--panel-bg) — that
   // var kept resolving to something dark in light mode for this specific
@@ -667,13 +669,16 @@
       syncControl(msg.id, { name: msg.name, interval: msg.interval, intervalString: msg.intervalString, lockTargets: msg.lockTargets })
     }
 
+    // Scenes reference captured controls by id, so they go with them.
     if (msg.type === 'cleared') {
       clearAllWorkspaces()
+      scenes.set([]); activeSceneId.set(null)
       postStateSnapshot()
     }
 
     if (msg.type === 'reset') {
       resetToDefault()
+      scenes.set([]); activeSceneId.set(null)
       postStateSnapshot()
     }
 
@@ -752,6 +757,10 @@
       if (msg.theme) theme.set(msg.theme === 'light' ? 'light' : 'dark')
       // Same per-file-wins-over-localStorage-default rule as the theme above.
       if (typeof msg.showIcons === 'boolean') showParamIcons.set(msg.showIcons)
+      // Per-document; files saved before scenes existed have no field -> empty.
+      scenes.set(Array.isArray(msg.scenes) ? msg.scenes : [])
+      pruneOrphanScenes()
+      activeSceneId.set(null)
       postStateSnapshot()
     }
   }

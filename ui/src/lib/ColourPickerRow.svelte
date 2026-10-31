@@ -1,5 +1,6 @@
 <script>
   import ParamIcon from './ParamIcon.svelte'
+  import SceneDot from './SceneDot.svelte'
   import { createEventDispatcher } from 'svelte'
   import ColourPickerPopup from './ColourPickerPopup.svelte'
   import { dragTranslateYFor, rowDragOver, rowDragLeave, rowDrop } from './rowDrag.js'
@@ -85,7 +86,7 @@
     </div>
   {/if}
 
-  <span class="name" title={slider.name}><ParamIcon {slider} {mode} />{slider.name}</span>
+  <span class="name" title={slider.name}><ParamIcon {slider} {mode} />{slider.name}<SceneDot {slider} /></span>
 
   <div class="spacer"></div>
 

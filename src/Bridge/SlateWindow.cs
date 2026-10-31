@@ -2828,6 +2828,49 @@ public class SlateWindow : Form
                     Invoke(() => BakeGeometryParam(gbid));
                     break;
 
+                // Scene apply: every value goes into the same latest-value
+                // dictionaries the drag path uses, then ONE ApplyLatestValues
+                // writes them all and schedules a single solve. If a solve is
+                // already running (_solveRunning) the values just wait there
+                // and OnDocSolutionEnd drains them. Ids that no longer match a
+                // live object are skipped silently (scene outlived the control).
+                case "apply_scene":
+                    {
+                        bool scQueued = false, scPanels = false;
+                        if (root.TryGetProperty("items", out var scItems) && scItems.ValueKind == JsonValueKind.Array)
+                        {
+                            foreach (var scIt in scItems.EnumerateArray())
+                            {
+                                string scId   = scIt.GetProperty("id").GetString() ?? "";
+                                string scKind = scIt.GetProperty("kind").GetString() ?? "";
+                                var scVal     = scIt.GetProperty("value");
+                                switch (scKind)
+                                {
+                                    case "num":
+                                        if (scVal.ValueKind == JsonValueKind.Number
+                                            && (_sliders.ContainsKey(scId) || _toggles.ContainsKey(scId) || _valueLists.ContainsKey(scId) || _itemPickers.ContainsKey(scId) || _humanValueLists.ContainsKey(scId)))
+                                        { _latestValues[scId] = scVal.GetDouble(); scQueued = true; }
+                                        break;
+                                    case "colour":
+                                        if (scVal.ValueKind == JsonValueKind.String && _colourPickers.ContainsKey(scId))
+                                        { _latestColourValues[scId] = scVal.GetString() ?? ""; scQueued = true; }
+                                        break;
+                                    case "md":
+                                        if (scVal.ValueKind == JsonValueKind.Object && _mdSliders.ContainsKey(scId))
+                                        { _latestMdValues[scId] = (scVal.GetProperty("x").GetDouble(), scVal.GetProperty("y").GetDouble()); scQueued = true; }
+                                        break;
+                                    case "panel":
+                                        if (scVal.ValueKind == JsonValueKind.String && _panels.TryGetValue(scId, out var scPanel))
+                                        { scPanel.SetUserText(scVal.GetString() ?? ""); scPanel.ExpireSolution(false); scPanels = true; }
+                                        break;
+                                }
+                            }
+                        }
+                        if (scQueued) { if (!_solveRunning) { _solveRunning = true; ApplyLatestValues(); } }
+                        else if (scPanels) _hostDocument?.ScheduleSolution(1, null);
+                    }
+                    break;
+
                 case "pin":
                     bool pinned = root.GetProperty("value").GetBoolean();
                     Invoke(() => SetPin(pinned));

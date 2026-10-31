@@ -3,6 +3,7 @@
   import { undoLimit } from '../stores/history.js'
   import { postStateSnapshot, postToCs } from './ipc.js'
   import { clickOutside } from './actions.js'
+  import Switch from './Switch.svelte'
 
   // Per-type icon list (Show icons): groups expand into a table of icon / name /
   // eye toggle. The catalog is asked from C# the first time it is needed.
@@ -170,21 +171,13 @@
   </div>
 
   <div class="setting-row">
-    <label for="allow-multi-capture">Allow multiple captures of the same parameter</label>
-    <label class="switch">
-      <input id="allow-multi-capture" type="checkbox" checked={$allowMultipleCaptures}
-          on:change={e => allowMultipleCaptures.set(e.target.checked)} />
-      <span class="switch-track"></span>
-    </label>
+    <Switch label="Allow multiple captures of the same parameter" checked={$allowMultipleCaptures}
+        on:change={e => allowMultipleCaptures.set(e.target.checked)} />
   </div>
 
   <div class="setting-row">
-    <label for="show-icons">Show icons</label>
-    <label class="switch">
-      <input id="show-icons" type="checkbox" checked={$showParamIcons}
-          on:change={e => { showParamIcons.set(e.target.checked); postStateSnapshot() }} />
-      <span class="switch-track"></span>
-    </label>
+    <Switch label="Show icons" checked={$showParamIcons}
+        on:change={e => { showParamIcons.set(e.target.checked); postStateSnapshot() }} />
   </div>
 
   {#if $showParamIcons}
@@ -390,55 +383,6 @@
   .setting-row label, .setting-row .setting-label {
     font-size: 11px;
     color: rgba(var(--text-rgb), 0.73);
-  }
-  /* Toggle switch — a plain <input type="checkbox"> made invisible but kept
-     in place (so it still gets focus/keyboard/click), with a track+knob span
-     drawn on top and animated off its :checked state. */
-  .switch {
-    position: relative;
-    display: inline-block;
-    width: 32px;
-    height: 18px;
-    flex-shrink: 0;
-    cursor: pointer;
-  }
-  .switch input {
-    position: absolute;
-    inset: 0;
-    margin: 0;
-    opacity: 0;
-    cursor: pointer;
-  }
-  .switch-track {
-    position: absolute;
-    inset: 0;
-    background: var(--grid);
-    border: 1px solid var(--grid);
-    border-radius: 999px;
-    transition: background 0.15s, border-color 0.15s;
-  }
-  .switch-track::before {
-    content: '';
-    position: absolute;
-    top: 2px;
-    left: 2px;
-    width: 14px;
-    height: 14px;
-    border-radius: 50%;
-    background: rgba(var(--text-rgb), 0.55);
-    transition: transform 0.15s ease, background 0.15s;
-  }
-  .switch input:checked + .switch-track {
-    background: rgba(var(--accent-rgb), 0.35);
-    border-color: var(--accent);
-  }
-  .switch input:checked + .switch-track::before {
-    transform: translateX(14px);
-    background: var(--accent-light);
-  }
-  .switch input:focus-visible + .switch-track {
-    outline: 2px solid var(--accent);
-    outline-offset: 1px;
   }
   .setting-row input:not([type='checkbox']) {
     width: 48px;

@@ -1,11 +1,12 @@
 import { get } from 'svelte/store'
 import { workspaces, activeWorkspaceId } from '../stores/layout.js'
 import { theme, showParamIcons } from '../stores/uiState.js'
+import { scenes } from '../stores/sceneStore.js'
 
 export function postToCs(obj) {
   window.chrome?.webview?.postMessage(obj)
 }
 
 export function postStateSnapshot() {
-  postToCs({ type: 'state_snapshot', workspaces: get(workspaces), activeWorkspaceId: get(activeWorkspaceId), theme: get(theme), showIcons: get(showParamIcons) })
+  postToCs({ type: 'state_snapshot', workspaces: get(workspaces), activeWorkspaceId: get(activeWorkspaceId), theme: get(theme), showIcons: get(showParamIcons), scenes: get(scenes) })
 }
