@@ -4,6 +4,27 @@ Notable user-facing changes, newest first. Internal refactors and pure repo main
 
 ## Unreleased
 
+## 0.3.0 - 2026-11-03
+
+- **Scenes:** save named snapshots of control values from the top toolbar, then apply, overwrite, rename or delete them. Scenes are saved with the .gh. A dot next to the active scene shows when live values no longer match it, and an optional "Show changes" switch marks each control that differs. Covers sliders, toggles, single-select value lists / item pickers / item selectors, colour pickers, MD Sliders and typed-input text panels.
+- **Path Mapper capture:** shows the output tree as a radial graph. Drag a wedge along its ring to reorder sibling branches (children move with it). A Source/Target rule editor in Edit mode writes your own rules.
+- **MD Slider capture:** an XY pad that uses the slider's own domains, with the X/Y readout under the name.
+- **Graph Mapper capture:** pick any graph type Grasshopper knows (native or plug-in) from the row's right-click menu. Drag control points (shown on hover) and hold Ctrl to snap to the ruler. The curve matches the one drawn on the canvas.
+- **Custom Preview capture:** one row with Preview, Render, Bake and Enabled buttons plus a viewport filter. Bake opens Grasshopper's own Bake dialog.
+- **Show icons per type:** a settings page to choose which object types show their icon, grouped as Geometry / Primitive / Input / Other. Press and drag across tiles to toggle several at once.
+- **Accent colour:** Blue, Orange, Red, Green, Purple or Mono, each with dark and light variants. The window icon follows the accent.
+- **Save from Slate:** a Save button in the top toolbar and Ctrl+S (while the Slate window is active) save the Grasshopper file. A file that was never saved opens Grasshopper's Save As dialog.
+- Drag tabs and workspace tabs to reorder them. Dropping on another pane's tab bar adds the tab there instead of splitting the pane.
+- Dropping below an expanded group's last row now places the item after the group.
+- New "Show Tab Bar" option in the pane context menu.
+- Header-style text panels now cut off with an ellipsis instead of overflowing.
+- Tab toggles Edit mode everywhere, including inside text fields.
+- The context menu scrolls when it is taller than the window.
+- Fix sliders snapping back to an older value mid-drag (since 0.2.2, most visible on slow definitions). Alt-drag copies keep updating while you drag.
+- Fix undo jumping to a different workspace. Switching workspaces is now an undo step of its own, like switching tabs.
+- Undo now keeps 50 steps by default instead of 10.
+- Fix rows looking stretched for a moment after their height changed. Remove buttons are now the same size and line up across rows.
+
 ## 0.2.4 - 2026-10-01
 
 - **Show icons:** new Settings toggle (off by default) shows Grasshopper's own icon next to each captured row's name. In preview mode, clicking the icon or double clicking the name jumps the canvas to the original object and selects it.
