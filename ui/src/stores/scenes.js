@@ -1,7 +1,7 @@
 import { get } from 'svelte/store'
 import { workspaces, allLeaves } from './layout.js'
 import { scenes, activeSceneId, modifiedIds } from './sceneStore.js'
-import { postToCs, postStateSnapshot } from '../lib/ipc.js'
+import { postToCs, postStateSnapshot, markDirty } from '../lib/ipc.js'
 
 // Scene = { id, name, values: { [sourceId]: value } }.
 //
@@ -81,7 +81,8 @@ const norm = (kind, v) => kind === 'num' && typeof v === 'boolean' ? (v ? 1 : 0)
 let _n = 0
 const newSceneId = () => 'scene_' + Date.now() + '_' + (++_n)
 
-function persist() { postStateSnapshot() }
+// Scene list changes are saved in the .gh -> unsaved changes.
+function persist() { postStateSnapshot(); markDirty() }
 
 function currentValues() {
   const values = {}
@@ -130,6 +131,7 @@ export function applyScene(id) {
   if (items.length) {
     pendingUntil = Date.now() + APPLY_PENDING_MS
     postToCs({ type: 'apply_scene', items })
+    markDirty()   // control values change in GH
   }
   return { applied: items.length, skipped }
 }

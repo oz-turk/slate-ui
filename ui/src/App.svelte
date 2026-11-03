@@ -13,7 +13,7 @@
     posAppend, applyWindowEdgeResize, orderedItems, MIN_PANE_SIZE
   } from './stores/layout.js'
   import { ACCENTS, accent, iconCatalog, mode, pinned, theme, deleteRequest, captureRequest, settingsOpen, clearSelectionTick, groupSelectionTick, hoverHint, draggingControl, altHeld, ctrlHeld, fullscreenTreeId, paramViewerItemsCache, allowMultipleCaptures, showParamIcons, iconKeys, iconImages } from './stores/uiState.js'
-  import { undo, suppressDuring } from './stores/history.js'
+  import { undo, suppressDuring, asResizeChange } from './stores/history.js'
   import { postToCs, postStateSnapshot, saveDocument } from './lib/ipc.js'
   import { scenes, activeSceneId } from './stores/sceneStore.js'
   import { pruneOrphanScenes } from './stores/scenes.js'
@@ -85,7 +85,7 @@
     prevScreenX = window.screenX
     prevScreenY = window.screenY
     if (Math.abs(deltaX) <= EDGE_DRAG_MAX_TICK_PX && Math.abs(deltaY) <= EDGE_DRAG_MAX_TICK_PX)
-      applyWindowEdgeResize(deltaX, deltaY)
+      asResizeChange(() => applyWindowEdgeResize(deltaX, deltaY))
 
     // No native "drag ended" event to hook (unlike C#'s ResizeEnd), so commit
     // to C#/.gh persistence after a short quiet period instead — mirrors

@@ -2962,6 +2962,20 @@ public class SlateWindow : Form
                     Invoke(SaveHostDocument);
                     break;
 
+                // A real user change in Slate (ipc.js markDirty: an undo step,
+                // undo, scene list change/apply). state_snapshot alone never
+                // touches IsModified: it also fires on file load, window
+                // resize and GH-side syncs, which must not dirty the file
+                // (85eb99e). Only ever sets true, never false — the doc may
+                // be modified for GH-side reasons too. ScheduleLogFlush reads
+                // IsModified when it runs, so it keeps this flag.
+                case "mark_dirty":
+                {
+                    var dirtyDoc = HostDocument;
+                    if (dirtyDoc != null && !dirtyDoc.IsModified) dirtyDoc.IsModified = true;
+                    break;
+                }
+
                 // Data Tree Explorer's leaf item view (drilling all the way into
                 // a real branch, not just its arc/count — bkz.
                 // yapilacaklar/data-tree-editor.md, 2026-09-26 "item değerlerini

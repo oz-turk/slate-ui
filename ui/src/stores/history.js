@@ -1,17 +1,21 @@
 import { get, writable } from 'svelte/store'
 import { workspaces, activeWorkspaceId, restoreWorkspaces, allLeaves } from './layout.js'
-import { postToCs, postStateSnapshot } from '../lib/ipc.js'
+import { postToCs, postStateSnapshot, markDirty } from '../lib/ipc.js'
 
 // Configurable in the settings panel — how many past states to keep.
 export const undoLimit = writable(50)
 
 let stack     = []   // past states, oldest → newest; each is {workspaces, activeWorkspaceId}
-let baseline  = snapshot()
+let baseline, baselineJson   // last recorded state + its workspaces JSON (compared often, so cached)
 let timer     = null
 let suppressed = false
 
 function snapshot() {
   return { workspaces: get(workspaces), activeWorkspaceId: get(activeWorkspaceId) }
+}
+function setBaseline(state = snapshot(), json = JSON.stringify(state.workspaces)) {
+  baseline = state
+  baselineJson = json
 }
 
 // Any single user action (rename, drag-drop, capture, delete, ...) can fire
@@ -21,15 +25,39 @@ function snapshot() {
 // naturally skips continuous things like slider dragging mid-motion.
 const SETTLE_MS = 400
 
+// Unsaved-changes flag (.gh `*`, see ipc.js markDirty). Sent as soon as the
+// state first differs from the baseline, not when the step settles: GH-side
+// syncs after the change's solve keep restarting the settle timer, which
+// delayed the `*` by 1-2 s. At most once per settle window, so a slider drag
+// costs one JSON compare, not one per frame. Changes made only by a
+// window-edge resize (asResizeChange) don't count: they rescale the layout,
+// the user didn't edit anything. They still become an undo step.
+let editedSinceSettle = false   // a non-resize change happened in this window
+let dirtySent = false           // markDirty already sent in this window
+let inResize = false
+export function asResizeChange(fn) {
+  inResize = true
+  try { fn() } finally { inResize = false }
+}
+
+function differsFromBaseline() {
+  return get(activeWorkspaceId) !== baseline.activeWorkspaceId ||
+         JSON.stringify(get(workspaces)) !== baselineJson
+}
+
 function settle() {
   if (suppressed) return
+  const edited = editedSinceSettle, sent = dirtySent
+  editedSinceSettle = false
+  dirtySent = false
   const current = snapshot()
-  if (current.activeWorkspaceId === baseline.activeWorkspaceId &&
-      JSON.stringify(current.workspaces) === JSON.stringify(baseline.workspaces)) return
+  const json = JSON.stringify(current.workspaces)
+  if (current.activeWorkspaceId === baseline.activeWorkspaceId && json === baselineJson) return
   stack.push(baseline)
   const limit = get(undoLimit)
   while (stack.length > limit) stack.shift()
-  baseline = current
+  setBaseline(current, json)
+  if (edited && !sent) markDirty()   // fallback; normally already sent in scheduleSettle
 }
 
 // Switching workspaces is a step of its own, like switching tabs (activeTabId
@@ -37,9 +65,14 @@ function settle() {
 // undoing a change made after a switch jumped back to it.
 function scheduleSettle() {
   if (suppressed) return
+  if (!inResize) {
+    editedSinceSettle = true
+    if (!dirtySent && differsFromBaseline()) { dirtySent = true; markDirty() }
+  }
   clearTimeout(timer)
   timer = setTimeout(settle, SETTLE_MS)
 }
+setBaseline()
 workspaces.subscribe(scheduleSettle)
 activeWorkspaceId.subscribe(scheduleSettle)
 
@@ -53,7 +86,8 @@ export function canUndo() {
 export function suppressDuring(fn) {
   suppressed = true
   fn()
-  baseline = snapshot()
+  setBaseline()
+  dirtySent = false   // e.g. switched to another .gh: its first change must reach C# too
   suppressed = false
 }
 
@@ -101,4 +135,5 @@ export function undo() {
   suppressDuring(() => restoreWorkspaces(prev.workspaces, prev.activeWorkspaceId))
   pushChangedValues(before, get(workspaces))
   postStateSnapshot()
+  markDirty()
 }
