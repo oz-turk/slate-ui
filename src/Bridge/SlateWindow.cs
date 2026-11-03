@@ -3305,20 +3305,59 @@ public class SlateWindow : Form
         PostToJs(SlateEvent.GeometryParamUpdated(id, param.NickName, param.VolatileDataCount, param.SourceCount > 0));
     }
 
-    // GH_ActiveObject.Menu_BakeItemClick is the exact private click handler
-    // the native right-click "Bake..." menu item wires up — invoking it
-    // directly reproduces the real flow (GH's own layer-picker dialog and
-    // all) instead of reimplementing bake/layer-selection ourselves.
-    // Confirmed via reflection against the referenced Grasshopper.dll: an
-    // instance method, sender/EventArgs unused by the handler itself.
-    private static readonly MethodInfo? _bakeClickMethod =
-        typeof(GH_ActiveObject).GetMethod("Menu_BakeItemClick", BindingFlags.NonPublic | BindingFlags.Instance);
+    // Native "Bake..." (GH_ActiveObject.Menu_BakeItemClick -> _GrasshopperBake ->
+    // Commands.Run_GrasshopperBake) opens GH_RhAttributesEditor centred on the
+    // cursor and owned by the GH editor, so it lands wherever the user clicked
+    // and, with Slate pinned (TopMost), behind Slate. Same flow reproduced here
+    // with public API only: same dialog + defaults, but owned by Slate (always
+    // above it) and centred on the Rhino main window. Running outside a command
+    // means Rhino opens no undo record by itself, hence Begin/EndUndoRecord.
+    [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr hWnd, out NativeRect rect);
+    [StructLayout(LayoutKind.Sequential)] struct NativeRect { public int Left, Top, Right, Bottom; }
+
+    private void BakeWithDialog(IGH_BakeAwareObject obj)
+    {
+        if (Rhino.Commands.Command.InCommand())
+        {
+            MessageBox.Show(this, "We're sorry but Baking is only possible" + Environment.NewLine +
+                "when no other Commands are running.", "Bake failure",
+                MessageBoxButtons.OK, MessageBoxIcon.Exclamation);
+            return;
+        }
+        var doc = Rhino.RhinoDoc.ActiveDoc;
+        if (doc == null || !obj.IsBakeCapable) return;
+
+        using var editor = new Grasshopper.GUI.GH_RhAttributesEditor();
+        editor.SetDefaultAttributes();
+        editor.StartPosition = FormStartPosition.Manual;
+        editor.Location = CenteredOnRhino(editor.Size);
+        if (editor.ShowDialog(this) != DialogResult.OK) return;
+
+        var attributes = editor.GetAttributes();
+        uint undo = doc.BeginUndoRecord("Bake");
+        try { obj.BakeGeometry(doc, attributes, new List<Guid>()); }
+        finally { doc.EndUndoRecord(undo); }
+        doc.Views.Redraw();
+    }
+
+    private static Point CenteredOnRhino(Size size)
+    {
+        Rectangle area = GetWindowRect(Rhino.RhinoApp.MainWindowHandle(), out var r) && r.Right > r.Left
+            ? Rectangle.FromLTRB(r.Left, r.Top, r.Right, r.Bottom)
+            : Screen.PrimaryScreen!.WorkingArea;
+        var p = new Point(area.Left + (area.Width - size.Width) / 2, area.Top + (area.Height - size.Height) / 2);
+        // Keep it fully on the screen the Rhino window is on (e.g. Rhino half off-screen).
+        var wa = Screen.FromRectangle(area).WorkingArea;
+        p.X = Math.Max(wa.Left, Math.Min(p.X, wa.Right - size.Width));
+        p.Y = Math.Max(wa.Top, Math.Min(p.Y, wa.Bottom - size.Height));
+        return p;
+    }
 
     private void BakeGeometryParam(string id)
     {
-        if (!_geometryParams.TryGetValue(id, out var param) || param is not GH_ActiveObject activeObj)
+        if (!_geometryParams.TryGetValue(id, out var param) || param is not IGH_BakeAwareObject bakeable)
             return;
-        _bakeClickMethod?.Invoke(activeObj, new object?[] { null, EventArgs.Empty });
+        BakeWithDialog(bakeable);
     }
 
     // Settings > "Show icons" lets the user pick which kinds of icon to show,
@@ -3369,7 +3408,7 @@ public class SlateWindow : Form
   private void BakeCustomPreview(string id)
     {
         if (!_customPreviews.TryGetValue(id, out var cp)) return;
-        _bakeClickMethod?.Invoke(cp, new object?[] { null, EventArgs.Empty });
+        BakeWithDialog(cp);
     }
 
     private void ClearGeometryParamData(string id)
