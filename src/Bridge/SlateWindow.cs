@@ -374,6 +374,19 @@ public class SlateWindow : Form
         return _iconPngByType[obj.ComponentGuid] = uri;
     }
 
+    // Save button / Ctrl+S in the UI: saves the .gh this window belongs to with
+    // GH's own document IO (the same path whose Modified flip
+    // OnDocModifiedChanged logs). A file that was never saved gets GH's Save As
+    // dialog. Runs on the UI thread because Save As shows a dialog.
+    private void SaveHostDocument()
+    {
+        var doc = HostDocument ?? Grasshopper.Instances.ActiveCanvas?.Document;
+        if (doc == null) return;
+        var io = new Grasshopper.Kernel.GH_DocumentIO(doc);
+        bool saved = doc.IsFilePathDefined ? io.Save() : io.SaveAs();
+        Log(saved ? $"Saved {doc.FilePath}" : "Save cancelled or failed");
+    }
+
     // "Go to" — centres the GH canvas on the captured object at 100% zoom and selects it
     // (GH's own "Jump to" equivalent). Silently ignores an object that's gone
     // from the document (deleted after capture) or that lives in a document
@@ -2944,6 +2957,10 @@ public class SlateWindow : Form
                     Invoke(() => GoToObject(gotoId));
                     break;
                 }
+
+                case "save_document":
+                    Invoke(SaveHostDocument);
+                    break;
 
                 // Data Tree Explorer's leaf item view (drilling all the way into
                 // a real branch, not just its arc/count — bkz.

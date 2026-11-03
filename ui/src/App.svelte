@@ -14,7 +14,7 @@
   } from './stores/layout.js'
   import { ACCENTS, accent, iconCatalog, mode, pinned, theme, deleteRequest, captureRequest, settingsOpen, clearSelectionTick, groupSelectionTick, hoverHint, draggingControl, altHeld, ctrlHeld, fullscreenTreeId, paramViewerItemsCache, allowMultipleCaptures, showParamIcons, iconKeys, iconImages } from './stores/uiState.js'
   import { undo, suppressDuring } from './stores/history.js'
-  import { postToCs, postStateSnapshot } from './lib/ipc.js'
+  import { postToCs, postStateSnapshot, saveDocument } from './lib/ipc.js'
   import { scenes, activeSceneId } from './stores/sceneStore.js'
   import { pruneOrphanScenes } from './stores/scenes.js'
 
@@ -244,6 +244,15 @@
     }
 
     function onKeydown(e) {
+      // Ctrl+S saves the .gh even from inside a text field; blurring first
+      // commits the field's edit so it is part of what gets saved.
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 's') {
+        e.preventDefault()
+        if (isTextEditable(document.activeElement)) document.activeElement.blur()
+        saveDocument()
+        return
+      }
+
       if (isTextEditable(document.activeElement)) return
 
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
