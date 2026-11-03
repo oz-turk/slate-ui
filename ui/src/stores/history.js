@@ -3,7 +3,7 @@ import { workspaces, activeWorkspaceId, restoreWorkspaces, allLeaves } from './l
 import { postToCs, postStateSnapshot } from '../lib/ipc.js'
 
 // Configurable in the settings panel — how many past states to keep.
-export const undoLimit = writable(10)
+export const undoLimit = writable(50)
 
 let stack     = []   // past states, oldest → newest; each is {workspaces, activeWorkspaceId}
 let baseline  = snapshot()
@@ -24,18 +24,24 @@ const SETTLE_MS = 400
 function settle() {
   if (suppressed) return
   const current = snapshot()
-  if (JSON.stringify(current.workspaces) === JSON.stringify(baseline.workspaces)) return
+  if (current.activeWorkspaceId === baseline.activeWorkspaceId &&
+      JSON.stringify(current.workspaces) === JSON.stringify(baseline.workspaces)) return
   stack.push(baseline)
   const limit = get(undoLimit)
   while (stack.length > limit) stack.shift()
   baseline = current
 }
 
-workspaces.subscribe(() => {
+// Switching workspaces is a step of its own, like switching tabs (activeTabId
+// lives inside workspaces). Otherwise the baseline kept the old workspace and
+// undoing a change made after a switch jumped back to it.
+function scheduleSettle() {
   if (suppressed) return
   clearTimeout(timer)
   timer = setTimeout(settle, SETTLE_MS)
-})
+}
+workspaces.subscribe(scheduleSettle)
+activeWorkspaceId.subscribe(scheduleSettle)
 
 export function canUndo() {
   return stack.length > 0
