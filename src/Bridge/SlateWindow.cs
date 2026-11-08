@@ -20,7 +20,7 @@ using System.Windows.Forms;
 
 namespace Slate.Bridge;
 
-public class SlateWindow : Form
+public partial class SlateWindow : Form
 {
     [DllImport("user32.dll")] static extern bool SetWindowPos(
         IntPtr hWnd, IntPtr hWndInsertAfter, int x, int y, int cx, int cy, uint uFlags);
@@ -2524,7 +2524,7 @@ public class SlateWindow : Form
 
     protected override void Dispose(bool disposing)
     {
-        if (disposing) { _altPollTimer.Dispose(); _rangePollTimer.Dispose(); }
+        if (disposing) { _altPollTimer.Dispose(); _rangePollTimer.Dispose(); DisposeViewports(); }
         base.Dispose(disposing);
     }
 
@@ -2950,6 +2950,12 @@ public class SlateWindow : Form
                     });
                     break;
                 }
+
+                case "viewport_rect":   OnViewportRect(root);   break;
+                case "viewport_remove": OnViewportRemove(root); break;
+                case "viewport_cmd":    OnViewportCmd(root);    break;
+                case "viewport_focus":  OnViewportFocus(root);  break;
+                case "viewport_snapshot_shown": OnViewportSnapshotShown(root); break;
 
                 case "goto_request":
                 {

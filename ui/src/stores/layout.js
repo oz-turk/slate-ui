@@ -505,6 +505,18 @@ function collectBySourceFromGroups(groups, sourceId, out) {
     collectBySourceFromGroups(g.groups ?? [], sourceId, out)
   }
 }
+// Source ids of every Custom Preview row with Focus on, any workspace — the
+// viewport tabs orbit around the centre of these (SlateViewports.cs).
+export function focusedPreviewIds(wss) {
+  const ids = new Set()
+  const visit = s => { if (s.type === 'customPreview' && s.focus) ids.add(s.sourceId ?? s.id) }
+  const visitGroups = gs => { for (const g of gs) { g.sliders.forEach(visit); visitGroups(g.groups ?? []) } }
+  for (const w of wss)
+    for (const leaf of allLeaves(w.layout))
+      for (const t of leaf.tabs) { t.sliders.forEach(visit); visitGroups(t.groups ?? []) }
+  return [...ids].sort()
+}
+
 export function countBySourceId(sourceId) {
   let count = 0
   for (const w of get(workspaces)) {

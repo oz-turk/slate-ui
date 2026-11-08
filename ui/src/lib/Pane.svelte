@@ -18,9 +18,10 @@
   import CornerHandle from './CornerHandle.svelte'
   import ContextMenu  from './ContextMenu.svelte'
   import PaneSettingsPopup from './PaneSettingsPopup.svelte'
+  import ViewportHost from './ViewportHost.svelte'
   import { PANE_PATTERNS, PANE_PATTERN_DEFAULTS } from './panePatterns.js'
   import { compositeOverOpaque } from './colorUtils.js'
-  import { layout, activeWorkspaceId, updatePane, findLeaf, newTabId, splitPane, splitPaneSpanning, newSplitId, setSplitSize, collapsePane, findNeighborPane, moveCrossPaneItem, extractSlidersByIds, orderedItems, posBetween, posAppend, withAppendedPositions, reorderTabTopLevel, removeAllBySourceId, countBySourceId } from '../stores/layout.js'
+  import { layout, activeWorkspaceId, updatePane, findLeaf, newTabId, splitPane, splitPaneSpanning, newSplitId, setSplitSize, collapsePane, findNeighborPane, moveCrossPaneItem, extractSlidersByIds, orderedItems, posBetween, posAppend, withAppendedPositions, reorderTabTopLevel, removeAllBySourceId, countBySourceId, focusedPreviewIds, workspaces } from '../stores/layout.js'
   import { tabDrag, itemDrag } from '../stores/dragState.js'
   import { computeAlignedSnapTargets, snapRaw } from './splitSnap.js'
   import { mode, deleteRequest, captureRequest, clearSelectionTick, groupSelectionTick, hoverHint, theme } from '../stores/uiState.js'
@@ -182,6 +183,19 @@
       y: Math.min(clientY, window.innerHeight - h - 8),
     }
   }
+  // Viewport tab: the pane is painted the viewport's own background so the
+  // holes cut into the native viewport (tab pills, buttons, corner handles —
+  // see ViewportHost) read as transparent.
+  let vpBg = null
+  $: if (!activeTab?.viewport) vpBg = null
+  $: vpBgCss = vpBg ? `; background: ${vpBg}` : ''
+  // Camera + settings reported by C# after navigation / a menu command. Kept
+  // on the tab so they save with the .gh; not an undo step.
+  function onViewportState(tabId, viewportState) {
+    mutateTabsQuiet(ts => ts.map(t => t.id === tabId ? { ...t, viewportState } : t))
+    postStateSnapshot()
+  }
+
   function onPaneSettingsChange(e) {
     const { kind, value } = e.detail
     updatePane(paneId, p => ({ style: { ...(p.style ?? {}), [kind]: value } }))
@@ -272,6 +286,8 @@
       { label: 'Sort: Name (A-Z)',      action: () => sortActiveTab('name') },
       'sep',
       { label: 'Pane Settings…', action: () => openPaneSettings(clientX, clientY) },
+      // SPIKE: turn the active tab into a native Rhino viewport (ViewportHost / SlateViewports.cs)
+      { label: `${activeTab?.viewport ? '✓ ' : '   '}Viewport Tab`, action: () => mutateTabs(ts => ts.map(t => t.id === activeTabId ? { ...t, viewport: !t.viewport } : t)) },
     ]
     // Only offered while it can matter: with several tabs the bar is the
     // navigation, so the setting is ignored (see tabBarHidden). Ticked = shown;
@@ -622,6 +638,14 @@
     }
     patchSlider(sliderId, { [detail.field]: detail.value })
     postStateSnapshot()
+    if (detail.field === 'focus') {
+      // Slate-only, no native property. Every click (on or off) also zooms the
+      // open viewports onto what's focused now (nothing left → zoom extents).
+      // Only here — not on load or row delete — so a saved camera never moves
+      // by itself. The store is already updated, so the set is current.
+      postToCs({ type: 'viewport_focus', ids: focusedPreviewIds(get(workspaces)), zoom: true })
+      return
+    }
     postToCs({ type: 'custompreview_change', id: sourceIdFor(sliderId), field: detail.field, value: detail.value })
   }
 
@@ -1509,7 +1533,7 @@
   class="pane"
   data-pane-id={paneId}
   bind:this={paneEl}
-  style="border: 1px solid {edgeTint}{paneStyleCss}"
+  style="border: 1px solid {edgeTint}{paneStyleCss}{vpBgCss}"
   class:drop-target={isDropTarget || itemDragHover}
   on:dragover={onPaneDragOver}
   on:dragleave={onPaneDragLeave}
@@ -1564,7 +1588,7 @@
   </header>
 
   <!-- svelte-ignore a11y-mouse-events-have-key-events -->
-  <section class="content"
+  <section class="content" class:viewport-mode={activeTab?.viewport}
     style="--name-col-w: {nameColWidth}px"
     on:dragenter|preventDefault={e => activeDrag && (e.dataTransfer.dropEffect = 'move')}
     on:dragover|preventDefault={e  => activeDrag && (e.dataTransfer.dropEffect = 'move')}
@@ -1572,7 +1596,13 @@
     on:mouseout={onContentMouseOut}
     on:dblclick={onContentDblClick}
   >
-    {#if !activeTab || (activeTab.sliders.length === 0 && activeTab.groups.length === 0)}
+    {#if activeTab?.viewport}
+      {#key activeTab.id}
+        <ViewportHost id={activeTab.id} state={activeTab.viewportState ?? null}
+          on:bg={e => vpBg = e.detail}
+          on:state={e => onViewportState(activeTab.id, e.detail)} />
+      {/key}
+    {:else if !activeTab || (activeTab.sliders.length === 0 && activeTab.groups.length === 0)}
       <div class="empty">
         {#if $mode === 'edit'}
           Select sliders in Grasshopper, then click <strong>Capture</strong>.
@@ -1740,6 +1770,7 @@
     overflow-y: auto;
     padding: 6px 0;
   }
+  .content.viewport-mode { position: relative; overflow: hidden; padding: 0; }
   .row-slot { display: block; }
   .content::-webkit-scrollbar       { width: 4px; }
   .content::-webkit-scrollbar-track { background: transparent; }

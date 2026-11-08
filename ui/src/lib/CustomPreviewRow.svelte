@@ -26,6 +26,9 @@
   $: previewOn = slider.preview !== false
   $: renderOn  = slider.render  !== false
   $: enabledOn = slider.enabled !== false
+  // Focus is Slate-only (no native counterpart): viewport tabs orbit around
+  // the centre of every focused preview. Undefined reads as off.
+  $: focusOn   = slider.focus === true
 
   function toggle(field, current) {
     dispatch('change', { field, value: !current })
@@ -80,9 +83,20 @@
 
   <span class="name" title={slider.name}><ParamIcon {slider} {mode} />{slider.name}</span>
 
-  <!-- Empty gutter — same 44px column as GeometryParamRow/DataDamRow, so the
-       filter box starts and ends where their pick/mode buttons do. -->
-  <span class="gutter"></span>
+  <!-- Same 44px column as GeometryParamRow/DataDamRow's pick/mode buttons, so
+       the filter box lines up with theirs. Holds the Focus toggle: viewport
+       tabs orbit around the centre of every focused preview (Lucide "crosshair",
+       ISC license). -->
+  <span class="gutter">
+    <button class="icon-btn" class:active={focusOn} on:click|stopPropagation={() => toggle('focus', focusOn)}
+        title={focusOn ? 'Focus on — viewport tabs orbit around this, click to release' : 'Focus — make viewport tabs orbit around this preview'}>
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="10" />
+        <line x1="22" x2="18" y1="12" y2="12" /><line x1="6" x2="2" y1="12" y2="12" />
+        <line x1="12" x2="12" y1="6" y2="2" /><line x1="12" x2="12" y1="22" y2="18" />
+      </svg>
+    </button>
+  </span>
 
   <!-- Viewport Filter: wildcard pattern matched against viewport names
        (empty or * = every viewport), same field as the native menu's text box. -->
@@ -211,7 +225,7 @@
     padding-right: 8px;
   }
 
-  .gutter { min-width: 0; }
+  .gutter { min-width: 0; display: flex; align-items: center; }
 
   .filter {
     height: 22px;

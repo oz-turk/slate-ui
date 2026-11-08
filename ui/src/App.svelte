@@ -8,7 +8,7 @@
   import SettingsPanel  from './lib/SettingsPanel.svelte'
   import ParamViewerFullscreen from './lib/ParamViewerFullscreen.svelte'
   import {
-    layout, workspaces, activeWorkspaceId, allLeaves, restoreLayout, restoreWorkspaces,
+    layout, workspaces, activeWorkspaceId, allLeaves, restoreLayout, restoreWorkspaces, focusedPreviewIds,
     updatePane, syncControl, removeAllBySourceId, clearAllWorkspaces, resetToDefault, makeLeaf, setActiveWorkspace,
     posAppend, applyWindowEdgeResize, orderedItems, MIN_PANE_SIZE
   } from './stores/layout.js'
@@ -29,6 +29,14 @@
   // main[data-theme] — see app.css's comment: custom properties don't
   // inherit upward from <main> to <body>/<html>), so <html> itself needs
   // the attribute too, not just the <main data-theme> below.
+  // Focused Custom Preview rows → C# (viewport orbit pivot). Only on change.
+  let lastFocusKey = null
+  $: {
+    const ids = focusedPreviewIds($workspaces)
+    const key = ids.join(',')
+    if (key !== lastFocusKey) { lastFocusKey = key; postToCs({ type: 'viewport_focus', ids }) }
+  }
+
   $: document.documentElement.dataset.theme = $theme
   $: document.documentElement.dataset.accent = $accent
   // The window icon (drawn in C#) takes the accent too; re-sent on theme change
