@@ -56,7 +56,7 @@
 <svelte:window on:keydown={e => { if (e.key === 'Escape') close() }} />
 
 {#if control}
-  <div class="overlay">
+  <div class="overlay" data-vp-overlay>
     <div class="header">
       <span class="title">{control.name}</span>
       <div class="actions">

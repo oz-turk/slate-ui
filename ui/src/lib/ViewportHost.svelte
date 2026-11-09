@@ -28,8 +28,9 @@
   let clearTimer = null
 
   // Anything that has to draw over the viewport. Popups/menus are
-  // position:fixed elements rendered inside panes; checked by class.
-  const OVERLAY_SELECTOR = '.menu, .popup'
+  // position:fixed elements rendered inside panes; checked by class. Others
+  // (Settings panel, fullscreen Param Viewer) carry data-vp-overlay.
+  const OVERLAY_SELECTOR = '.menu, .popup, [data-vp-overlay]'
   // Bits of the pane that must stay visible and clickable over the viewport.
   const CUT_SELECTOR = '.corner, header .tab, header button, header .bar, [data-vp-cut]'
 

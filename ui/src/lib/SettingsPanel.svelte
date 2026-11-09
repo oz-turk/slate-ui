@@ -84,7 +84,7 @@
 
 <svelte:window on:mouseup={() => painting = null} />
 
-<div class="panel" use:clickOutside={{ onClose: () => settingsOpen.set(false), exclude: '[data-settings-toggle]' }}>
+<div class="panel" data-vp-overlay use:clickOutside={{ onClose: () => settingsOpen.set(false), exclude: '[data-settings-toggle]' }}>
   {#if view === 'icons'}
     <div class="sub-head">
       <button class="back" on:click={() => view = 'main'}>

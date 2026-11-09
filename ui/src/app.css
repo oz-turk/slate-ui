@@ -100,3 +100,10 @@
 body {
   margin: 0;
 }
+
+/* Pane and workspace tabs are focusable (tabindex, Enter selects) but Tab
+   never moves focus (it is the Edit/Preview toggle), so the browser focus
+   ring only ever showed up by accident: after a native viewport hands focus
+   back to the WebView, Chromium restores it to the last clicked tab and draws
+   the ring, blinking on every orbit/pan as focus goes back and forth. */
+[role="tab"]:focus { outline: none; }

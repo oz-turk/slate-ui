@@ -53,7 +53,7 @@ public partial class SlateWindow
         if (!_viewports.TryGetValue(id, out var vc))
         {
             if (!visible || r.Width <= 0 || r.Height <= 0) return;
-            vc = new SlateViewportControl { Pivot = FocusPivot };
+            vc = new SlateViewportControl { Pivot = FocusPivot, ReturnFocus = () => _webView.Focus() };
             vc.NavigationEnded += () => PostViewportState(id, vc);
             _viewports[id] = vc;
             Controls.Add(vc);
@@ -240,7 +240,10 @@ public partial class SlateWindow
             else vp.ChangeToPerspectiveProjection(true, lens);
             vp.SetCameraLocations(ReadPoint(tgt), ReadPoint(loc));
             if (state.TryGetProperty("up", out var up)) vp.CameraUp = new Vector3d(ReadPoint(up));
-            double? height = state.TryGetProperty("frustumH", out var fh) ? fh.GetDouble() : null;
+            // frustumH is saved as null for perspective views — GetDouble on it
+            // threw here, skipping everything after (viewport_info → no pane
+            // background, square cut-outs; no viewport_state → empty chips).
+            double? height = state.TryGetProperty("frustumH", out var fh) && fh.ValueKind == JsonValueKind.Number ? fh.GetDouble() : null;
             FitFrustumToScreen(vp, height);
         }
         else
@@ -458,6 +461,10 @@ public class SlateViewportControl : ViewportControl
     public string ViewName = "Perspective";
     public Func<RhinoViewport, Point3d>? Pivot;
     public event Action? NavigationEnded;
+    // Called on mouse up. The control takes focus for the drag, but it has no
+    // keyboard use of its own; left focused it swallowed every key meant for
+    // the UI (Tab = edit mode, Ctrl+S, Delete…), so focus goes back to the WebView.
+    public Action? ReturnFocus;
 
     private System.Drawing.Point _prev;
     private Point3d _pivot;
@@ -511,6 +518,7 @@ public class SlateViewportControl : ViewportControl
     {
         base.OnMouseUp(e);
         if (e.Button == MouseButtons.Right && !Locked) NavigationEnded?.Invoke();
+        ReturnFocus?.Invoke();
     }
 
     protected override void OnMouseWheel(MouseEventArgs e)
