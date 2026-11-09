@@ -420,7 +420,16 @@ public partial class SlateWindow
 
     // GH redraws Rhino's own views after a solve / preview change, but not
     // controls it doesn't know about. Piggyback: whenever any OTHER viewport
-    // draws, invalidate ours (Invalidate coalesces, so a burst = one repaint).
+    // draws, repaint ours.
+    //
+    // Not Invalidate(): WM_PAINT is only served once the message queue is
+    // empty, and during a slider drag it never is (solves every ~11 ms), so
+    // ours skipped about 2 of 3 solves and moved in jumps (measured
+    // 2026-11-09: 705 solves, Rhino's view drew 705, ours ~230). A posted
+    // Refresh runs in order, right after the current draw; the flag folds a
+    // burst (several Rhino views drawing) into one repaint.
+    private bool _viewportRefreshQueued;
+
     private void HookViewportRedraw()
     {
         if (_viewportRedrawHooked) return;
@@ -434,8 +443,14 @@ public partial class SlateWindow
         var drawnId = e.Viewport.Id;
         foreach (var vc in _viewports.Values)
             if (vc.Viewport.Id == drawnId) return;   // our own repaint — don't loop
-        foreach (var vc in _viewports.Values)
-            if (vc.Visible) vc.Invalidate();
+        if (_viewportRefreshQueued || !IsHandleCreated) return;
+        _viewportRefreshQueued = true;
+        BeginInvoke(new Action(() =>
+        {
+            _viewportRefreshQueued = false;
+            foreach (var vc in _viewports.Values)
+                if (vc.Visible && !vc.IsDisposed) vc.Refresh();
+        }));
     }
 
     private void DisposeViewports()
