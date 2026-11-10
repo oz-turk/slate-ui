@@ -13,7 +13,7 @@
     posAppend, applyWindowEdgeResize, orderedItems, MIN_PANE_SIZE
   } from './stores/layout.js'
   import { ACCENTS, accent, iconCatalog, mode, pinned, theme, deleteRequest, captureRequest, settingsOpen, clearSelectionTick, groupSelectionTick, hoverHint, draggingControl, altHeld, ctrlHeld, fullscreenTreeId, paramViewerItemsCache, allowMultipleCaptures, showParamIcons, iconKeys, iconImages, docStatus, saveFlash } from './stores/uiState.js'
-  import { undo, suppressDuring, asResizeChange } from './stores/history.js'
+  import { undo, suppressDuring, asResizeChange, asSyncChange } from './stores/history.js'
   import { postToCs, postStateSnapshot, saveDocument } from './lib/ipc.js'
   import { scenes, activeSceneId } from './stores/sceneStore.js'
   import { pruneOrphanScenes, runSceneAction, sceneApplied } from './stores/scenes.js'
@@ -57,7 +57,12 @@
   // ── C# ↔ JS ───────────────────────────────────────────────────────────────────
   onMount(() => {
     window.chrome?.webview?.addEventListener('message', e => {
-      try { handleMessage(JSON.parse(e.data)) } catch {}
+      try {
+        const msg = JSON.parse(e.data)
+        // *_update = Grasshopper's side of a control catching Slate up: not an edit.
+        if (typeof msg.type === 'string' && msg.type.endsWith('_update')) asSyncChange(() => handleMessage(msg))
+        else handleMessage(msg)
+      } catch {}
     })
     postToCs({ type: 'ui_ready' })
     // A document with no saved layout never gets restore_state: don't wait for it.

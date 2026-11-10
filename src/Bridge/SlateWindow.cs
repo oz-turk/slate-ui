@@ -1995,8 +1995,12 @@ public partial class SlateWindow : Form
         }
 
         foreach (var kv in win._sliders) PushIfChanged(kv.Key, (double)kv.Value.CurrentValue);
-        foreach (var kv in win._toggles) PushIfChanged(kv.Key, kv.Value.Value);
-        foreach (var kv in win._buttons) PushIfChanged(kv.Key, kv.Value.ButtonDown);
+        // Toggles and buttons go out as 0/1, the form the UI stores them in
+        // (ToggleAdded/ButtonAdded, ToggleRow). Sent as true/false they never
+        // equalled the saved 0/1, so the first push after opening a file read
+        // as an edit: the .gh was marked modified the moment it opened.
+        foreach (var kv in win._toggles) PushIfChanged(kv.Key, kv.Value.Value ? 1 : 0);
+        foreach (var kv in win._buttons) PushIfChanged(kv.Key, kv.Value.ButtonDown ? 1 : 0);
     }
 
     // GH_Panel.UserText is only the typed-in source text for an unwired panel

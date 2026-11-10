@@ -39,6 +39,16 @@ export function asResizeChange(fn) {
   inResize = true
   try { fn() } finally { inResize = false }
 }
+// Same for state that Grasshopper pushes in (C#'s *_update messages: values,
+// names, ranges, list items). GH flags its own document when the user changes
+// something on the canvas; what arrives here is Slate catching up, and right
+// after a file opens it is only the saved copy being brought in line — that
+// used to put a `*` on a file nobody had touched.
+let inSync = false
+export function asSyncChange(fn) {
+  inSync = true
+  try { fn() } finally { inSync = false }
+}
 
 function differsFromBaseline() {
   return get(activeWorkspaceId) !== baseline.activeWorkspaceId ||
@@ -65,7 +75,7 @@ function settle() {
 // undoing a change made after a switch jumped back to it.
 function scheduleSettle() {
   if (suppressed) return
-  if (!inResize) {
+  if (!inResize && !inSync) {
     editedSinceSettle = true
     if (!dirtySent && differsFromBaseline()) { dirtySent = true; markDirty() }
   }
