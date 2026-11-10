@@ -6,6 +6,7 @@
   // so there's no duplicate editor to keep in sync.
   import { createEventDispatcher } from 'svelte'
   import { clickOutside } from './actions.js'
+  import EditableValue from './EditableValue.svelte'
   import ColourPickerPopup from './ColourPickerPopup.svelte'
   import BgPalette from './BgPalette.svelte'
   const dispatch = createEventDispatcher()
@@ -132,7 +133,7 @@
         on:pointerdown={e => onChannelDown(e, FONT_MIN, FONT_MAX, setFontSize)}
         on:pointermove={e => onChannelMove(e, FONT_MIN, FONT_MAX, setFontSize)}
     ><div class="thumb" style="left: {(displaySize - FONT_MIN) / (FONT_MAX - FONT_MIN) * 100}%"></div></div>
-    <span class="value">{displaySize}px</span>
+    <EditableValue value={displaySize} min={FONT_MIN} max={FONT_MAX} suffix="px" on:commit={e => setFontSize(e.detail)} />
     {#if fontSize !== null}
       <button class="reset-btn" on:click={resetFontSize} title="Theme default">×</button>
     {/if}
@@ -216,13 +217,6 @@
     align-items: center;
     gap: 6px;
     padding: 0 4px;
-  }
-  .value {
-    font-family: 'Segoe UI Mono', Consolas, monospace;
-    font-size: 10px;
-    color: rgba(var(--text-rgb), 0.58);
-    text-align: right;
-    font-variant-numeric: tabular-nums;
   }
   .track {
     position: relative;

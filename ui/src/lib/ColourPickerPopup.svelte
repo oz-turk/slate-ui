@@ -2,6 +2,7 @@
   import { createEventDispatcher } from 'svelte'
   import { hex8ToRgba, rgbaToHex8, rgbToHsl, hslToRgb } from './colorUtils.js'
   import { clickOutside } from './actions.js'
+  import EditableValue from './EditableValue.svelte'
   const dispatch = createEventDispatcher()
 
   export let x   = 0
@@ -135,7 +136,7 @@
           on:pointerdown={e => onChannelDown(e, 0, 360, v => setHsl({ h: v }))}
           on:pointermove={e => onChannelMove(e, 0, 360, v => setHsl({ h: v }))}
       ><div class="thumb" style="left: {h / 360 * 100}%"></div></div>
-      <span class="value">{Math.round(h)}°</span>
+      <EditableValue value={h} min={0} max={360} suffix="°" on:commit={e => setHsl({ h: e.detail })} />
     </div>
     <div class="channel">
       <span class="label">S</span>
@@ -143,7 +144,7 @@
           on:pointerdown={e => onChannelDown(e, 0, 100, v => setHsl({ s: v }))}
           on:pointermove={e => onChannelMove(e, 0, 100, v => setHsl({ s: v }))}
       ><div class="thumb" style="left: {s}%"></div></div>
-      <span class="value">{Math.round(s)}%</span>
+      <EditableValue value={s} min={0} max={100} suffix="%" on:commit={e => setHsl({ s: e.detail })} />
     </div>
     <div class="channel">
       <span class="label">L</span>
@@ -151,7 +152,7 @@
           on:pointerdown={e => onChannelDown(e, 0, 100, v => setHsl({ l: v }))}
           on:pointermove={e => onChannelMove(e, 0, 100, v => setHsl({ l: v }))}
       ><div class="thumb" style="left: {l}%"></div></div>
-      <span class="value">{Math.round(l)}%</span>
+      <EditableValue value={l} min={0} max={100} suffix="%" on:commit={e => setHsl({ l: e.detail })} />
     </div>
   {:else}
     <div class="channel">
@@ -160,7 +161,7 @@
           on:pointerdown={e => onChannelDown(e, 0, 255, v => setRgb({ r: v }))}
           on:pointermove={e => onChannelMove(e, 0, 255, v => setRgb({ r: v }))}
       ><div class="thumb" style="left: {r / 255 * 100}%"></div></div>
-      <span class="value">{Math.round(r)}</span>
+      <EditableValue value={r} min={0} max={255} on:commit={e => setRgb({ r: e.detail })} />
     </div>
     <div class="channel">
       <span class="label">G</span>
@@ -168,7 +169,7 @@
           on:pointerdown={e => onChannelDown(e, 0, 255, v => setRgb({ g: v }))}
           on:pointermove={e => onChannelMove(e, 0, 255, v => setRgb({ g: v }))}
       ><div class="thumb" style="left: {g / 255 * 100}%"></div></div>
-      <span class="value">{Math.round(g)}</span>
+      <EditableValue value={g} min={0} max={255} on:commit={e => setRgb({ g: e.detail })} />
     </div>
     <div class="channel">
       <span class="label">B</span>
@@ -176,7 +177,7 @@
           on:pointerdown={e => onChannelDown(e, 0, 255, v => setRgb({ b: v }))}
           on:pointermove={e => onChannelMove(e, 0, 255, v => setRgb({ b: v }))}
       ><div class="thumb" style="left: {b / 255 * 100}%"></div></div>
-      <span class="value">{Math.round(b)}</span>
+      <EditableValue value={b} min={0} max={255} on:commit={e => setRgb({ b: e.detail })} />
     </div>
   {/if}
 
@@ -186,7 +187,7 @@
         on:pointerdown={e => onChannelDown(e, 0, 100, setAlpha)}
         on:pointermove={e => onChannelMove(e, 0, 100, setAlpha)}
     ><div class="thumb" style="left: {alphaPct}%"></div></div>
-    <span class="value">{alphaPct}%</span>
+    <EditableValue value={alphaPct} min={0} max={100} suffix="%" on:commit={e => setAlpha(e.detail)} />
   </div>
 </div>
 
@@ -292,13 +293,6 @@
     font-size: 10px;
     font-weight: 600;
     color: rgba(var(--text-rgb), 0.43);
-  }
-  .value {
-    font-family: 'Segoe UI Mono', Consolas, monospace;
-    font-size: 10px;
-    color: rgba(var(--text-rgb), 0.58);
-    text-align: right;
-    font-variant-numeric: tabular-nums;
   }
 
   .track {

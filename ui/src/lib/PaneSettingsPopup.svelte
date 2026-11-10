@@ -1,5 +1,6 @@
 <script>
   import { createEventDispatcher } from 'svelte'
+  import EditableValue from './EditableValue.svelte'
   import { clickOutside } from './actions.js'
   import ColourPickerPopup from './ColourPickerPopup.svelte'
   import BgPalette from './BgPalette.svelte'
@@ -111,7 +112,7 @@
           on:pointerdown={e => onChannelDown(e, 0.5, 3, setScale)}
           on:pointermove={e => onChannelMove(e, 0.5, 3, setScale)}
       ><div class="thumb" style="left: {(patternScale - 0.5) / (3 - 0.5) * 100}%"></div></div>
-      <span class="value">{patternScale.toFixed(2)}x</span>
+      <EditableValue value={patternScale} min={0.5} max={3} decimals={2} suffix="x" on:commit={e => setScale(e.detail)} />
     </div>
     <div class="channel">
       <span class="label">Opacity</span>
@@ -119,7 +120,7 @@
           on:pointerdown={e => onChannelDown(e, 0, 20, setOpacity)}
           on:pointermove={e => onChannelMove(e, 0, 20, setOpacity)}
       ><div class="thumb" style="left: {Math.min(100, patternOpacity / 20 * 100)}%"></div></div>
-      <span class="value">{patternOpacity}%</span>
+      <EditableValue value={patternOpacity} min={0} max={20} suffix="%" on:commit={e => setOpacity(e.detail)} />
     </div>
   {/if}
 
@@ -190,13 +191,6 @@
     font-size: 10px;
     font-weight: 600;
     color: rgba(var(--text-rgb), 0.43);
-  }
-  .value {
-    font-family: 'Segoe UI Mono', Consolas, monospace;
-    font-size: 10px;
-    color: rgba(var(--text-rgb), 0.58);
-    text-align: right;
-    font-variant-numeric: tabular-nums;
   }
   .track {
     position: relative;
