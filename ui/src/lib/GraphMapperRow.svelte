@@ -210,6 +210,9 @@
     pointer-events: none;
   }
   .row.edit            { padding: 0 8px 0 6px; }
+  /* Edit mode: the pad's right edge lines up with the other rows' controls
+     (dropdown/toggle) instead of running up against the +/− buttons. */
+  .row.edit .col       { margin-right: 4px; }
   .row:hover          { background: var(--pane-pattern-mask, transparent); }
   .row.selected       { background: rgba(var(--accent-rgb), 0.15); }
   .row.selected:hover { background: rgba(var(--accent-rgb), 0.22); }

@@ -1,5 +1,5 @@
 <script>
-  import { scenes, activeSceneId, sceneModified } from '../stores/sceneStore.js'
+  import { scenes, activeSceneId, sceneModified, applyingSceneId } from '../stores/sceneStore.js'
   import { saveScene, overwriteScene, renameScene, deleteScene, applyScene } from '../stores/scenes.js'
   import { hoverHint, showSceneChanges } from '../stores/uiState.js'
   import { clickOutside } from './actions.js'
@@ -63,7 +63,8 @@
         on:mouseenter={() => hoverHint.set('Scenes: saved sets of control values')}
         on:mouseleave={() => hoverHint.set(null)}>
       <span class="label">{active ? active.name : 'Scenes'}</span>
-      {#if active && modified}<span class="dot" title="Values differ from this scene"></span>{/if}
+      {#if $applyingSceneId}<span class="spinner" title="Applying scene — Grasshopper is solving"></span>
+      {:else if active && modified}<span class="dot" title="Values differ from this scene"></span>{/if}
       <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6" /></svg>
     </button>
 
@@ -78,7 +79,8 @@
               <button class="name" on:click={() => apply(s.id)}
                 on:dblclick={() => startRename(s)}
                 title="Click: apply  ·  Double-click: rename">{s.name}</button>
-              {#if s.id === $activeSceneId && modified}<span class="dot" title="Values differ from this scene"></span>{/if}
+              {#if s.id === $applyingSceneId}<span class="spinner" title="Applying — Grasshopper is solving"></span>
+              {:else if s.id === $activeSceneId && modified}<span class="dot" title="Values differ from this scene"></span>{/if}
               <button class="icon" title="Overwrite with current values" on:click={() => overwriteScene(s.id)}>
                 <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z" /><path d="M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7" /><path d="M7 3v4a1 1 0 0 0 1 1h7" /></svg>
               </button>
@@ -141,12 +143,27 @@
     flex-shrink: 0;
     background: var(--accent-light);
   }
+  /* Scene still solving in GH: takes the dot's place while it runs. */
+  .spinner {
+    width: 8px;
+    height: 8px;
+    margin: 0 1px;
+    box-sizing: border-box;
+    border-radius: 50%;
+    flex-shrink: 0;
+    border: 1.5px solid rgba(var(--accent-rgb), 0.25);
+    border-top-color: var(--accent);
+    animation: scene-spin 0.7s linear infinite;
+  }
+  @keyframes scene-spin { to { transform: rotate(360deg); } }
 
   .popup {
     position: fixed;
     z-index: 1000;
-    min-width: 170px;
-    max-width: 260px;
+    /* Fixed, not content-sized: applying a scene adds the spinner/changed
+       dots, and a menu that grew leftward (it is right-anchored) outran the
+       viewport cut-out, which C# can't update until the solve ends. */
+    width: 260px;
     max-height: 320px;
     overflow-y: auto;
     padding: 4px;

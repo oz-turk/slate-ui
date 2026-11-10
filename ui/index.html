@@ -5,8 +5,53 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>ui</title>
+    <!-- Startup splash: the Slate logo + "Slate", same picture and CSS-px
+         geometry as the native one in SlateSplash.cs. ?theme= and ?accent=
+         come from C# so the colours are right before any app CSS loads.
+         App.svelte fades it out once the UI is ready. -->
+    <script>
+      (function () {
+        var q = new URLSearchParams(location.search)
+        var light = q.get('theme') === 'light'
+        var root = document.documentElement
+        root.dataset.splashTheme = light ? 'light' : 'dark'
+        var acc = q.get('accent')
+        if (acc && /^#[0-9a-fA-F]{6}$/.test(acc)) root.style.setProperty('--s-accent', acc)
+      })()
+    </script>
+    <style>
+      #splash {
+        --s-bg: #1a1a1a; --s-text: 239, 239, 239; --s-outline: #e8ebf0;
+        position: fixed; inset: 0; z-index: 100000;
+        background: var(--s-bg);
+        transition: opacity 0.35s ease;
+      }
+      html[data-splash-theme="light"] #splash { --s-bg: #e4e1d8; --s-text: 42, 39, 36; --s-outline: #201e1d; }
+      #splash.hide { opacity: 0; pointer-events: none; }
+      #splash .block {
+        position: absolute; left: 50%; top: 50%;
+        width: 120px; height: 84px; margin: -42px 0 0 -60px;
+        text-align: center;
+      }
+      #splash svg { display: block; width: 56px; height: 56px; margin: 0 auto; }
+      #splash .word {
+        margin-top: 10px;
+        font: 14px/18px 'Segoe UI', sans-serif;
+        color: rgba(var(--s-text), 0.65);
+      }
+    </style>
   </head>
   <body>
+    <div id="splash" aria-hidden="true">
+      <div class="block">
+        <!-- favicon.svg / SlateLogo.cs geometry -->
+        <svg viewBox="0 0 64 64" fill="none">
+          <rect x="6.38" y="18.56" width="36.12" height="36.12" rx="7.14" stroke="var(--s-outline)" stroke-width="2.52"/>
+          <rect x="20.24" y="8.06" width="38.64" height="38.64" rx="8.4" fill="var(--s-accent, #74a2ff)"/>
+        </svg>
+        <div class="word">Slate</div>
+      </div>
+    </div>
     <div id="app"></div>
     <script type="module" src="/src/main.js"></script>
   </body>

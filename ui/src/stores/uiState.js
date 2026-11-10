@@ -50,6 +50,11 @@ accent.subscribe(v => {
 // any component can set() its own hint on hover and clear it (set null) on leave.
 export const hoverHint = writable(null)
 
+// Status bar readouts from C# (doc_status): { solveMs, savedAt (epoch ms), modified }.
+export const docStatus = writable({ solveMs: null, savedAt: null, modified: false })
+// 'ok' | 'failed' | null — brief confirmation after a save from Slate.
+export const saveFlash = writable(null)
+
 // { sourceId, widgetId } of the slider the user is dragging right now (kept for
 // a short moment after release). GH pushes each control's value back after every
 // solve (control_value_update); during a drag that echo lags the pointer by a

@@ -1,6 +1,6 @@
 import { get } from 'svelte/store'
 import { workspaces, allLeaves } from './layout.js'
-import { scenes, activeSceneId, modifiedIds } from './sceneStore.js'
+import { scenes, activeSceneId, modifiedIds, applyingSceneId } from './sceneStore.js'
 import { postToCs, postStateSnapshot, markDirty } from '../lib/ipc.js'
 
 // Scene = { id, name, values: { [sourceId]: value } }.
@@ -132,8 +132,37 @@ export function applyScene(id) {
     pendingUntil = Date.now() + APPLY_PENDING_MS
     postToCs({ type: 'apply_scene', items })
     markDirty()   // control values change in GH
+    applyingSceneId.set(id)
+    // Safety net only: scene_applied normally ends it when the solve is done.
+    clearTimeout(applyingTimer)
+    applyingTimer = setTimeout(() => applyingSceneId.set(null), APPLYING_MAX_MS)
   }
   return { applied: items.length, skipped }
+}
+
+const APPLYING_MAX_MS = 120000
+let applyingTimer
+
+// C# scene_applied: the solve the last apply triggered has finished.
+export function sceneApplied() {
+  clearTimeout(applyingTimer)
+  applyingSceneId.set(null)
+}
+
+// Scripting entry point (C# SlateWindow.Automation): the same actions as the
+// Scenes menu, with the scene picked by id or by name (exact, then
+// case-insensitive). Unknown targets are ignored.
+export function runSceneAction(action, target) {
+  if (action === 'save') { saveScene(target); return }
+  const list = get(scenes)
+  const t = String(target ?? '').trim()
+  const scene = list.find(s => s.id === t)
+             ?? list.find(s => s.name === t)
+             ?? list.find(s => s.name.toLowerCase() === t.toLowerCase())
+  if (!scene) return
+  if (action === 'overwrite') overwriteScene(scene.id)
+  else if (action === 'apply') applyScene(scene.id)
+  else if (action === 'delete') deleteScene(scene.id)
 }
 
 // Scene entries that differ from the live values (items) and entries whose

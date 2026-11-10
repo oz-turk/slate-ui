@@ -19,6 +19,10 @@ namespace Slate.Bridge;
 // so the holes read as transparent. While anything has to draw OVER the
 // viewport (drags, menus, popups) the UI sends visible:false.
 //
+// What the control shows is not drawn into it by Rhino: the picture comes
+// from a hidden floating Rhino view, captured to a bitmap on every paint
+// (see SlateViewportControl.CaptureMode for why).
+//
 // Messages: viewport_rect / viewport_cmd / viewport_remove / viewport_focus in;
 // viewport_info (display modes, background) and viewport_state (camera +
 // settings, persisted on the tab) out.
@@ -55,6 +59,24 @@ public partial class SlateWindow
             if (!visible || r.Width <= 0 || r.Height <= 0) return;
             vc = new SlateViewportControl { Pivot = FocusPivot, ReturnFocus = () => _webView.Focus() };
             vc.NavigationEnded += () => PostViewportState(id, vc);
+            // Device px in the WebView's client space (it is Dock=Fill, same
+            // origin as vc's parent); JS divides by devicePixelRatio.
+            vc.HoldPaint = () =>
+            {
+                if (!HoldViewportPaint()) return false;
+                _viewportPaintHeld = true;
+                return true;
+            };
+            // The Rhino document was replaced and took the hidden view with
+            // it: the new one starts from the defaults, and the UI is told.
+            vc.ViewRecreated += () =>
+            {
+                InitViewport(vc, default);
+                PostViewportInfo(id, vc);
+                PostViewportState(id, vc);
+            };
+            vc.PointerDown += () => PostToJs(JsonSerializer.Serialize(new { type = "viewport_pointerdown", id }));
+            vc.ContextClick += p => PostToJs(JsonSerializer.Serialize(new { type = "viewport_context", id, x = vc.Left + p.X, y = vc.Top + p.Y }));
             _viewports[id] = vc;
             Controls.Add(vc);
             vc.BringToFront();
@@ -69,9 +91,9 @@ public partial class SlateWindow
             root.TryGetProperty("state", out var state);
             InitViewport(vc, state);
             PostViewportInfo(id, vc);
-            PostViewportState(id, vc);
+            PostViewportState(id, vc, initial: true);
         }
-        else if (resized) FitFrustumToScreen(vc.Viewport);
+        else if (resized) FitFrustumToScreen(vc.Cam);
         ApplyCuts(vc, root, dpr);
 
         if (visible && r.Width > 0 && r.Height > 0)
@@ -151,7 +173,7 @@ public partial class SlateWindow
         string id  = root.GetProperty("id").GetString() ?? "";
         string cmd = root.GetProperty("cmd").GetString() ?? "";
         if (!_viewports.TryGetValue(id, out var vc)) return;
-        var vp = vc.Viewport;
+        var vp = vc.Cam;
         root.TryGetProperty("value", out var value);
 
         switch (cmd)
@@ -180,6 +202,7 @@ public partial class SlateWindow
             case "cplaneAxes": vp.ConstructionAxesVisible = value.GetBoolean(); break;
             case "worldAxes":  vp.WorldAxesVisible        = value.GetBoolean(); break;
             case "locked":     vc.Locked                  = value.GetBoolean(); break;
+            case "zoomAtCursor": vc.ZoomAtCursor          = value.GetBoolean(); break;
         }
         vc.Refresh();
         PostViewportState(id, vc);
@@ -192,11 +215,21 @@ public partial class SlateWindow
     {
         _focusIds = new HashSet<string>(root.GetProperty("ids").EnumerateArray().Select(e => e.GetString() ?? ""));
         if (!(root.TryGetProperty("zoom", out var z) && z.GetBoolean())) return;
+        ZoomViewportsToFocus(extentsIfNone: true);
+    }
 
+    // Frames what's focused in every open viewport (view direction kept).
+    // Besides the Focus button, a scene apply ends here once its solve is done:
+    // a scene can build a model of a very different size or place, and the old
+    // framing would leave it off-screen. Ordinary solves (slider drags) never
+    // move the camera.
+    private void ZoomViewportsToFocus(bool extentsIfNone)
+    {
         var box = FocusBox();
+        if (!box.IsValid && !extentsIfNone) return;
         foreach (var kv in _viewports)
         {
-            var vp = kv.Value.Viewport;
+            var vp = kv.Value.Cam;
             if (box.IsValid) vp.ZoomBoundingBox(box);
             else vp.ZoomExtents();
             kv.Value.Refresh();
@@ -212,7 +245,7 @@ public partial class SlateWindow
     // `state` is what the tab saved (viewport_state); absent → defaults.
     private static void InitViewport(SlateViewportControl vc, JsonElement state)
     {
-        var vp = vc.Viewport;
+        var vp = vc.Cam;
         bool has = state.ValueKind == JsonValueKind.Object;
 
         vc.ViewName = has && state.TryGetProperty("view", out var v) ? v.GetString() ?? "Perspective" : "Perspective";
@@ -230,6 +263,7 @@ public partial class SlateWindow
             if (state.TryGetProperty("cplaneAxes", out var ca)) vp.ConstructionAxesVisible = ca.GetBoolean();
             if (state.TryGetProperty("worldAxes", out var wa))  vp.WorldAxesVisible = wa.GetBoolean();
             if (state.TryGetProperty("locked", out var lk)) vc.Locked = lk.GetBoolean();
+            if (state.TryGetProperty("zoomAtCursor", out var zc)) vc.ZoomAtCursor = zc.GetBoolean();
         }
 
         if (has && state.TryGetProperty("loc", out var loc) && state.TryGetProperty("target", out var tgt))
@@ -267,11 +301,13 @@ public partial class SlateWindow
             "Two-Point" => DefinedViewportProjection.TwoPointPerspective,
             _           => DefinedViewportProjection.Perspective,
         };
-        vc.Viewport.SetProjection(proj, name, false);
+        // The hidden view lives in the Rhino document: its name keeps the
+        // prefix so it never doubles one of Rhino's own ("Perspective", "Top").
+        vc.Cam.SetProjection(proj, SlateViewportControl.CaptureMode ? SlateViewportControl.ViewPrefix + name : name, false);
         if (proj == DefinedViewportProjection.Perspective || proj == DefinedViewportProjection.TwoPointPerspective)
-            vc.Viewport.Camera35mmLensLength = 50;
+            vc.Cam.Camera35mmLensLength = 50;
         vc.ViewName = name;
-        FitFrustumToScreen(vc.Viewport);
+        FitFrustumToScreen(vc.Cam);
     }
 
     // Rebuild a symmetric frustum for the control's current aspect, keeping
@@ -332,12 +368,16 @@ public partial class SlateWindow
             .Where(d => d.InMenu)
             .Select(d => new { id = d.Id.ToString(), name = d.LocalName })
             .ToArray();
-        PostToJs(JsonSerializer.Serialize(new { type = "viewport_info", id, modes, bg = BackgroundCss(vc.Viewport) }));
+        PostToJs(JsonSerializer.Serialize(new { type = "viewport_info", id, modes, bg = BackgroundCss(vc.Cam) }));
     }
 
-    private void PostViewportState(string id, SlateViewportControl vc)
+    // initial: the report right after the viewport is created from the saved
+    // state — a load, not an edit, so JS stores it without marking the .gh
+    // modified (a field added to the state later, e.g. zoomAtCursor, would
+    // otherwise differ from every older file and show `*` on open).
+    private void PostViewportState(string id, SlateViewportControl vc, bool initial = false)
     {
-        var vp = vc.Viewport;
+        var vp = vc.Cam;
         var loc = vp.CameraLocation; var tgt = vp.CameraTarget;
         var state = new
         {
@@ -354,8 +394,9 @@ public partial class SlateWindow
             cplaneAxes  = vp.ConstructionAxesVisible,
             worldAxes   = vp.WorldAxesVisible,
             locked      = vc.Locked,
+            zoomAtCursor = vc.ZoomAtCursor,
         };
-        PostToJs(JsonSerializer.Serialize(new { type = "viewport_state", id, state }));
+        PostToJs(JsonSerializer.Serialize(new { type = "viewport_state", id, state, initial }));
     }
 
     // CSS background matching what the viewport paints behind the model, for
@@ -440,17 +481,65 @@ public partial class SlateWindow
     private void OnAnyViewportDrawForeground(object sender, DrawEventArgs e)
     {
         if (_viewports.Count == 0 || IsDisposed) return;
+        // Our own repaint (a capture draws the hidden view) — don't loop.
+        if (SlateViewportControl.Capturing) return;
         var drawnId = e.Viewport.Id;
         foreach (var vc in _viewports.Values)
-            if (vc.Viewport.Id == drawnId) return;   // our own repaint — don't loop
+            if (vc.CamId == drawnId) return;
         if (_viewportRefreshQueued || !IsHandleCreated) return;
         _viewportRefreshQueued = true;
         BeginInvoke(new Action(() =>
         {
             _viewportRefreshQueued = false;
+            if (HoldViewportPaint()) { _viewportPaintHeld = true; return; }
             foreach (var vc in _viewports.Values)
                 if (vc.Visible && !vc.IsDisposed) vc.Refresh();
         }));
+    }
+
+    // ── no half-solved frames ────────────────────────────────────────────────
+    //
+    // Between a change (GH expires the downstream components and drops their
+    // previews) and the end of the solve, a repaint shows the model with those
+    // parts missing — e.g. the bridge vanished for a moment when only the
+    // labels input changed, because the bridge sits downstream of it. Rhino's
+    // own views never draw in that gap; ours did (piggyback refresh above, or
+    // WM_PAINT after a menu closed over it). So while GH is mid-solve ours
+    // keeps its last frame and repaints once at SolutionEnd.
+    // Safety cap: an object that stays expired for good (nothing re-solves
+    // it) must not freeze the view, so a hold never lasts longer than this.
+    private const int MaxPaintHoldMs = 1500;
+    private bool _viewportPaintHeld;
+    private DateTime _paintHoldSince = DateTime.MinValue;
+
+    private bool HoldViewportPaint()
+    {
+        bool mid = GhMidSolve();
+        if (!mid) { _paintHoldSince = DateTime.MinValue; return false; }
+        if (_paintHoldSince == DateTime.MinValue) _paintHoldSince = DateTime.UtcNow;
+        return (DateTime.UtcNow - _paintHoldSince).TotalMilliseconds < MaxPaintHoldMs;
+    }
+
+    // Expired-but-unsolved objects (Phase Blank), or a solve in progress.
+    private bool GhMidSolve()
+    {
+        var doc = HostDocument ?? Grasshopper.Instances.ActiveCanvas?.Document;
+        if (doc == null || !Grasshopper.Kernel.GH_Document.EnableSolutions) return false;   // static: GH's global solver switch
+        if (doc.SolutionState == Grasshopper.Kernel.GH_ProcessStep.Process) return true;
+        foreach (var o in doc.Objects)
+            if (o is Grasshopper.Kernel.IGH_ActiveObject a && !a.Locked
+                && a.Phase == Grasshopper.Kernel.GH_SolutionPhase.Blank) return true;
+        return false;
+    }
+
+    // SolutionEnd (via OnDocSolutionEnd): repaint what was held, unless the
+    // next solve is already queued — then its own SolutionEnd does it.
+    internal void FlushHeldViewportPaint()
+    {
+        if (!_viewportPaintHeld || HoldViewportPaint()) return;
+        _viewportPaintHeld = false;
+        foreach (var vc in _viewports.Values)
+            if (vc.Visible && !vc.IsDisposed) vc.Refresh();
     }
 
     private void DisposeViewports()
@@ -473,6 +562,10 @@ public partial class SlateWindow
 public class SlateViewportControl : ViewportControl
 {
     public bool Locked;
+    // Wheel zoom: false (default) = toward the orbit pivot (focused previews'
+    // centre, else the camera target), so the object stays put on screen
+    // wherever the cursor is; true = toward the cursor, as Rhino does.
+    public bool ZoomAtCursor = false;
     public string ViewName = "Perspective";
     public Func<RhinoViewport, Point3d>? Pivot;
     public event Action? NavigationEnded;
@@ -480,8 +573,224 @@ public class SlateViewportControl : ViewportControl
     // keyboard use of its own; left focused it swallowed every key meant for
     // the UI (Tab = edit mode, Ctrl+S, Delete…), so focus goes back to the WebView.
     public Action? ReturnFocus;
+    // Right-click without drag (Rhino's own click-vs-drag split): opens the
+    // pane menu instead of navigating. Control-local point.
+    public event Action<System.Drawing.Point>? ContextClick;
+    // Any press. Menus/popups stay open over a live viewport (cut out of it),
+    // and a click on the native control never reaches the WebView, so JS is
+    // told to treat it as a click outside them.
+    public event Action? PointerDown;
+    // True = GH is mid-solve: skip this paint and keep the last frame (the
+    // window repaints at SolutionEnd — see SlateWindow.HoldViewportPaint).
+    public Func<bool>? HoldPaint;
+
+    // ── where the picture comes from ─────────────────────────────────────────
+    //
+    // true: a hidden floating Rhino view is captured to a bitmap and the
+    // bitmap is painted here. false: Rhino draws straight into this control
+    // (ViewportControl.OnPaint) — about 2x faster per frame, but it crashes
+    // Rhino (8.34 and 9 WIP): the display pipeline keeps a temporary MFC
+    // window object for our HWND, MFC deletes it on idle, and a later draw
+    // reads freed memory (AccessViolation in CRhinoDisplayPipeline::GetWnd).
+    // Rhino's own views don't go through that path, hence the hidden view.
+    // Flip back to false once Rhino fixes it.
+    internal static readonly bool CaptureMode = true;
+
+    // Name prefix of the hidden views in the Rhino document.
+    internal const string ViewPrefix = "slate_";
+
+    // A capture is drawing one of the hidden views right now.
+    internal static bool Capturing;
+
+    // Hidden views that belong to a living control (ActiveViewportID).
+    private static readonly HashSet<Guid> s_liveViews = new();
+
+    private RhinoView? _view;
+    private IntPtr _viewHwnd;
+    private Guid _viewportId;
+    private bool _hadView;
+    private Bitmap? _frame;
+
+    // The Rhino document was replaced, so the hidden view was made anew and
+    // has lost its camera and settings.
+    public event Action? ViewRecreated;
+
+    // The viewport that is navigated and drawn: the hidden view's in capture
+    // mode, the control's own otherwise.
+    public RhinoViewport Cam => (CaptureMode ? EnsureView()?.ActiveViewport : null) ?? Viewport;
+
+    // Cam's id without creating anything (safe inside Rhino's draw events).
+    public Guid CamId => CaptureMode ? _viewportId : Viewport.Id;
+
+    private RhinoView? EnsureView()
+    {
+        if (_view != null && IsWindow(_viewHwnd)) return _view;
+        if (IsDisposed) return null;
+        ForgetView();
+        var doc = Rhino.RhinoDoc.ActiveDoc;
+        if (doc == null) return null;
+
+        bool wasModified = doc.Modified;
+        var active = doc.Views.ActiveView;
+        // Left over from an earlier session (saved into the .3dm with the document).
+        foreach (var old in doc.Views.GetViewList(true, false))
+            if (old.ActiveViewport.Name.StartsWith(ViewPrefix) && !s_liveViews.Contains(old.ActiveViewportID)) old.Close();
+
+        var size = ClientSize.IsEmpty ? new Size(10, 10) : ClientSize;
+        // Created far off-screen and hidden at once, so it never shows.
+        var view = doc.Views.Add(ViewPrefix + ViewName, DefinedViewportProjection.Perspective,
+            new Rectangle(-32000, -32000, size.Width, size.Height), true);
+        if (view == null) return null;
+        ShowWindow(GetAncestor(view.Handle, GA_ROOT), SW_HIDE);
+        if (active != null && doc.Views.ActiveView?.ActiveViewportID != active.ActiveViewportID) doc.Views.ActiveView = active;
+        SizeView(view, size);
+        // Adding a view marks the Rhino document modified; that's ours, not the user's.
+        if (!wasModified) doc.Modified = false;
+
+        _view = view;
+        _viewHwnd = view.Handle;
+        _viewportId = view.ActiveViewportID;
+        s_liveViews.Add(_viewportId);
+        bool again = _hadView;
+        _hadView = true;
+        if (again) ViewRecreated?.Invoke();
+        return _view;
+    }
+
+    private void ForgetView()
+    {
+        if (_view == null) return;
+        s_liveViews.Remove(_viewportId);
+        _view = null;
+        _viewHwnd = IntPtr.Zero;
+        _viewportId = Guid.Empty;
+    }
+
+    private void CloseView()
+    {
+        var view = _view;
+        bool alive = view != null && IsWindow(_viewHwnd);
+        ForgetView();
+        if (!alive) return;
+        try
+        {
+            var doc = view!.Document;
+            bool wasModified = doc?.Modified ?? true;
+            view.Close();
+            if (doc != null && !wasModified) doc.Modified = false;
+        }
+        catch { /* Rhino shutting down: the view goes with the document */ }
+    }
+
+    // Draws the hidden view into _frame. A failed capture (Rhino minimized)
+    // keeps the last frame.
+    private void CaptureFrame()
+    {
+        if (Capturing) return;
+        var size = ClientSize;
+        if (size.Width <= 0 || size.Height <= 0) return;
+        var view = EnsureView();
+        if (view == null) return;
+        SizeView(view, size);
+        Bitmap? bmp = null;
+        Capturing = true;
+        try
+        {
+            // The mode is passed along: without it a hidden view is captured
+            // Shaded-looking whatever its display mode is (Rendered showed
+            // edges and no materials).
+            var mode = view.ActiveViewport.DisplayMode;
+            bmp = mode != null ? view.CaptureToBitmap(size, mode) : view.CaptureToBitmap(size);
+        }
+        catch { /* keep the last frame */ }
+        finally { Capturing = false; }
+        if (bmp == null) return;
+        _frame?.Dispose();
+        _frame = bmp;
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        bool hold = HoldPaint?.Invoke() == true;
+        if (!CaptureMode)
+        {
+            if (!hold) base.OnPaint(e);
+            return;
+        }
+        // Held (GH mid-solve): the last frame is painted again.
+        if (!hold) CaptureFrame();
+        if (_frame == null) return;
+        // Raw GDI copy of the pixels: Graphics.DrawImage took ~7 ms for a
+        // 990x793 frame, this takes under 1 ms (measured 2026-11-09).
+        var bits = _frame.LockBits(new Rectangle(0, 0, _frame.Width, _frame.Height),
+            System.Drawing.Imaging.ImageLockMode.ReadOnly, System.Drawing.Imaging.PixelFormat.Format32bppRgb);
+        IntPtr hdc = e.Graphics.GetHdc();
+        try
+        {
+            // Negative height = top-down rows, as LockBits hands them out.
+            var info = new BitmapInfoHeader { Size = 40, Width = bits.Width, Height = -bits.Height, Planes = 1, BitCount = 32 };
+            SetDIBitsToDevice(hdc, 0, 0, (uint)bits.Width, (uint)bits.Height, 0, 0, 0, (uint)bits.Height, bits.Scan0, ref info, 0);
+        }
+        finally
+        {
+            e.Graphics.ReleaseHdc(hdc);
+            _frame.UnlockBits(bits);
+        }
+    }
+
+    protected override void OnPaintBackground(PaintEventArgs e)
+    {
+        if (CaptureMode || HoldPaint?.Invoke() == true) return;
+        base.OnPaintBackground(e);
+    }
+
+    protected override void OnResize(EventArgs e)
+    {
+        base.OnResize(e);
+        if (!CaptureMode || _view == null || !IsWindow(_viewHwnd)) return;
+        var size = ClientSize;
+        if (size.Width > 0 && size.Height > 0) SizeView(_view, size);
+    }
+
+    // Makes the hidden view's viewport `size` pixels by resizing its floating
+    // window (frame included). Not RhinoViewport.Size: that setter shows the
+    // window again and makes it Rhino's active view.
+    private static void SizeView(RhinoView view, Size size)
+    {
+        var cur = view.ActiveViewport.Size;
+        if (cur == size) return;
+        IntPtr root = GetAncestor(view.Handle, GA_ROOT);
+        if (!GetWindowRect(root, out var r)) return;
+        SetWindowPos(root, IntPtr.Zero, 0, 0,
+            size.Width + (r.Right - r.Left) - cur.Width, size.Height + (r.Bottom - r.Top) - cur.Height,
+            SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
+    }
+
+    private const uint GA_ROOT = 2;
+    private const int SW_HIDE = 0;
+    private const uint SWP_NOMOVE = 0x0002, SWP_NOZORDER = 0x0004, SWP_NOACTIVATE = 0x0010, SWP_NOOWNERZORDER = 0x0200;
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    private struct WinRect { public int Left, Top, Right, Bottom; }
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    private struct BitmapInfoHeader
+    {
+        public int Size, Width, Height;
+        public short Planes, BitCount;
+        public int Compression, SizeImage, XPelsPerMeter, YPelsPerMeter, ClrUsed, ClrImportant;
+    }
+    [System.Runtime.InteropServices.DllImport("gdi32.dll")] private static extern int SetDIBitsToDevice(IntPtr hdc, int x, int y, uint w, uint h,
+        int srcX, int srcY, uint startScan, uint scanLines, IntPtr bits, ref BitmapInfoHeader info, uint usage);
+    [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr hWnd, out WinRect rect);
+    [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern bool SetWindowPos(IntPtr hWnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
+    [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern bool IsWindow(IntPtr hWnd);
+    [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern bool ShowWindow(IntPtr hWnd, int cmd);
+    [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern IntPtr GetAncestor(IntPtr hWnd, uint flags);
 
     private System.Drawing.Point _prev;
+    private System.Drawing.Point _rightDown;
+    private bool _rightDragging;
+    // Pixels the cursor may wander before a right press counts as a drag.
+    private const int ClickSlop = 4;
     private Point3d _pivot;
     private readonly System.Windows.Forms.Timer _wheelEnd = new() { Interval = 300 };
 
@@ -496,16 +805,24 @@ public class SlateViewportControl : ViewportControl
     protected override void OnMouseDown(MouseEventArgs e)
     {
         _prev  = e.Location;
-        _pivot = Pivot?.Invoke(Viewport) ?? Viewport.CameraTarget;
+        { var cam = Cam; _pivot = Pivot?.Invoke(cam) ?? cam.CameraTarget; }
+        if (e.Button == MouseButtons.Right) { _rightDown = e.Location; _rightDragging = false; }
+        PointerDown?.Invoke();
         Focus();
         base.OnMouseDown(e);
     }
 
     protected override void OnMouseMove(MouseEventArgs e)
     {
+        if (e.Button == MouseButtons.Right && !_rightDragging)
+        {
+            // Navigation starts only past the slop, so a click never nudges the view.
+            if (Math.Abs(e.X - _rightDown.X) <= ClickSlop && Math.Abs(e.Y - _rightDown.Y) <= ClickSlop) return;
+            _rightDragging = true;
+        }
         if (Locked || e.Button != MouseButtons.Right) { _prev = e.Location; return; }
 
-        var vp    = Viewport;
+        var vp    = Cam;
         var mods  = ModifierKeys;
         bool ctrl = (mods & Keys.Control) != 0, shift = (mods & Keys.Shift) != 0;
 
@@ -519,7 +836,7 @@ public class SlateViewportControl : ViewportControl
 
     private void Orbit(System.Drawing.Point p)
     {
-        var vp = Viewport;
+        var vp = Cam;
         double dx = p.X - _prev.X, dy = p.Y - _prev.Y;
         if (dx != 0) vp.Rotate(-dx * OrbitSpeed, Vector3d.ZAxis, _pivot);
         if (dy != 0)
@@ -532,21 +849,31 @@ public class SlateViewportControl : ViewportControl
     protected override void OnMouseUp(MouseEventArgs e)
     {
         base.OnMouseUp(e);
-        if (e.Button == MouseButtons.Right && !Locked) NavigationEnded?.Invoke();
         ReturnFocus?.Invoke();
+        if (e.Button != MouseButtons.Right) return;
+        if (!_rightDragging) ContextClick?.Invoke(e.Location);
+        else if (!Locked) NavigationEnded?.Invoke();
+        _rightDragging = false;
     }
 
     protected override void OnMouseWheel(MouseEventArgs e)
     {
         if (Locked || e.Delta == 0) return;
-        Viewport.Magnify(e.Delta > 0 ? 1.15 : 1 / 1.15, false, e.Location);
+        var at = e.Location;
+        var cam = Cam;
+        if (!ZoomAtCursor)
+        {
+            var p = cam.WorldToClient(Pivot?.Invoke(cam) ?? cam.CameraTarget);
+            at = new System.Drawing.Point((int)Math.Round(p.X), (int)Math.Round(p.Y));
+        }
+        cam.Magnify(e.Delta > 0 ? 1.15 : 1 / 1.15, false, at);
         Refresh();
         _wheelEnd.Stop(); _wheelEnd.Start();   // save the camera once the wheel settles
     }
 
     protected override void Dispose(bool disposing)
     {
-        if (disposing) _wheelEnd.Dispose();
+        if (disposing) { _wheelEnd.Dispose(); CloseView(); _frame?.Dispose(); _frame = null; }
         base.Dispose(disposing);
     }
 }

@@ -1,6 +1,6 @@
 <script>
   import { onMount, afterUpdate } from 'svelte'
-  import { mode, hoverHint, altHeld, ctrlHeld } from '../stores/uiState.js'
+  import { mode, hoverHint, altHeld, ctrlHeld, docStatus, saveFlash } from '../stores/uiState.js'
 
   let hintEl
   let overflowing = false
@@ -9,11 +9,33 @@
     if (hintEl) overflowing = hintEl.scrollWidth > hintEl.clientWidth + 1
   }
 
+  // "Saved 5 min ago" is relative, so it re-renders on a clock tick.
+  let now = Date.now()
   onMount(() => {
     checkOverflow()
     window.addEventListener('resize', checkOverflow)
-    return () => window.removeEventListener('resize', checkOverflow)
+    const clock = setInterval(() => now = Date.now(), 15000)
+    return () => { window.removeEventListener('resize', checkOverflow); clearInterval(clock) }
   })
+  // Fresh "now" whenever a new status arrives (a save just happened).
+  $: $docStatus, now = Date.now()
+
+  function fmtSolve(ms) {
+    if (ms == null) return null
+    return ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(ms < 10000 ? 2 : 1)} s`
+  }
+  function fmtSaved(at, now) {
+    if (at == null) return null
+    const s = Math.max(0, (now - at) / 1000)
+    if (s < 60)    return 'just now'
+    if (s < 3600)  return `${Math.floor(s / 60)} min ago`
+    if (s < 86400) return `${Math.floor(s / 3600)} h ago`
+    const d = new Date(at)
+    return `${d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' })} ${d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}`
+  }
+  $: solveText = fmtSolve($docStatus.solveMs)
+  $: savedText = fmtSaved($docStatus.savedAt, now)
+  $: savedTitle = $docStatus.savedAt ? `Last saved ${new Date($docStatus.savedAt).toLocaleString()}` : ''
 
   afterUpdate(checkOverflow)
 </script>
@@ -124,7 +146,24 @@
       </span>
     {/if}
   </div>
-  <span class="version">v{__SLATE_VERSION__} ({__SLATE_COMMIT__})</span>
+  <div class="doc-status">
+    {#if solveText}
+      <span class="stat" title="Duration of the last Grasshopper solution">Solve {solveText}</span>
+    {/if}
+    {#if $saveFlash === 'ok'}
+      <span class="stat flash ok">✓ Saved</span>
+    {:else if $saveFlash === 'failed'}
+      <span class="stat flash failed">Save cancelled</span>
+    {:else if savedText}
+      <span class="stat" title={savedTitle}>
+        {#if $docStatus.modified}<span class="dirty" title="Unsaved changes"></span>{/if}
+        Saved {savedText}
+      </span>
+    {:else if $docStatus.modified}
+      <span class="stat"><span class="dirty"></span>Not saved yet</span>
+    {/if}
+    <span class="version">v{__SLATE_VERSION__} ({__SLATE_COMMIT__})</span>
+  </div>
 </div>
 
 <style>
@@ -182,5 +221,37 @@
     color: rgba(var(--text-rgb), 0.29);
     flex-shrink: 0;
     font-variant-numeric: tabular-nums;
+  }
+
+  .doc-status {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-shrink: 0;
+  }
+  .stat {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 10px;
+    color: rgba(var(--text-rgb), 0.45);
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+  /* Unsaved changes since the last save */
+  .dirty {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--accent-light);
+  }
+  .flash { font-weight: 600; animation: save-flash 2.5s ease-out; }
+  .flash.ok     { color: var(--accent); }
+  .flash.failed { color: rgba(var(--danger-rgb), 0.85); }
+  @keyframes save-flash {
+    0%   { opacity: 0; transform: translateY(3px); }
+    10%  { opacity: 1; transform: none; }
+    80%  { opacity: 1; }
+    100% { opacity: 0.6; }
   }
 </style>

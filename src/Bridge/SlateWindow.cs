@@ -231,6 +231,7 @@ public partial class SlateWindow : Form
     {
         base.OnHandleCreated(e);
         _lastAppliedTheme = PeekPendingTheme();
+        _accentIconFill ??= ReadAccentDefaultFile();   // last session's accent, see SlateSplash.cs
         ApplyTitleBarTheme(_lastAppliedTheme != "light");
     }
 
@@ -385,6 +386,10 @@ public partial class SlateWindow : Form
         var io = new Grasshopper.Kernel.GH_DocumentIO(doc);
         bool saved = doc.IsFilePathDefined ? io.Save() : io.SaveAs();
         Log(saved ? $"Saved {doc.FilePath}" : "Save cancelled or failed");
+        // Feedback for Slate's own Save button / Ctrl+S (a save of an unchanged
+        // file never flips ModifiedChanged, so this is posted directly).
+        PostToJs(JsonSerializer.Serialize(new { type = "save_result", ok = saved }));
+        PushDocStatus();
     }
 
     // "Go to" — centres the GH canvas on the captured object at 100% zoom and selects it
@@ -766,6 +771,7 @@ public partial class SlateWindow : Form
             if (_hostDocument == value) return;
             if (_hostDocument != null)
             {
+                _hostDocument.SolutionStart -= OnDocSolutionStart;
                 _hostDocument.SolutionEnd -= OnDocSolutionEnd;
                 _hostDocument.ModifiedChanged -= OnDocModifiedChanged;
             }
@@ -787,9 +793,12 @@ public partial class SlateWindow : Form
 
             if (_hostDocument != null)
             {
+                _hostDocument.SolutionStart += OnDocSolutionStart;
                 _hostDocument.SolutionEnd += OnDocSolutionEnd;
                 _hostDocument.ModifiedChanged += OnDocModifiedChanged;
             }
+            _lastSolveMs = null;
+            _instance?.PushDocStatus();
         }
     }
 
@@ -1344,14 +1353,53 @@ public partial class SlateWindow : Form
     // writing back the UI's stale copy of those would fight the graph.
     private static readonly Dictionary<string, (Guid TypeId, List<(double X, double Y)> Grips, int Only)> _latestGraphValues = new();
     private static bool _solveRunning;
+    // An apply_scene is waiting for its solve(s) to finish (see OnDocSolutionEnd).
+    private static bool _sceneApplyPending;
+
+    // ── status bar: last solve time + last save ─────────────────────────────
+    // Solve time is measured here (SolutionStart → SolutionEnd) rather than read
+    // from a GH property, so it is exactly the wall time of the last solve.
+    private static readonly System.Diagnostics.Stopwatch _solveWatch = new();
+    private static double? _lastSolveMs;
+
+    private static void OnDocSolutionStart(object sender, Grasshopper.Kernel.GH_SolutionEventArgs e) =>
+        _solveWatch.Restart();
+
+    // Last solve duration, the .gh file's last write time (the real file, not
+    // GH's autosave copy) and the modified flag, for the status bar.
+    internal void PushDocStatus()
+    {
+        var doc = HostDocument;
+        long? savedAt = null;
+        try
+        {
+            if (doc != null && doc.IsFilePathDefined && File.Exists(doc.FilePath))
+                savedAt = new DateTimeOffset(File.GetLastWriteTimeUtc(doc.FilePath)).ToUnixTimeMilliseconds();
+        }
+        catch { /* unreadable path: just no "saved" readout */ }
+        PostToJs(JsonSerializer.Serialize(new { type = "doc_status", solveMs = _lastSolveMs, savedAt, modified = doc?.IsModified ?? false }));
+    }
 
     private static void OnDocSolutionEnd(object sender, Grasshopper.Kernel.GH_SolutionEventArgs e)
     {
+        if (_solveWatch.IsRunning) { _solveWatch.Stop(); _lastSolveMs = _solveWatch.Elapsed.TotalMilliseconds; }
         // SolutionEnd may fire on GH background thread — marshal to UI thread for thread safety.
         var win = _instance;
         win?.BeginInvoke((Action)(() =>
         {
-            if (_latestValues.Count == 0 && _latestColourValues.Count == 0 && _latestMdValues.Count == 0 && _latestGraphValues.Count == 0) _solveRunning = false;
+            if (_latestValues.Count == 0 && _latestColourValues.Count == 0 && _latestMdValues.Count == 0 && _latestGraphValues.Count == 0)
+            {
+                _solveRunning = false;
+                // Nothing left queued: the last scene applied has fully solved —
+                // the Scenes menu stops its spinner.
+                if (_sceneApplyPending)
+                {
+                    _sceneApplyPending = false;
+                    win.PostToJs(JsonSerializer.Serialize(new { type = "scene_applied" }));
+                    // Custom Previews with Focus on: frame the model the scene built.
+                    win.ZoomViewportsToFocus(extentsIfNone: false);
+                }
+            }
             else ApplyLatestValues();
             PushSliderNameUpdates();
             PushSliderRangeUpdates();
@@ -1369,6 +1417,8 @@ public partial class SlateWindow : Form
             PushDataDamUpdates();
             PushCustomPreviewUpdates();
             PushParamViewerUpdates();
+            win.FlushHeldViewportPaint();
+            win.PushDocStatus();
         }));
     }
 
@@ -1389,6 +1439,7 @@ public partial class SlateWindow : Form
         Log(state == null
             ? "Saved (no captured UI for this document)."
             : $"Saved: {SummarizeStateCounts(state)}.");
+        _instance?.BeginInvoke((Action)(() => _instance?.PushDocStatus()));   // any save, GH's own Ctrl+S too
     }
 
     // Catches color changes made directly on the canvas (right-click the
@@ -2257,6 +2308,9 @@ public partial class SlateWindow : Form
         _applyingGeometry = true;
         try { if (!wasVisible) w.Show(); }
         finally { _applyingGeometry = false; }
+        // Called from inside GH's solve on file open: the thread stays busy
+        // after this, so paint now (splash included) instead of showing black.
+        if (!wasVisible) w.Refresh();
         w.BringToFront();
 
         // Reconcile whenever the window is being (re)shown for a document it
@@ -2484,6 +2538,7 @@ public partial class SlateWindow : Form
 
         _webView.Dock = DockStyle.Fill;
         Controls.Add(_webView);
+        CreateSplash();   // over the WebView until the page has loaded — see SlateSplash.cs
 
         Load += async (_, _) =>
         {
@@ -2530,6 +2585,7 @@ public partial class SlateWindow : Form
 
     private void ShowError(string msg)
     {
+        RemoveSplash();
         _webView.Visible = false;
         var lbl = new Label
         {
@@ -2580,7 +2636,11 @@ public partial class SlateWindow : Form
         _webView.CoreWebView2.SetVirtualHostNameToFolderMapping(
             "slate.local", GetOrExtractWebRoot(), CoreWebView2HostResourceAccessKind.Allow);
 
-        _webView.CoreWebView2.Navigate("https://slate.local/index.html");
+        // The page's own splash (index.html) is on screen once it has loaded:
+        // drop the native one. The query (theme + accent) lets that splash take
+        // the right colours before any script or stylesheet has run.
+        _webView.CoreWebView2.NavigationCompleted += (_, _) => RemoveSplash();
+        _webView.CoreWebView2.Navigate("https://slate.local/index.html" + SplashQuery());
 
         // Re-assert always-on-top and the titlebar icon after WebView2 init —
         // both can get reset by window flag/handle churn during init.
@@ -2879,6 +2939,7 @@ public partial class SlateWindow : Form
                                 }
                             }
                         }
+                        if (scQueued || scPanels) _sceneApplyPending = true;
                         if (scQueued) { if (!_solveRunning) { _solveRunning = true; ApplyLatestValues(); } }
                         else if (scPanels) _hostDocument?.ScheduleSolution(1, null);
                     }
@@ -3058,6 +3119,7 @@ public partial class SlateWindow : Form
                     {
                         _accentIconFill = ColorTranslator.FromHtml(accHex);
                         ApplyWindowIcon(Handle, _lastAppliedTheme != "light", _accentIconFill);
+                        WriteAccentDefaultFile(accHex);
                     }
                     catch { /* malformed colour: keep the current icon */ }
                     break;
@@ -3112,40 +3174,103 @@ public partial class SlateWindow : Form
         // Sort: Canvas Position produces. Used to batch by type (all sliders,
         // then all toggles, ...) in doc.Objects' creation order, which put
         // mixed selections in an order that matched neither.
-        var selected = CanvasOrder.Sort(doc.Objects.Where(o => o.Attributes?.Selected == true));
-
         EnsureHumanReflection();
         EnsurePancakeReflection();
 
-        int sliders = 0, toggles = 0, buttons = 0, valueLists = 0, panels = 0, itemPickers = 0,
-            humanLists = 0, colourPickers = 0, pancakeButtons = 0, triggers = 0,
-            geometryParams = 0, dataDams = 0, paramViewers = 0, pathMappers = 0, mdSliders = 0, graphMappers = 0, customPreviews = 0;
+        var counts  = new Dictionary<string, int>();
+        var visited = new HashSet<Guid>();
+        CaptureObjects(doc, tabId, groupId,
+            doc.Objects.Where(o => o.Attributes?.Selected == true).ToList(), counts, visited);
 
-        foreach (var o in selected)
+        Log(counts.Count == 0
+            ? "Captured nothing (no supported objects selected)."
+            : "Captured " + string.Join(", ", counts.Select(kv => $"{kv.Value} {kv.Key}")) + ".");
+    }
+
+    // One level of a capture. A GH group in the set becomes a Slate group
+    // (its name, and its colour unless it's GH's default) holding its own
+    // members, recursively for groups inside it. Anything that is a member of
+    // a group in this same set is left to that group, so it lands inside it
+    // and only once. Groups with nothing capturable inside are skipped.
+    // Only selected groups count: a selected slider that merely sits inside an
+    // unselected GH group is captured on its own, as before.
+    private void CaptureObjects(GH_Document doc, string tabId, string? groupId,
+        List<IGH_DocumentObject> objs, Dictionary<string, int> counts, HashSet<Guid> visited)
+    {
+        var owned = new HashSet<Guid>(objs.OfType<GH_Group>().SelectMany(g => g.ObjectIDs));
+        foreach (var o in CanvasOrder.Sort(objs.Where(o => !owned.Contains(o.InstanceGuid))))
         {
-            if (o is GH_NumberSlider s)         { AddSlider(tabId, groupId, s); sliders++; }
-            else if (o is GH_BooleanToggle t)   { AddToggle(tabId, groupId, t); toggles++; }
-            else if (o is GH_ButtonObject b)    { AddButton(tabId, groupId, b); buttons++; }
-            else if (o is GH_ValueList v)       { AddValueList(tabId, groupId, v); valueLists++; }
-            else if (o is GH_Panel p)           { AddPanel(tabId, groupId, p); panels++; }
-            else if (o is GH_ItemPicker ip)     { AddItemPicker(tabId, groupId, ip); itemPickers++; }
-            else if (_humanValueListType != null && _humanValueListType.IsInstanceOfType(o) && o is IGH_Param hp)
-                                                 { AddHumanValueList(tabId, groupId, hp); humanLists++; }
-            else if (o is GH_ColourSwatch c)    { AddColourPicker(tabId, groupId, c); colourPickers++; }
-            else if (o is GH_MultiDimensionalSlider mdp) { AddMdSlider(tabId, groupId, mdp); mdSliders++; }
-            else if (o is GH_GraphMapper gmp2)  { AddGraphMapper(tabId, groupId, gmp2); graphMappers++; }
-            else if (_pancakeTrueOnlyBtnType != null && _pancakeTrueOnlyBtnType.IsInstanceOfType(o) && o is IGH_Param pbp)
-                                                 { AddPancakeTrueOnlyButton(tabId, groupId, pbp); pancakeButtons++; }
-            else if (o is GH_Timer tr)          { AddTrigger(tabId, groupId, tr); triggers++; }
-            else if (o is GH_PathMapper pmp)    { AddPathMapper(tabId, groupId, pmp); pathMappers++; }
-            else if (o is IGH_Param gp && TryGetGeometryParamKind(gp, out var gpKind))
-                                                 { AddGeometryParam(tabId, groupId, gp, gpKind); geometryParams++; }
-            else if (o is GH_DataDamComponent dd) { AddDataDam(tabId, groupId, dd); dataDams++; }
-            else if (o is GH_CustomPreviewComponent cpc) { AddCustomPreview(tabId, groupId, cpc); customPreviews++; }
-            else if (o is GH_ParamViewer pv)    { AddParamViewer(tabId, groupId, pv); paramViewers++; }
+            if (!visited.Add(o.InstanceGuid)) continue;
+            if (o is GH_Group g)
+            {
+                var members = GroupMembers(doc, g);
+                if (!members.Any(m => IsCapturable(doc, m, new HashSet<Guid> { g.InstanceGuid }))) continue;
+                string slateId = "g_" + Guid.NewGuid().ToString("N");
+                string name = string.IsNullOrWhiteSpace(g.NickName) ? "Group" : g.NickName;
+                PostToJs(SlateEvent.GroupAdded(tabId, slateId, name, GroupColourCss(g), groupId));
+                Bump(counts, "group(s)");
+                CaptureObjects(doc, tabId, slateId, members, counts, visited);
+            }
+            else CaptureOne(tabId, groupId, o, counts);
         }
+    }
 
-        Log($"Captured {sliders} slider(s), {toggles} toggle(s), {buttons} button(s), {valueLists} value list(s), {panels} panel(s), {itemPickers} item picker(s), {humanLists} item selector(s), {colourPickers} colour picker(s), {mdSliders} MD slider(s), {graphMappers} graph mapper(s), {pancakeButtons} true-only button(s), {triggers} trigger(s), {geometryParams} geometry param(s), {dataDams} data dam(s), {customPreviews} custom preview(s), {paramViewers} param viewer(s), {pathMappers} path mapper(s).");
+    private static List<IGH_DocumentObject> GroupMembers(GH_Document doc, GH_Group g) =>
+        g.ObjectIDs.Select(id => doc.FindObject(id, true)).Where(m => m != null).ToList()!;
+
+    private bool IsCapturable(GH_Document doc, IGH_DocumentObject o, HashSet<Guid> seen)
+    {
+        if (o is GH_Group g)
+            return seen.Add(g.InstanceGuid) && GroupMembers(doc, g).Any(m => IsCapturable(doc, m, seen));
+        return CaptureOne(null, null, o, null);
+    }
+
+    // GH draws groups semi-transparent over the canvas; Slate takes the RGB.
+    // GH's default group colour (the skin's) is not carried over, so only
+    // groups the user actually coloured get a tinted Slate group.
+    private static string? GroupColourCss(GH_Group g)
+    {
+        var c = g.Colour;
+        if (c.IsEmpty || c.ToArgb() == Grasshopper.GUI.Canvas.GH_Skin.group_back.ToArgb()) return null;
+        return $"#{c.R:x2}{c.G:x2}{c.B:x2}";
+    }
+
+    private static void Bump(Dictionary<string, int> counts, string kind) =>
+        counts[kind] = counts.TryGetValue(kind, out var n) ? n + 1 : 1;
+
+    // Adds one supported object to the tab/group and counts it. With
+    // counts == null it only answers "is this capturable?" and adds nothing.
+    private bool CaptureOne(string? tabId, string? groupId, IGH_DocumentObject o, Dictionary<string, int>? counts)
+    {
+        bool dry = counts == null;
+        string? kind = null;
+        Action? add = null;
+        if (o is GH_NumberSlider s)         { kind = "slider(s)";        add = () => AddSlider(tabId!, groupId, s); }
+        else if (o is GH_BooleanToggle t)   { kind = "toggle(s)";        add = () => AddToggle(tabId!, groupId, t); }
+        else if (o is GH_ButtonObject b)    { kind = "button(s)";        add = () => AddButton(tabId!, groupId, b); }
+        else if (o is GH_ValueList v)       { kind = "value list(s)";    add = () => AddValueList(tabId!, groupId, v); }
+        else if (o is GH_Panel p)           { kind = "panel(s)";         add = () => AddPanel(tabId!, groupId, p); }
+        else if (o is GH_ItemPicker ip)     { kind = "item picker(s)";   add = () => AddItemPicker(tabId!, groupId, ip); }
+        else if (_humanValueListType != null && _humanValueListType.IsInstanceOfType(o) && o is IGH_Param hp)
+                                             { kind = "item selector(s)"; add = () => AddHumanValueList(tabId!, groupId, hp); }
+        else if (o is GH_ColourSwatch c)    { kind = "colour picker(s)"; add = () => AddColourPicker(tabId!, groupId, c); }
+        else if (o is GH_MultiDimensionalSlider mdp) { kind = "MD slider(s)"; add = () => AddMdSlider(tabId!, groupId, mdp); }
+        else if (o is GH_GraphMapper gmp2)  { kind = "graph mapper(s)";  add = () => AddGraphMapper(tabId!, groupId, gmp2); }
+        else if (_pancakeTrueOnlyBtnType != null && _pancakeTrueOnlyBtnType.IsInstanceOfType(o) && o is IGH_Param pbp)
+                                             { kind = "true-only button(s)"; add = () => AddPancakeTrueOnlyButton(tabId!, groupId, pbp); }
+        else if (o is GH_Timer tr)          { kind = "trigger(s)";       add = () => AddTrigger(tabId!, groupId, tr); }
+        else if (o is GH_PathMapper pmp)    { kind = "path mapper(s)";   add = () => AddPathMapper(tabId!, groupId, pmp); }
+        else if (o is IGH_Param gp && TryGetGeometryParamKind(gp, out var gpKind))
+                                             { kind = "geometry param(s)"; add = () => AddGeometryParam(tabId!, groupId, gp, gpKind); }
+        else if (o is GH_DataDamComponent dd) { kind = "data dam(s)";    add = () => AddDataDam(tabId!, groupId, dd); }
+        else if (o is GH_CustomPreviewComponent cpc) { kind = "custom preview(s)"; add = () => AddCustomPreview(tabId!, groupId, cpc); }
+        else if (o is GH_ParamViewer pv)    { kind = "param viewer(s)";  add = () => AddParamViewer(tabId!, groupId, pv); }
+
+        if (kind == null || add == null) return false;
+        if (dry) return true;
+        add();
+        Bump(counts!, kind);
+        return true;
     }
 
     // ── Geometry param "Set Geometry" pick ──────────────────────────────────
@@ -3396,10 +3521,16 @@ public partial class SlateWindow : Form
   }
 
   // Every object type the user can sensibly capture: GH's Params > Geometry /
-  // Primitive / Input, plus the component types Slate captures itself.
+  // Primitive / Input, plus the other types Slate captures itself.
   private List<object> BuildIconCatalog()
   {
       var extra = new HashSet<Type> { typeof(GH_DataDamComponent), typeof(GH_CustomPreviewComponent), typeof(GH_ParamViewer), typeof(GH_PathMapper) };
+      // Third-party types Slate captures (Human Item Selector, Pancake true-only
+      // button) live outside Params; list them under "other" when the plugin is loaded.
+      EnsureHumanReflection();
+      EnsurePancakeReflection();
+      if (_humanValueListType != null)     extra.Add(_humanValueListType);
+      if (_pancakeTrueOnlyBtnType != null) extra.Add(_pancakeTrueOnlyBtnType);
       var items = new List<object>();
       var seen  = new HashSet<Guid>();
       foreach (var proxy in Grasshopper.Instances.ComponentServer.ObjectProxies)

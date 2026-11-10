@@ -19,6 +19,7 @@
   import ContextMenu  from './ContextMenu.svelte'
   import PaneSettingsPopup from './PaneSettingsPopup.svelte'
   import ViewportHost from './ViewportHost.svelte'
+  import { suppressDuring } from '../stores/history.js'
   import { PANE_PATTERNS, PANE_PATTERN_DEFAULTS } from './panePatterns.js'
   import { compositeOverOpaque } from './colorUtils.js'
   import { layout, activeWorkspaceId, updatePane, findLeaf, newTabId, splitPane, splitPaneSpanning, newSplitId, setSplitSize, collapsePane, findNeighborPane, moveCrossPaneItem, extractSlidersByIds, orderedItems, posBetween, posAppend, withAppendedPositions, reorderTabTopLevel, removeAllBySourceId, countBySourceId, focusedPreviewIds, workspaces } from '../stores/layout.js'
@@ -190,9 +191,13 @@
   $: if (!activeTab?.viewport) vpBg = null
   $: vpBgCss = vpBg ? `; background: ${vpBg}` : ''
   // Camera + settings reported by C# after navigation / a menu command. Kept
-  // on the tab so they save with the .gh; not an undo step.
-  function onViewportState(tabId, viewportState) {
-    mutateTabsQuiet(ts => ts.map(t => t.id === tabId ? { ...t, viewportState } : t))
+  // on the tab so they save with the .gh. The first report after the viewport
+  // is created (initial) is the saved state coming back — a load, so it goes
+  // in like restore_state does: no undo step, no `*` on the .gh.
+  function onViewportState(tabId, { state: viewportState, initial }) {
+    const apply = () => mutateTabsQuiet(ts => ts.map(t => t.id === tabId ? { ...t, viewportState } : t))
+    if (initial) suppressDuring(apply)
+    else apply()
     postStateSnapshot()
   }
 
@@ -210,8 +215,21 @@
     deleteRequest.set(null)
   }
   $: if ($captureRequest?.paneId === paneId && activeTabId) {
-    postToCs({ type: 'capture', tabId: activeTabId, groupId: $captureRequest.groupId ?? undefined })
+    requestCapture($captureRequest.groupId ?? undefined)
     captureRequest.set(null)
+  }
+
+  // A viewport tab shows the native viewport over its content, so anything
+  // captured or dropped into it would sit invisible behind it — refused.
+  let vpHintTimer = null
+  function refuseViewportTab() {
+    hoverHint.set('Viewport tab: capture or drop into another tab')
+    clearTimeout(vpHintTimer)
+    vpHintTimer = setTimeout(() => hoverHint.set(null), 1800)
+  }
+  function requestCapture(groupId) {
+    if (activeTab?.viewport) { refuseViewportTab(); return }
+    postToCs({ type: 'capture', tabId: activeTabId, groupId })
   }
 
   // Escape — every pane clears its own selection, not just the one under the mouse.
@@ -275,7 +293,13 @@
 
   function onPaneContextMenu(e) {
     e.preventDefault()
-    const { clientX, clientY } = e
+    openPaneMenu(e.clientX, e.clientY)
+  }
+
+  // Also opened from a viewport tab: the native viewport eats the mouse, so
+  // C# reports a right-click without drag (a drag orbits/pans) and
+  // ViewportHost forwards it here — the way out of a viewport tab.
+  function openPaneMenu(clientX, clientY) {
     const menuW = 170, menuH = 270
     const items = [
       { label: 'Split Vertically',   action: () => splitEven('h') },
@@ -1458,6 +1482,8 @@
     const isTabDrag  = $tabDrag  && $tabDrag.fromPaneId  !== paneId
     const isItemDrag = $itemDrag && $itemDrag.fromPaneId !== paneId
     if (!isTabDrag && !isItemDrag) return
+    // Item over a viewport tab's content: no drop (tab buttons still take it).
+    if (isItemDrag && !isTabDrag && activeTab?.viewport && !headerEl?.contains(e.target)) return
     e.preventDefault()
     if (isItemDrag) itemDragHover = true
     if (!paneEl || !isTabDrag) return
@@ -1514,6 +1540,11 @@
 
   function dropItemOnTab(tabId) {
     if (!$itemDrag || $itemDrag.fromPaneId === paneId) return
+    if (tabs.find(t => t.id === tabId)?.viewport) {
+      itemDrag.set(null); itemDragHover = false; itemDropTabId = null
+      refuseViewportTab()
+      return
+    }
     const { type, id, ids, fromPaneId: fp, fromTabId: ft, fromWorkspaceId } = $itemDrag
     moveCrossPaneItem(fromWorkspaceId ?? get(activeWorkspaceId), fp, ft, ids ?? [id], type, get(activeWorkspaceId), paneId, tabId)
     itemDrag.set(null)
@@ -1550,8 +1581,11 @@
   <header bind:this={headerEl}>
     {#if tabBarHidden}
       <!-- Keeps the bar's height (TabBar's .tabbar is 20px) so the content doesn't
-           jump when switching between preview and edit mode. -->
-      <div class="tabbar-spacer"></div>
+           jump when switching between preview and edit mode. Not in a viewport
+           tab: the viewport covers the whole pane anyway, so the strip was only
+           pushing the View/Display chips down; without it they sit where the
+           tab bar would be (and step down 20px when edit mode shows the bar). -->
+      {#if !activeTab?.viewport}<div class="tabbar-spacer"></div>{/if}
     {:else}
     <TabBar
       {tabs} {activeTabId} mode={$mode}
@@ -1573,7 +1607,7 @@
       on:itemDragOverTab={e  => itemDropTabId = e.detail}
       on:itemDragLeaveTab={e => { if (itemDropTabId === e.detail) itemDropTabId = null }}
       on:itemDropOnTab={e    => dropItemOnTab(e.detail)}
-      on:capture={() => postToCs({ type: 'capture', tabId: activeTabId })}
+      on:capture={() => requestCapture()}
     />
     {/if}
 
@@ -1600,6 +1634,7 @@
       {#key activeTab.id}
         <ViewportHost id={activeTab.id} state={activeTab.viewportState ?? null}
           on:bg={e => vpBg = e.detail}
+          on:menu={e => openPaneMenu(e.detail.x, e.detail.y)}
           on:state={e => onViewportState(activeTab.id, e.detail)} />
       {/key}
     {:else if !activeTab || (activeTab.sliders.length === 0 && activeTab.groups.length === 0)}

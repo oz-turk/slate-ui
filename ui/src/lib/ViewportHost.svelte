@@ -1,10 +1,10 @@
 <script>
   // Placeholder for a native Rhino viewport (SlateViewports.cs). The native
-  // control sits ON TOP of the WebView and covers the whole pane, tab bar
-  // included; this component only reports where the pane is and which parts
+  // control sits ON TOP of the WebView and covers the pane's content area
+  // (not the tab bar); this component only reports where that is and which parts
   // of it must stay clickable (cut out of the viewport's shape), and hosts the
   // viewport's two menu chips. Nothing in the HTML can paint above a native
-  // window, so the viewport is hidden while a drag, menu or popup is open.
+  // window, so open menus/popups are cut out of it and a drag hides it.
   import { onMount, onDestroy, createEventDispatcher } from 'svelte'
   import { postToCs } from './ipc.js'
   import { tabDrag, itemDrag } from '../stores/dragState.js'
@@ -27,21 +27,38 @@
   let lastRect = null       // pane inner rect from the latest tick
   let clearTimer = null
 
-  // Anything that has to draw over the viewport. Popups/menus are
+  // Anything that has to draw over the viewport (cut out of it). Popups/menus are
   // position:fixed elements rendered inside panes; checked by class. Others
   // (Settings panel, fullscreen Param Viewer) carry data-vp-overlay.
   const OVERLAY_SELECTOR = '.menu, .popup, [data-vp-overlay]'
   // Bits of the pane that must stay visible and clickable over the viewport.
   const CUT_SELECTOR = '.corner, header .tab, header button, header .bar, [data-vp-cut]'
 
+  // A split divider or pane corner being dragged. The native window can't
+  // move in the same frame as the HTML layout, so while panes resize it ran
+  // a frame ahead/behind and spilled over the neighbouring panes, flickering
+  // (screen recording, 2026-11-09). Hidden like a drag; the picture stays at
+  // its old size until release.
+  const RESIZE_SELECTOR = '.divider.dragging, .corner.active'
+
   // Pane inner rect (inside its 1px border) and the cut-outs, viewport-local.
+  // Open menus/popups are cut out too instead of hiding the whole viewport,
+  // so it stays live behind them (a Scene picked in the Scenes popup shows
+  // at once, not only after the popup closes). Only drags still hide it.
+  // The viewport covers the pane's content area only, not the header: the tab
+  // bar stays plain HTML, so a tab drag (its insertion line drawn in the gaps
+  // between tabs) never meets the native window — it used to cover the whole
+  // pane with the tabs cut out, and the line flickered under it. With the
+  // tab bar hidden the content starts at the pane top, so it still fills it.
   function measure() {
     const pane = el.closest('.pane')
     if (!pane) return null
     const p = pane.getBoundingClientRect()
-    const r = { left: p.left + 1, top: p.top + 1, right: p.right - 1, bottom: p.bottom - 1 }
+    const c = el.getBoundingClientRect()
+    const r = { left: Math.max(c.left, p.left + 1), top: Math.max(c.top, p.top + 1),
+                right: Math.min(c.right, p.right - 1), bottom: Math.min(c.bottom, p.bottom - 1) }
     const cuts = []
-    for (const c of pane.querySelectorAll(CUT_SELECTOR)) {
+    for (const c of [...pane.querySelectorAll(CUT_SELECTOR), ...document.querySelectorAll(OVERLAY_SELECTOR)]) {
       const h = c.getBoundingClientRect()
       const x0 = Math.max(h.left, r.left),   y0 = Math.max(h.top, r.top)
       const x1 = Math.min(h.right, r.right), y1 = Math.min(h.bottom, r.bottom)
@@ -58,7 +75,8 @@
       const { r, cuts } = m
       lastRect = r
       const w = r.right - r.left, h = r.bottom - r.top
-      const blocked = $tabDrag !== null || $itemDrag !== null || document.querySelector(OVERLAY_SELECTOR) !== null
+      const blocked = $tabDrag !== null || $itemDrag !== null
+        || document.querySelector(RESIZE_SELECTOR) !== null
       const visible = !blocked && w > 1 && h > 1
       const dpr = window.devicePixelRatio
       const key = `${r.left},${r.top},${w},${h},${dpr},${visible},${JSON.stringify(cuts)}`
@@ -92,7 +110,16 @@
       img.onload = img.onerror = () => requestAnimationFrame(() => postToCs({ type: 'viewport_snapshot_shown', id }))
       img.src = m.data
     } else if (m.type === 'viewport_state') {
-      dispatch('state', m.state)
+      dispatch('state', { state: m.state, initial: !!m.initial })
+    } else if (m.type === 'viewport_pointerdown') {
+      // A press on the native viewport, which the WebView never sees: replay
+      // it here so clickOutside closes open menus/popups as for any click.
+      el?.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, composed: true }))
+    } else if (m.type === 'viewport_context') {
+      // Right-click without drag inside the native viewport (device px,
+      // WebView client origin) → the pane's own right-click menu.
+      const dpr = window.devicePixelRatio
+      dispatch('menu', { x: m.x / dpr, y: m.y / dpr })
     }
   }
 
@@ -134,7 +161,10 @@
       { label: '   Zoom Extents', action: () => cmd('zoomExtents') },
       { label: '   Zoom to Focus', action: () => cmd('zoomFocus') },
       'sep',
-      { label: tick_(!!s.locked) + 'Locked', action: () => cmd('locked', !s.locked) },
+      // On/off settings: checkbox items (ContextMenu passes the new value).
+      // Wheel zoom: toward the focused object (default, off) or the cursor.
+      { label: 'Wheel Zoom at Cursor', checked: s.zoomAtCursor === true, action: v => cmd('zoomAtCursor', v) },
+      { label: 'Locked',               checked: !!s.locked,               action: v => cmd('locked', v) },
     ])
   }
 
@@ -143,9 +173,9 @@
     openMenu(e, 'display', [
       ...modes.map(m => ({ label: tick_(s.displayMode === m.id) + m.name, action: () => cmd('displayMode', m.id) })),
       'sep',
-      { label: tick_(s.grid !== false)       + 'Grid',        action: () => cmd('grid', s.grid === false) },
-      { label: tick_(s.cplaneAxes !== false) + 'CPlane Axes', action: () => cmd('cplaneAxes', s.cplaneAxes === false) },
-      { label: tick_(s.worldAxes !== false)  + 'World Axes',  action: () => cmd('worldAxes', s.worldAxes === false) },
+      { label: 'Grid',        checked: s.grid !== false,       action: v => cmd('grid', v) },
+      { label: 'CPlane Axes', checked: s.cplaneAxes !== false, action: v => cmd('cplaneAxes', v) },
+      { label: 'World Axes',  checked: s.worldAxes !== false,  action: v => cmd('worldAxes', v) },
     ])
   }
 

@@ -7,6 +7,10 @@ public static class SlateEvent
     public static string SliderAdded(string tabId, string id, string name, double min, double max, double value, int decimalPlaces, string? groupId = null) =>
         JsonSerializer.Serialize(new { type = "slider_added", tabId, id, name, min, max, value, decimalPlaces, groupId });
 
+    // A captured GH group: sent before its members, which then carry id as their groupId.
+    public static string GroupAdded(string tabId, string id, string name, string? color, string? groupId = null) =>
+        JsonSerializer.Serialize(new { type = "group_added", tabId, id, name, color, groupId });
+
     public static string ToggleAdded(string tabId, string id, string name, bool value, string? groupId = null) =>
         JsonSerializer.Serialize(new { type = "toggle_added", tabId, id, name, value = value ? 1 : 0, groupId });
 

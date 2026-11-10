@@ -12,11 +12,11 @@
     updatePane, syncControl, removeAllBySourceId, clearAllWorkspaces, resetToDefault, makeLeaf, setActiveWorkspace,
     posAppend, applyWindowEdgeResize, orderedItems, MIN_PANE_SIZE
   } from './stores/layout.js'
-  import { ACCENTS, accent, iconCatalog, mode, pinned, theme, deleteRequest, captureRequest, settingsOpen, clearSelectionTick, groupSelectionTick, hoverHint, draggingControl, altHeld, ctrlHeld, fullscreenTreeId, paramViewerItemsCache, allowMultipleCaptures, showParamIcons, iconKeys, iconImages } from './stores/uiState.js'
+  import { ACCENTS, accent, iconCatalog, mode, pinned, theme, deleteRequest, captureRequest, settingsOpen, clearSelectionTick, groupSelectionTick, hoverHint, draggingControl, altHeld, ctrlHeld, fullscreenTreeId, paramViewerItemsCache, allowMultipleCaptures, showParamIcons, iconKeys, iconImages, docStatus, saveFlash } from './stores/uiState.js'
   import { undo, suppressDuring, asResizeChange } from './stores/history.js'
   import { postToCs, postStateSnapshot, saveDocument } from './lib/ipc.js'
   import { scenes, activeSceneId } from './stores/sceneStore.js'
-  import { pruneOrphanScenes } from './stores/scenes.js'
+  import { pruneOrphanScenes, runSceneAction, sceneApplied } from './stores/scenes.js'
 
   // Driven from the theme store directly rather than var(--panel-bg) — that
   // var kept resolving to something dark in light mode for this specific
@@ -43,12 +43,25 @@
   // since each accent has a separate dark/light colour.
   $: postToCs({ type: 'accent_changed', color: (ACCENTS.find(a => a.id === $accent) ?? ACCENTS[0])[$theme === 'light' ? 'light' : 'dark'] })
 
+  // Startup splash (index.html): faded out once the UI is ready — after the
+  // saved layout is restored (restore_state), or the fallback below.
+  function hideSplash() {
+    const el = document.getElementById('splash')
+    if (!el || el.classList.contains('hide')) return
+    requestAnimationFrame(() => {   // let the restored layout paint first
+      el.classList.add('hide')
+      setTimeout(() => el.remove(), 400)
+    })
+  }
+
   // ── C# ↔ JS ───────────────────────────────────────────────────────────────────
   onMount(() => {
     window.chrome?.webview?.addEventListener('message', e => {
       try { handleMessage(JSON.parse(e.data)) } catch {}
     })
     postToCs({ type: 'ui_ready' })
+    // A document with no saved layout never gets restore_state: don't wait for it.
+    setTimeout(hideSplash, 1500)
     // A document with its own saved ui_state gets this from the restore_state
     // handler below once C# restores it — but a document with none (new/
     // unsaved file, no Slate history yet) never triggers that path, so C#'s
@@ -366,6 +379,37 @@
   function addCapturedControl(control, msg) {
     if (!get(allowMultipleCaptures) && allSourceIds().has(msg.id)) return
     const withId = { ...control, id: crypto.randomUUID(), sourceId: msg.id }
+    const target = findCaptureTarget(msg)
+    if (!target) return
+    const groupId = msg.groupId ?? null
+    updatePane(target.paneId, p => ({
+      tabs: p.tabs.map(t => t.id !== target.tabId ? t : groupId
+        ? { ...t, groups: addSliderToGroupInTree(t.groups, groupId, withId) }
+        : { ...t, sliders: [...t.sliders, { ...withId, pos: posAppend(t) }] })
+    }))
+    postStateSnapshot()
+  }
+
+  // A captured GH group (C# group_added, sent before its members): an empty
+  // Slate group at the tab's top level or inside msg.groupId (nested GH
+  // groups); the members that follow carry msg.id as their groupId.
+  function addCapturedGroup(msg) {
+    const target = findCaptureTarget(msg)
+    if (!target) return
+    const group = { id: msg.id, label: msg.name, collapsed: false, previewShow: true, sliders: [], groups: [],
+                    ...(msg.color ? { color: msg.color } : {}) }
+    const nest = groups => groups.map(g => g.id === msg.groupId
+      ? { ...g, groups: [...(g.groups ?? []), { ...group, pos: posAppend(g) }] }
+      : { ...g, groups: nest(g.groups ?? []) })
+    updatePane(target.paneId, p => ({
+      tabs: p.tabs.map(t => t.id !== target.tabId ? t : msg.groupId
+        ? { ...t, groups: nest(t.groups) }
+        : { ...t, groups: [...t.groups, { ...group, pos: posAppend(t) }] })
+    }))
+    postStateSnapshot()
+  }
+
+  function findCaptureTarget(msg) {
     const $l  = get(layout)
     const leaves = allLeaves($l)
     let targetPaneId = null, targetTabId = null
@@ -383,14 +427,8 @@
       targetPaneId = fallbackLeaf?.paneId
       targetTabId  = fallbackLeaf?.tabs.find(t => t.id === fallbackLeaf.activeTabId)?.id ?? fallbackLeaf?.tabs[0]?.id
     }
-    if (!targetPaneId) return
-    const groupId = msg.groupId ?? null
-    updatePane(targetPaneId, p => ({
-      tabs: p.tabs.map(t => t.id !== targetTabId ? t : groupId
-        ? { ...t, groups: addSliderToGroupInTree(t.groups, groupId, withId) }
-        : { ...t, sliders: [...t.sliders, { ...withId, pos: posAppend(t) }] })
-    }))
-    postStateSnapshot()
+    if (!targetPaneId) return null
+    return { paneId: targetPaneId, tabId: targetTabId }
   }
 
   // ── sort_positions_result support ────────────────────────────────────────────
@@ -470,6 +508,7 @@
   // there's no hover/leave pair to key off of, just cleared a beat after the
   // last event so a burst of wheel ticks doesn't flicker it.
   let zoomHideTimer = null
+  let saveFlashTimer = null
   function showZoomHint(factor) {
     hoverHint.set(`Zoom: ${Math.round(factor * 100)}%`)
     clearTimeout(zoomHideTimer)
@@ -477,6 +516,17 @@
   }
 
   function handleMessage(msg) {
+    if (msg.type === 'scene_applied') sceneApplied()
+
+    // Status bar: last solve time + last save (C# PushDocStatus), and the
+    // brief "Saved" / "Save cancelled" confirmation after Slate's own save.
+    if (msg.type === 'doc_status') docStatus.set({ solveMs: msg.solveMs ?? null, savedAt: msg.savedAt ?? null, modified: !!msg.modified })
+    if (msg.type === 'save_result') {
+      saveFlash.set(msg.ok ? 'ok' : 'failed')
+      clearTimeout(saveFlashTimer)
+      saveFlashTimer = setTimeout(() => saveFlash.set(null), 2500)
+    }
+
     if (msg.type === 'zoom_changed') {
       showZoomHint(msg.factor)
     }
@@ -498,6 +548,10 @@
     // still needs the ground-truth fallback since GH's canvas has its own
     // native "Group" command on the same key that a stolen keydown would hit.
     if (msg.type === 'group_hotkey') groupSelectionTick.update(n => n + 1)
+
+    if (msg.type === 'automation_scene') runSceneAction(msg.action, msg.target)
+
+    if (msg.type === 'group_added') addCapturedGroup(msg)
 
     if (msg.type === 'slider_added') {
       addCapturedControl({ id: msg.id, type: 'slider', name: msg.name, min: msg.min, max: msg.max, value: msg.value, decimalPlaces: msg.decimalPlaces }, msg)
@@ -779,6 +833,7 @@
       pruneOrphanScenes()
       activeSceneId.set(null)
       postStateSnapshot()
+      hideSplash()
     }
   }
 
