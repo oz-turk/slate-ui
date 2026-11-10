@@ -257,7 +257,7 @@
           <div class="check-header level-{header.level}">{header.text}</div>
         {:else}
           <label class="check-item">
-            <input type="checkbox" checked={selectedSet.has(i)} on:change={() => onToggle(i)} />
+            <input type="checkbox" class="cb" checked={selectedSet.has(i)} on:change={() => onToggle(i)} />
             <span>{opt}</span>
           </label>
         {/if}
@@ -479,11 +479,7 @@
     flex-shrink: 0;
   }
   .check-item:hover { background: rgba(var(--accent-rgb), 0.1); color: var(--text); }
-  .check-item input {
-    accent-color: var(--accent);
-    cursor: pointer;
-    flex-shrink: 0;
-  }
+  /* checkbox look: the shared .cb style in app.css */
   .check-item span {
     overflow: hidden;
     text-overflow: ellipsis;

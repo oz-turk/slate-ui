@@ -5,9 +5,20 @@
 
   export let x     = 0
   export let y     = 0
-  export let items = []   // [{ label, action, danger? }] — or the string 'sep' for a divider
+  // [{ label, action, danger?, checked? }] — or the string 'sep' for a divider.
+  // checked (true/false) makes the item an on/off setting: a checkbox (.cb, app.css) on the
+  // right shows its state either way (a "✓ " prefix only shows "on", so "off"
+  // read as nothing). Clicking one calls action(newValue), flips the box in
+  // place and keeps the menu open, so it can be clicked again.
+  export let items = []
 
   function click(item) {
+    if (typeof item.checked === 'boolean') {
+      item.checked = !item.checked
+      items = items
+      item.action(item.checked)
+      return
+    }
     item.action()
     dispatch('close')
   }
@@ -18,7 +29,12 @@
     {#if item === 'sep'}
       <div class="sep"></div>
     {:else}
-      <button class="item" class:danger={item.danger} on:click={() => click(item)}>{item.label}</button>
+      <button class="item" class:danger={item.danger} on:click={() => click(item)}>
+        <span class="label">{item.label}</span>
+        {#if typeof item.checked === 'boolean'}
+          <span class="cb" class:checked={item.checked}></span>
+        {/if}
+      </button>
     {/if}
   {/each}
 </div>
@@ -43,6 +59,7 @@
   .item {
     display: flex;
     align-items: center;
+    gap: 12px;
     width: 100%;
     text-align: left;
     padding: 6px 10px;
@@ -58,6 +75,9 @@
   .item:hover { background: rgba(var(--accent-rgb), 0.15); }
   .item.danger { color: rgba(var(--danger-rgb), 0.85); }
   .item.danger:hover { background: rgba(var(--danger-rgb), 0.15); }
+  .label { flex: 1; }
+
+  /* checkbox look: the shared .cb style in app.css */
 
   .sep {
     height: 1px;

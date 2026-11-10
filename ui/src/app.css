@@ -105,5 +105,43 @@ body {
    never moves focus (it is the Edit/Preview toggle), so the browser focus
    ring only ever showed up by accident: after a native viewport hands focus
    back to the WebView, Chromium restores it to the last clicked tab and draws
-   the ring, blinking on every orbit/pan as focus goes back and forth. */
-[role="tab"]:focus { outline: none; }
+   the ring, blinking on every orbit/pan as focus goes back and forth.
+   Buttons get the same ring the same way (last clicked row icon, e.g. Custom
+   Preview's focus button, after a Shift+RMB pan); none of them has a keyboard
+   use, so the rule covers every button instead of patching them one by one. */
+[role="tab"]:focus,
+button:focus { outline: none; }
+
+/* ── checkbox: the one style for every checkbox in Slate ──────────────────
+   Native inputs (value list / Item Selector checklists) and the drawn box in
+   ContextMenu both use it, so they can't drift apart. Unchecked is filled a
+   shade off the background (the native box was white, glaring in both
+   themes); checked is the accent with a tick in the background colour.
+   Size/colour variations go through --cb-size / --cb-on on the element. */
+input[type="checkbox"].cb,
+.cb {
+  appearance: none;
+  -webkit-appearance: none;
+  flex-shrink: 0;
+  width: var(--cb-size, 12px);
+  height: var(--cb-size, 12px);
+  margin: 0;
+  box-sizing: border-box;
+  border: 1px solid color-mix(in srgb, var(--text) 35%, var(--bg));
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--text) 6%, var(--bg)) center / 80% no-repeat;
+  cursor: pointer;
+  transition: background-color 0.1s, border-color 0.1s;
+}
+input[type="checkbox"].cb:hover,
+.cb:hover { border-color: color-mix(in srgb, var(--text) 55%, var(--bg)); }
+input[type="checkbox"].cb:checked,
+.cb.checked {
+  background-color: var(--cb-on, var(--accent));
+  border-color: var(--cb-on, var(--accent));
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Cpath d='M1.5 5.2 4 7.6 8.5 2.6' fill='none' stroke='%231a1a1a' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+:root[data-theme="light"] input[type="checkbox"].cb:checked,
+:root[data-theme="light"] .cb.checked {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Cpath d='M1.5 5.2 4 7.6 8.5 2.6' fill='none' stroke='%23e4e1d8' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
