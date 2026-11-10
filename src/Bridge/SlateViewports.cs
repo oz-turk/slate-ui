@@ -19,9 +19,10 @@ namespace Slate.Bridge;
 // so the holes read as transparent. While anything has to draw OVER the
 // viewport (drags, menus, popups) the UI sends visible:false.
 //
-// What the control shows is not drawn into it by Rhino: the picture comes
-// from a hidden floating Rhino view, captured to a bitmap on every paint
-// (see SlateViewportControl.CaptureMode for why).
+// Rhino draws straight into the control, with a reset after every paint that
+// keeps it from crashing (RenderTargetReset). Where that reset isn't
+// available the picture comes from a hidden floating Rhino view instead,
+// captured to a bitmap on every paint (see SlateViewportControl.CaptureMode).
 //
 // Messages: viewport_rect / viewport_cmd / viewport_remove / viewport_focus in;
 // viewport_info (display modes, background) and viewport_state (camera +
@@ -586,15 +587,17 @@ public class SlateViewportControl : ViewportControl
 
     // ── where the picture comes from ─────────────────────────────────────────
     //
-    // true: a hidden floating Rhino view is captured to a bitmap and the
-    // bitmap is painted here. false: Rhino draws straight into this control
-    // (ViewportControl.OnPaint) — about 2x faster per frame, but it crashes
-    // Rhino (8.34 and 9 WIP): the display pipeline keeps a temporary MFC
-    // window object for our HWND, MFC deletes it on idle, and a later draw
-    // reads freed memory (AccessViolation in CRhinoDisplayPipeline::GetWnd).
-    // Rhino's own views don't go through that path, hence the hidden view.
-    // Flip back to false once Rhino fixes it.
-    internal static readonly bool CaptureMode = true;
+    // false: Rhino draws straight into this control (ViewportControl.OnPaint).
+    // Left alone that crashes Rhino (8.34 and 9 WIP): the display pipeline
+    // keeps a temporary MFC window object for our HWND, MFC deletes it on
+    // idle, and a later draw reads freed memory (AccessViolation in
+    // CRhinoDisplayPipeline::GetWnd). So the pipeline's window is cleared
+    // after every paint (RenderTargetReset) and the next paint sets it anew.
+    // true: fallback where that reset can't be found — a hidden floating
+    // Rhino view is captured to a bitmap and the bitmap is painted here.
+    // No crash (Rhino's own views don't go through that path), but a frame
+    // costs about 3x as much (20 ms against 6).
+    internal static readonly bool CaptureMode = !RenderTargetReset.Available;
 
     // Name prefix of the hidden views in the Rhino document.
     internal const string ViewPrefix = "slate_";
@@ -714,7 +717,9 @@ public class SlateViewportControl : ViewportControl
         bool hold = HoldPaint?.Invoke() == true;
         if (!CaptureMode)
         {
-            if (!hold) base.OnPaint(e);
+            if (hold) return;
+            try { base.OnPaint(e); }
+            finally { RenderTargetReset.Clear(Handle, Viewport); }
             return;
         }
         // Held (GH mid-solve): the last frame is painted again.
@@ -876,4 +881,70 @@ public class SlateViewportControl : ViewportControl
         if (disposing) { _wheelEnd.Dispose(); CloseView(); _frame?.Dispose(); _frame = null; }
         base.Dispose(disposing);
     }
+}
+
+// Makes drawing into a non-Rhino window safe.
+//
+// CRhinoViewport_Draw hands our HWND to the viewport's display pipeline with
+// SetRenderTarget(HWND), which stores CWnd::FromHandle(hwnd). For a window
+// MFC didn't create that is a temporary object, deleted the next time the
+// app goes idle, and the pipeline keeps the pointer: the following draw reads
+// it (GetWnd) from freed memory. Clearing the pipeline's render target right
+// after each paint — while the object is still alive — leaves nothing stale
+// behind; the next draw finds no window and sets the target again.
+//
+// CleanPreviousRenderTarget is the pipeline's own "forget the target" step
+// (it only destroys a window the pipeline owns, which ours never is). It is
+// not part of any public API, so both entry points are looked up by name at
+// startup; if either is missing, Available is false and nothing is called.
+internal static class RenderTargetReset
+{
+    [System.Runtime.InteropServices.UnmanagedFunctionPointer(System.Runtime.InteropServices.CallingConvention.Cdecl)]
+    private delegate IntPtr PipelineOfFn(IntPtr hwnd, IntPtr viewport);
+    [System.Runtime.InteropServices.UnmanagedFunctionPointer(System.Runtime.InteropServices.CallingConvention.Cdecl)]
+    private delegate void CleanFn(IntPtr pipeline);
+
+    private static readonly PipelineOfFn? s_pipelineOf;
+    private static readonly CleanFn? s_clean;
+    private static readonly System.Reflection.MethodInfo? s_viewportPtr;
+
+    internal static bool Available => s_pipelineOf != null && s_clean != null && s_viewportPtr != null;
+
+    static RenderTargetReset()
+    {
+        try
+        {
+            if (IntPtr.Size != 8) return;   // the decorated name below is the x64 one
+            IntPtr pipelineOf = GetProcAddress(GetModuleHandle("rhcommon_c.dll"), "CRhinoViewport_DisplayPipeline");
+            IntPtr clean = GetProcAddress(GetModuleHandle("RhinoCore.dll"), "?CleanPreviousRenderTarget@CRhinoDisplayPipeline@@AEAAXXZ");
+            var viewportPtr = typeof(RhinoViewport).GetMethod("NonConstPointer",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public,
+                null, Type.EmptyTypes, null);
+            if (pipelineOf == IntPtr.Zero || clean == IntPtr.Zero || viewportPtr == null) return;
+            s_pipelineOf  = (PipelineOfFn)System.Runtime.InteropServices.Marshal.GetDelegateForFunctionPointer(pipelineOf, typeof(PipelineOfFn));
+            s_clean       = (CleanFn)System.Runtime.InteropServices.Marshal.GetDelegateForFunctionPointer(clean, typeof(CleanFn));
+            s_viewportPtr = viewportPtr;
+        }
+        catch { /* not available: the caller falls back to capture mode */ }
+    }
+
+    // Call right after a paint. The viewport already has its pipeline then,
+    // so the lookup returns it and creates nothing.
+    internal static void Clear(IntPtr hwnd, RhinoViewport? viewport)
+    {
+        if (!Available || viewport == null) return;
+        try
+        {
+            var vp = (IntPtr)s_viewportPtr!.Invoke(viewport, null)!;
+            if (vp == IntPtr.Zero) return;
+            IntPtr pipeline = s_pipelineOf!(hwnd, vp);
+            if (pipeline != IntPtr.Zero) s_clean!(pipeline);
+        }
+        catch { /* never let a paint throw */ }
+    }
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+    private static extern IntPtr GetModuleHandle(string name);
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet = System.Runtime.InteropServices.CharSet.Ansi, BestFitMapping = false, ThrowOnUnmappableChar = true)]
+    private static extern IntPtr GetProcAddress(IntPtr module, string name);
 }
