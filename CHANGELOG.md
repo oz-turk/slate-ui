@@ -4,6 +4,10 @@ Notable user-facing changes, newest first. Internal refactors and pure repo main
 
 ## Unreleased
 
+## 0.4.1 - 2026-11-11 (hotfix)
+
+- Fix Rhino 9 WIP closing as soon as a viewport tab was drawn. The Rhino function the viewport tab uses takes different arguments in Rhino 9 than in Rhino 7 and 8; Slate now checks which form the running Rhino has, and falls back to the slower drawing path if it finds neither.
+
 ## 0.4.0 - 2026-11-11
 
 - **Viewport tab:** right-click a pane and choose Viewport Tab to turn it into a live Rhino viewport, with its own camera, view and display mode menus, grid and axes switches, and a Locked option. Right-drag orbits, Shift+right-drag pans, Ctrl+right-drag dollies, and the wheel zooms (optionally at the cursor). The camera and settings are saved with the .gh.
