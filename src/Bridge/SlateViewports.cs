@@ -895,35 +895,50 @@ public class SlateViewportControl : ViewportControl
 //
 // CleanPreviousRenderTarget is the pipeline's own "forget the target" step
 // (it only destroys a window the pipeline owns, which ours never is). It is
-// not part of any public API, so both entry points are looked up by name at
-// startup; if either is missing, Available is false and nothing is called.
+// not part of any public API, so both entry points are looked up at startup;
+// if either is missing, Available is false and nothing is called.
+//
+// The pipeline lookup goes through RhinoCommon's own P/Invoke declaration
+// rather than the native export, because its arguments differ by version:
+// Rhino 7 and 8 take (hwnd, viewport), Rhino 9 takes (viewport) alone.
+// Calling the export with the wrong shape reads the HWND as a viewport and
+// takes Rhino down, so any other shape counts as "not available".
 internal static class RenderTargetReset
 {
     [System.Runtime.InteropServices.UnmanagedFunctionPointer(System.Runtime.InteropServices.CallingConvention.Cdecl)]
-    private delegate IntPtr PipelineOfFn(IntPtr hwnd, IntPtr viewport);
-    [System.Runtime.InteropServices.UnmanagedFunctionPointer(System.Runtime.InteropServices.CallingConvention.Cdecl)]
     private delegate void CleanFn(IntPtr pipeline);
 
-    private static readonly PipelineOfFn? s_pipelineOf;
+    private static readonly Func<IntPtr, IntPtr, IntPtr>? s_pipelineOfHwnd;   // Rhino 7, 8
+    private static readonly Func<IntPtr, IntPtr>? s_pipelineOf;               // Rhino 9
     private static readonly CleanFn? s_clean;
     private static readonly System.Reflection.MethodInfo? s_viewportPtr;
 
-    internal static bool Available => s_pipelineOf != null && s_clean != null && s_viewportPtr != null;
+    internal static bool Available => (s_pipelineOfHwnd != null || s_pipelineOf != null) && s_clean != null && s_viewportPtr != null;
 
     static RenderTargetReset()
     {
         try
         {
             if (IntPtr.Size != 8) return;   // the decorated name below is the x64 one
-            IntPtr pipelineOf = GetProcAddress(GetModuleHandle("rhcommon_c.dll"), "CRhinoViewport_DisplayPipeline");
+            const System.Reflection.BindingFlags any = System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Instance
+                | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public;
+            var decl = typeof(RhinoViewport).Assembly.GetType("UnsafeNativeMethods")?.GetMethod("CRhinoViewport_DisplayPipeline", any);
             IntPtr clean = GetProcAddress(GetModuleHandle("RhinoCore.dll"), "?CleanPreviousRenderTarget@CRhinoDisplayPipeline@@AEAAXXZ");
-            var viewportPtr = typeof(RhinoViewport).GetMethod("NonConstPointer",
-                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public,
-                null, Type.EmptyTypes, null);
-            if (pipelineOf == IntPtr.Zero || clean == IntPtr.Zero || viewportPtr == null) return;
-            s_pipelineOf  = (PipelineOfFn)System.Runtime.InteropServices.Marshal.GetDelegateForFunctionPointer(pipelineOf, typeof(PipelineOfFn));
-            s_clean       = (CleanFn)System.Runtime.InteropServices.Marshal.GetDelegateForFunctionPointer(clean, typeof(CleanFn));
-            s_viewportPtr = viewportPtr;
+            var viewportPtr = typeof(RhinoViewport).GetMethod("NonConstPointer", any, null, Type.EmptyTypes, null);
+            if (decl == null || !decl.IsStatic || clean == IntPtr.Zero || viewportPtr == null) return;
+            var args = decl.GetParameters();
+            if (decl.ReturnType != typeof(IntPtr) || args.Any(a => a.ParameterType != typeof(IntPtr))) return;
+
+            Func<IntPtr, IntPtr, IntPtr>? withHwnd = null;
+            Func<IntPtr, IntPtr>? alone = null;
+            if (args.Length == 2) withHwnd = (Func<IntPtr, IntPtr, IntPtr>)decl.CreateDelegate(typeof(Func<IntPtr, IntPtr, IntPtr>));
+            else if (args.Length == 1) alone = (Func<IntPtr, IntPtr>)decl.CreateDelegate(typeof(Func<IntPtr, IntPtr>));
+            else return;
+
+            s_clean          = (CleanFn)System.Runtime.InteropServices.Marshal.GetDelegateForFunctionPointer(clean, typeof(CleanFn));
+            s_viewportPtr    = viewportPtr;
+            s_pipelineOfHwnd = withHwnd;
+            s_pipelineOf     = alone;
         }
         catch { /* not available: the caller falls back to capture mode */ }
     }
@@ -937,7 +952,7 @@ internal static class RenderTargetReset
         {
             var vp = (IntPtr)s_viewportPtr!.Invoke(viewport, null)!;
             if (vp == IntPtr.Zero) return;
-            IntPtr pipeline = s_pipelineOf!(hwnd, vp);
+            IntPtr pipeline = s_pipelineOfHwnd != null ? s_pipelineOfHwnd(hwnd, vp) : s_pipelineOf!(vp);
             if (pipeline != IntPtr.Zero) s_clean!(pipeline);
         }
         catch { /* never let a paint throw */ }
