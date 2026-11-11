@@ -31,9 +31,11 @@ Grasshopper definitions often need a clean control surface for clients or teamma
 
 **Preview pin.** Pin any captured geometry param, or a whole group at once, to always draw on the GH canvas, regardless of GH's own preview filter or mode. Useful for keeping key geometry visible while a client clicks through a panel that never touches GH's native selection.
 
+**Viewport tab.** Turn any pane into a live Rhino viewport from its right-click menu, with its own camera, view and display mode. A Focus button on Custom Preview rows frames that geometry and makes it the orbit centre. *(Tested on Rhino 8 only.)*
+
 ![Capturing Grasshopper controls into the panel](media/06-add-to-ui.gif)
 
-**Groups and drag-and-drop.** Collapsible, nestable groups with a one-click "capture selected" button. Drag-and-drop works everywhere: reorder, move between tabs, move between panes, drop into groups.
+**Groups and drag-and-drop.** Collapsible, nestable groups with a one-click "capture selected" button. Drag-and-drop works everywhere: reorder, move between tabs, move between panes, drop into groups. Capturing a selected Grasshopper group brings it in as a Slate group, with its name, colour and members.
 
 ![Moving and grouping controls](media/08-movement-and-group.gif)
 

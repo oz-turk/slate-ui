@@ -4,6 +4,21 @@ Notable user-facing changes, newest first. Internal refactors and pure repo main
 
 ## Unreleased
 
+## 0.4.0 - 2026-11-11
+
+- **Viewport tab:** right-click a pane and choose Viewport Tab to turn it into a live Rhino viewport, with its own camera, view and display mode menus, grid and axes switches, and a Locked option. Right-drag orbits, Shift+right-drag pans, Ctrl+right-drag dollies, and the wheel zooms (optionally at the cursor). The camera and settings are saved with the .gh.
+- **Focus:** Custom Preview rows get a Focus button. Clicking it frames the focused previews in every open viewport tab, and orbiting turns around them.
+- **Capture Grasshopper groups:** capturing a selected group creates a Slate group with the same name and colour, with its members inside. Nested groups come along.
+- **Startup splash:** the window shows the Slate logo in your theme and accent colour while a file loads, instead of staying black.
+- **Status bar readouts:** the last solve time and how long ago the file was saved, with a dot when there are unsaved changes.
+- The Scenes menu shows a spinner while an applied scene is still solving.
+- Click the number next to a popup slider (colour channels, pattern scale and opacity, font size) to type a value.
+- Context menus can hold on/off items, and checkboxes now look the same everywhere.
+- Changes made in Slate (captures, layout edits, values, undo, scenes) now mark the Grasshopper file as modified, so closing it asks to save them.
+- The Bake dialog opens centred on the Rhino window and in front of Slate, and one Ctrl+Z undoes the bake.
+
+Known limitation: the viewport tab relies on an undocumented Rhino function to draw directly into the Slate window. If that function isn't available it falls back to a slower drawing path. It has only been tested on Rhino 8.
+
 ## 0.3.0 - 2026-11-03
 
 - **Scenes:** save named snapshots of control values from the top toolbar, then apply, overwrite, rename or delete them. Scenes are saved with the .gh. A dot next to the active scene shows when live values no longer match it, and an optional "Show changes" switch marks each control that differs. Covers sliders, toggles, single-select value lists / item pickers / item selectors, colour pickers, MD Sliders and typed-input text panels.
