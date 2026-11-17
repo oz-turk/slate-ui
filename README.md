@@ -29,6 +29,8 @@ Grasshopper definitions often need a clean control surface for clients or teamma
 
 **Capturing controls.** Select sliders, toggles, buttons, panels and other controls on the GH canvas, then pull them into a tab with the capture button. Wide control coverage: sliders, boolean toggles, buttons, value lists (dropdown/checklist/sequence: in checklist mode, naming an item `# `, `## ` or `### ` turns it into a header line instead of a checkbox, for grouping items visually), text panels, item pickers, colour swatches, freestanding geometry params (Point, Curve, Brep, Mesh, Surface, SubD, Box, and more, with Set/Clear/Internalize/Bake), and the native Trigger (GH_Timer) component. Also read via reflection, with no compile-time dependency on either plugin: [Human UI](https://www.food4rhino.com/en/app/human-ui)'s Item Selector and [Pancake](https://www.food4rhino.com/en/app/pancake)'s True Only Button.
 
+Some components get their own dedicated rows: Path Mapper (the output tree as a radial graph; drag a branch to reorder it), MD Slider (an XY pad), Graph Mapper (drag the curve's control points), Custom Preview (Preview, Render, Bake and Enabled buttons), Data Dam and Param Viewer.
+
 **Preview pin.** Pin any captured geometry param, or a whole group at once, to always draw on the GH canvas, regardless of GH's own preview filter or mode. Useful for keeping key geometry visible while a client clicks through a panel that never touches GH's native selection.
 
 ![Capturing Grasshopper controls into the panel](media/06-add-to-ui.gif)
@@ -37,7 +39,9 @@ Grasshopper definitions often need a clean control surface for clients or teamma
 
 ![Viewport tab and Focus](media/12-viewport.gif)
 
-**Groups and drag-and-drop.** Collapsible, nestable groups with a one-click "capture selected" button. Drag-and-drop works everywhere: reorder, move between tabs, move between panes, drop into groups. Capturing a selected Grasshopper group brings it in as a Slate group, with its name, colour and members.
+**Scenes.** Save named snapshots of control values from the top toolbar and switch between them, which is handy for walking a client through design options. Scenes are saved with the `.gh`, and a dot next to the active scene shows when the live values no longer match it.
+
+**Groups and drag-and-drop.** Collapsible, nestable groups with a one-click "capture selected" button. Drag-and-drop works everywhere: reorder controls and tabs, move between tabs and panes, drop into groups. Alt-drag a control to make a synced copy instead of moving it. Capturing a selected Grasshopper group brings it in as a Slate group, with its name, colour and members.
 
 ![Moving and grouping controls](media/08-movement-and-group.gif)
 
@@ -45,7 +49,7 @@ Grasshopper definitions often need a clean control surface for clients or teamma
 
 ![Workspaces and tabs](media/07-workspace-and-tabs.gif)
 
-**Themes.** Dark and light themes, plus per-tab colour tagging with a custom HSLA/RGBA colour picker (8-digit hex, `#RRGGBBAA`, supported).
+**Themes.** Dark and light themes in six accent colours, per-pane background colours and patterns, plus per-tab colour tagging with a custom HSLA/RGBA colour picker (8-digit hex, `#RRGGBBAA`, supported).
 
 ![Dark and light theme](media/09-dark-light-mode.gif)
 
@@ -53,7 +57,7 @@ Grasshopper definitions often need a clean control surface for clients or teamma
 
 ![Closing and deleting tabs/panes](media/10-close-and-delete.gif)
 
-**Undo** (`Ctrl+Z`) with a configurable history depth. Changes made in Slate mark the Grasshopper file as modified, so closing it asks to save them, and the status bar shows the last solve time and how long ago the file was saved.
+**Undo and save.** `Ctrl+Z` undoes with a configurable history depth, and `Ctrl+S` or the toolbar's Save button saves the `.gh` without leaving Slate. Changes made in Slate mark the Grasshopper file as modified, so closing it asks to save them, and the status bar shows the last solve time and how long ago the file was saved.
 
 Put it all together and a fully built-out panel looks like this:
 
