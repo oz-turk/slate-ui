@@ -31,9 +31,11 @@ Grasshopper definitions often need a clean control surface for clients or teamma
 
 **Preview pin.** Pin any captured geometry param, or a whole group at once, to always draw on the GH canvas, regardless of GH's own preview filter or mode. Useful for keeping key geometry visible while a client clicks through a panel that never touches GH's native selection.
 
-**Viewport tab.** Turn any pane into a live Rhino viewport from its right-click menu, with its own camera, view and display mode. A Focus button on Custom Preview rows frames that geometry and makes it the orbit centre. *(Tested on Rhino 8 only.)*
-
 ![Capturing Grasshopper controls into the panel](media/06-add-to-ui.gif)
+
+**Viewport tab.** Right-click any pane and choose Viewport Tab to turn it into a live Rhino viewport, right next to your controls. Each viewport tab has its own camera, view and display mode menus, grid and axes switches, and a Locked option. Right-drag orbits, Shift+right-drag pans, Ctrl+right-drag dollies, and the wheel zooms (optionally at the cursor). Camera and settings are saved with the `.gh`. A Focus button on Custom Preview rows frames that geometry in every open viewport tab and makes it the orbit centre.
+
+![Viewport tab and Focus](media/12-viewport.gif)
 
 **Groups and drag-and-drop.** Collapsible, nestable groups with a one-click "capture selected" button. Drag-and-drop works everywhere: reorder, move between tabs, move between panes, drop into groups. Capturing a selected Grasshopper group brings it in as a Slate group, with its name, colour and members.
 
@@ -51,7 +53,7 @@ Grasshopper definitions often need a clean control surface for clients or teamma
 
 ![Closing and deleting tabs/panes](media/10-close-and-delete.gif)
 
-**Undo** (`Ctrl+Z`) with a configurable history depth.
+**Undo** (`Ctrl+Z`) with a configurable history depth. Changes made in Slate mark the Grasshopper file as modified, so closing it asks to save them, and the status bar shows the last solve time and how long ago the file was saved.
 
 Put it all together and a fully built-out panel looks like this:
 
@@ -59,7 +61,7 @@ Put it all together and a fully built-out panel looks like this:
 
 ## Requirements
 
-- Rhino 7 or 8, Windows
+- Rhino 7, 8 or 9, Windows
 - [Microsoft Edge WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/): Slate's panel is a WebView2 (Chromium) control; the runtime ships with Windows 10/11 by default, so most people already have it
 - **Windows only.** Slate embeds WebView2 via WinForms, so there is currently no macOS build and none is planned unless the underlying dependency changes.
 
