@@ -274,6 +274,10 @@ public partial class SlateWindow
             if (parallel) vp.ChangeToParallelProjection(true);
             else vp.ChangeToPerspectiveProjection(true, lens);
             vp.SetCameraLocations(ReadPoint(tgt), ReadPoint(loc));
+            // The view direction is saved on its own: after a zoom to a box
+            // (Focus) Rhino turns the camera without moving its target, so
+            // location + target alone rebuilt a different view.
+            if (state.TryGetProperty("dir", out var dir)) vp.SetCameraDirection(new Vector3d(ReadPoint(dir)), false);
             if (state.TryGetProperty("up", out var up)) vp.CameraUp = new Vector3d(ReadPoint(up));
             // frustumH is saved as null for perspective views — GetDouble on it
             // threw here, skipping everything after (viewport_info → no pane
@@ -318,7 +322,7 @@ public partial class SlateWindow
     // `parallelHeight` overriding it on restore.
     private static void FitFrustumToScreen(RhinoViewport vp, double? parallelHeight = null)
     {
-        var loc = vp.CameraLocation; var tgt = vp.CameraTarget; var up = vp.CameraUp;
+        var loc = vp.CameraLocation; var tgt = vp.CameraTarget; var up = vp.CameraUp; var dir = vp.CameraDirection;
         double height = parallelHeight ?? FrustumHeight(vp);
 
         if (vp.IsPerspectiveProjection) vp.ChangeToPerspectiveProjection(true, vp.Camera35mmLensLength);
@@ -326,6 +330,9 @@ public partial class SlateWindow
         else return;
 
         vp.SetCameraLocations(tgt, loc);
+        // The camera need not look at its target (see InitViewport):
+        // SetCameraLocations aimed it there, the real direction goes back.
+        if (dir.IsValid && !dir.IsZero) vp.SetCameraDirection(dir, false);
         vp.CameraUp = up;
 
         if (vp.IsParallelProjection && height > 0 && vp.GetFrustum(out _, out _, out _, out _, out double n, out double f))
@@ -379,7 +386,7 @@ public partial class SlateWindow
     private void PostViewportState(string id, SlateViewportControl vc, bool initial = false)
     {
         var vp = vc.Cam;
-        var loc = vp.CameraLocation; var tgt = vp.CameraTarget;
+        var loc = vp.CameraLocation; var tgt = vp.CameraTarget; var dir = vp.CameraDirection;
         var state = new
         {
             view        = vc.ViewName,
@@ -388,6 +395,7 @@ public partial class SlateWindow
             parallel    = vp.IsParallelProjection,
             lens        = vp.Camera35mmLensLength,
             loc         = new[] { loc.X, loc.Y, loc.Z },
+            dir         = new[] { dir.X, dir.Y, dir.Z },
             up          = new[] { vp.CameraUp.X, vp.CameraUp.Y, vp.CameraUp.Z },
             frustumH    = vp.IsParallelProjection ? FrustumHeight(vp) : (double?)null,
             target      = new[] { tgt.X, tgt.Y, tgt.Z },
@@ -588,7 +596,7 @@ public class SlateViewportControl : ViewportControl
     // ── where the picture comes from ─────────────────────────────────────────
     //
     // false: Rhino draws straight into this control (ViewportControl.OnPaint).
-    // Left alone that crashes Rhino (8.34 and 9 WIP): the display pipeline
+    // Left alone that crashes Rhino (8.34 and 9.0): the display pipeline
     // keeps a temporary MFC window object for our HWND, MFC deletes it on
     // idle, and a later draw reads freed memory (AccessViolation in
     // CRhinoDisplayPipeline::GetWnd). So the pipeline's window is cleared
